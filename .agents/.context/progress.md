@@ -2,6 +2,25 @@
 
 ## Historial de Hitos Completados
 
+- [x] **Fase 81: Modal de Información Completa de Contactos, Edición, Eliminación y Sincronización Protegida:**
+  - Modal enriquecida `modal-contact-detail` accesible al hacer clic en cualquier contacto de la libreta o en su botón de detalle `[ 👁️ ]`.
+  - Muestra todos los datos disponibles: nombre, email, teléfono, empresa/organización, cargo/puesto, dirección, notas, cuenta de origen, fecha del último contacto e intercambios totales.
+  - Pestañas fluidas para ver detalles y editar información con guardado vía `PUT /api/contacts/{id}` y notificaciones sticky toast.
+  - Botón de nuevo contacto manual (`+ Nuevo`) en el header de la libreta.
+  - Eliminación con modal de confirmación `UI.confirm` y registro permanente en `deleted_contacts`.
+  - Sincronización protegida: `ContactsService.sync_contacts` respeta los contactos eliminados para no reimportarlos y preserva los campos editados (`is_customized = 1`).
+  - Sincronización completa con `install_desktop.sh`.
+
+- [x] **Fase 80: Calendarios Multi-Cuenta en Ajustes, Avatar Estático e Interacción de Perfil:**
+  - `calendars` en SQLite ampliado con `account_id` y `external_id`.
+  - Backend `CalendarService.sync_account_calendars()` y `get_calendars()` descubren y sincronizan calendarios de todas las cuentas conectadas (Google, Proton, Custom).
+  - Selector en Ajustes (`#settings-default-calendar-select`) muestra todos los calendarios disponibles vinculados a cada cuenta y correo para seleccionar el predeterminado con persistencia en `settings.default_calendar_id`.
+  - Corregido el error `this.renderAccounts is not a function` en `frontend/js/email.js`.
+  - Avatar superior (`#user-header-avatar`) desacoplado de modales/drawers (`cursor-default`), operando como indicador visual fijo.
+  - Botón de perfil (`[ 👤 ]`) en header abre con precisión `UserProfileAI.openDrawer()`.
+  - Barra de etiquetas secundaria delgada y alternancia fluida de lista/detalle en pantallas compactas.
+  - Sincronización completa con `install_desktop.sh`.
+
 - [x] **Fase 79: Restauración Integral de Funcionalidades (Contactos, Perfil de Usuario y Asistente Elio):**
   - Libreta de Contactos restaurada con acceso en cabecera (`[ 👥 ]`), navegación lateral, drawer lateral `drawer-contacts`, sincronización en un clic y autocompletado en redacción.
   - Perfil del Usuario IA restaurado con acceso en cabecera (`[ 👤 ]`) y barra lateral, análisis automático Gemini e integración en prompts.

@@ -262,11 +262,11 @@ const GeminiAI = {
                     const cals = await calRes.json();
                     if (cals && cals.length > 0) {
                         const targetCalId = data.default_calendar_id || cals[0].id;
-                        defaultCalSelect.innerHTML = cals.map(c => `
-                            <option value="${c.id}" ${c.id == targetCalId ? 'selected' : ''}>
-                                ${c.name} (${c.provider})
-                            </option>
-                        `).join('');
+                        defaultCalSelect.innerHTML = cals.map(c => {
+                            const accLabel = c.account_email ? ` (${c.account_email})` : (c.provider ? ` [${c.provider}]` : '');
+                            const isDefaultCal = (c.id == targetCalId);
+                            return `<option value="${c.id}" ${isDefaultCal ? 'selected' : ''}>${c.name}${accLabel}${isDefaultCal ? ' ★' : ''}</option>`;
+                        }).join('');
                     } else {
                         defaultCalSelect.innerHTML = '<option value="">(No hay calendarios activos)</option>';
                     }

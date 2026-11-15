@@ -56,7 +56,13 @@ def init_db():
         "ALTER TABLE accounts ADD COLUMN avatar_url TEXT",
         "ALTER TABLE accounts ADD COLUMN is_default INTEGER DEFAULT 0",
         "ALTER TABLE labels ADD COLUMN remote_id TEXT",
-        "ALTER TABLE labels ADD COLUMN type TEXT DEFAULT 'user'"
+        "ALTER TABLE labels ADD COLUMN type TEXT DEFAULT 'user'",
+        "ALTER TABLE calendars ADD COLUMN account_id INTEGER",
+        "ALTER TABLE calendars ADD COLUMN external_id TEXT",
+        "ALTER TABLE contacts ADD COLUMN company TEXT",
+        "ALTER TABLE contacts ADD COLUMN job_title TEXT",
+        "ALTER TABLE contacts ADD COLUMN address TEXT",
+        "ALTER TABLE contacts ADD COLUMN is_customized INTEGER DEFAULT 0"
     ]
     for m in migrations:
         try:
@@ -203,12 +209,24 @@ def init_db():
             email TEXT NOT NULL UNIQUE,
             phone TEXT,
             avatar_url TEXT,
+            company TEXT,
+            job_title TEXT,
+            address TEXT,
             account_id INTEGER,
             source TEXT DEFAULT 'emails',
             notes TEXT,
+            is_customized INTEGER DEFAULT 0,
             interaction_count INTEGER DEFAULT 1,
             last_interacted_at DATETIME,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Registro de Contactos Eliminados deliberadamente para respetar exclusión en sincronizaciones
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS deleted_contacts (
+            email TEXT PRIMARY KEY,
+            deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 

@@ -1455,12 +1455,31 @@ class ContactCreateRequest(BaseModel):
     name: str
     email: str
     phone: Optional[str] = ""
+    company: Optional[str] = ""
+    job_title: Optional[str] = ""
+    address: Optional[str] = ""
     notes: Optional[str] = ""
     account_id: Optional[int] = None
+
+class ContactUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    company: Optional[str] = None
+    job_title: Optional[str] = None
+    address: Optional[str] = None
+    notes: Optional[str] = None
 
 @app.get("/api/contacts")
 def list_contacts(q: str = "", limit: int = 300):
     return ContactsService.get_contacts(q=q, limit=limit)
+
+@app.get("/api/contacts/{contact_id}")
+def get_contact_detail(contact_id: int):
+    contact = ContactsService.get_contact_by_id(contact_id)
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contacto no encontrado")
+    return contact
 
 @app.post("/api/contacts/sync")
 def sync_contacts():
@@ -1473,11 +1492,24 @@ def create_contact(req: ContactCreateRequest):
             name=req.name,
             email_addr=req.email,
             phone=req.phone or "",
+            company=req.company or "",
+            job_title=req.job_title or "",
+            address=req.address or "",
             notes=req.notes or "",
             account_id=req.account_id
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/api/contacts/{contact_id}")
+def update_contact(contact_id: int, req: ContactUpdateRequest):
+    try:
+        updated = ContactsService.update_contact(contact_id, req.model_dump(exclude_unset=True))
+        return {"success": True, "contact": updated}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/contacts/{contact_id}")
 def delete_contact(contact_id: int):

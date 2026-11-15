@@ -660,61 +660,8 @@ const EmailManager = {
                 }
             }
 
-            // Actualizar lista rápida de cuentas en el sidebar izquierdo
-            this.renderSidebarAccounts();
-            
-            // Renderizar selector de cuenta por defecto en drawer de configuración si existe
-            const settingsAccountSelect = document.getElementById('settings-default-account-select');
-            if (settingsAccountSelect) {
-                settingsAccountSelect.innerHTML = accounts.map(a => `
-                    <option value="${a.id}" ${a.is_default ? 'selected' : ''}>${a.name} (${a.email})${a.is_default ? ' ★' : ''}</option>
-                `).join('');
-            }
-
-            // Renderizar lista en drawer de cuentas
-            const listEl = document.getElementById('accounts-list-container');
-            if (listEl) {
-                listEl.innerHTML = accounts.map(a => {
-                    const isDef = a.is_default === 1;
-                    return `
-                    <div class="p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-xl border ${isDef ? 'border-amber-400 dark:border-amber-500/80 ring-1 ring-amber-400/40 bg-amber-50/20 dark:bg-amber-950/20' : 'border-slate-200 dark:border-slate-700/60'} flex flex-col gap-2.5 shadow-2xs transition-all">
-                        <div class="flex items-center justify-between gap-2">
-                            <div class="flex items-center gap-2.5 min-w-0 flex-1">
-                                ${window.AvatarService ? AvatarService.render(a.email, a.name, 'w-8 h-8 text-xs', '', a.color) : `<span class="w-3 h-3 rounded-full shrink-0 shadow-xs" style="background-color: ${a.color || '#3b82f6'}"></span>`}
-                                <div class="truncate flex-1">
-                                    <div class="flex items-center gap-1.5 truncate">
-                                        <p class="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">${this.escapeHtml(a.name)}</p>
-                                        ${isDef ? `<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700/60 px-1.5 py-0.2 rounded-md shrink-0">★ Predeterminada</span>` : ''}
-                                    </div>
-                                    <p class="text-[11px] text-slate-500 dark:text-slate-400 truncate">${this.escapeHtml(a.email)} &bull; <span class="uppercase">${a.provider}</span></p>
-                                </div>
-                            </div>
-                            <div class="flex items-center gap-1 shrink-0">
-                                ${isDef ? `
-                                    <div class="p-1.5 text-amber-500 rounded-lg cursor-default" title="Esta es tu cuenta por defecto">
-                                        <svg class="w-4 h-4 fill-amber-400 text-amber-500" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-                                    </div>
-                                ` : `
-                                    <button onclick="EmailManager.setDefaultAccount(${a.id})" class="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer" title="Establecer como cuenta por defecto">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
-                                    </button>
-                                `}
-                                <button onclick="EmailManager.testAccountConnection(${a.id})" class="p-1.5 text-slate-400 hover:text-indigo-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer" title="Probar conexión IMAP/SMTP">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                                </button>
-                                <button onclick="EmailManager.openEditAccountModal(${a.id})" class="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer" title="Editar cuenta y color">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                                </button>
-                                <button onclick="EmailManager.deleteAccount(${a.id}, '${this.escapeHtml(a.email)}')" class="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer" title="Eliminar cuenta">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                                </button>
-                            </div>
-                        </div>
-                        <div id="account-test-status-${a.id}" class="hidden text-[11px] p-2 rounded-lg"></div>
-                    </div>
-                    `;
-                }).join('') || '<p class="text-sm text-slate-500 py-4 text-center">No hay cuentas configuradas</p>';
-            }
+            // Renderizar cuentas en todos los contenedores y selectores
+            this.renderAccounts();
 
             this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
 
@@ -726,6 +673,66 @@ const EmailManager = {
             console.error("Error al cargar cuentas:", e);
             this.updateSystemSyncPill('inactive', 'Sin conexión con el servidor backend');
             if (window.GeminiAI) GeminiAI.setDisconnectedState();
+        }
+    },
+
+    renderAccounts() {
+        const accounts = this.accounts || [];
+
+        // Actualizar lista rápida de cuentas en el sidebar izquierdo
+        this.renderSidebarAccounts();
+
+        // Renderizar selector de cuenta por defecto en drawer de configuración si existe
+        const settingsAccountSelect = document.getElementById('settings-default-account-select');
+        if (settingsAccountSelect) {
+            settingsAccountSelect.innerHTML = accounts.map(a => `
+                <option value="${a.id}" ${a.is_default ? 'selected' : ''}>${a.name} (${a.email})${a.is_default ? ' ★' : ''}</option>
+            `).join('') || '<option value="">(No hay cuentas disponibles)</option>';
+        }
+
+        // Renderizar lista en drawer de cuentas
+        const listEl = document.getElementById('accounts-list-container');
+        if (listEl) {
+            listEl.innerHTML = accounts.map(a => {
+                const isDef = a.is_default === 1;
+                return `
+                <div class="p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-xl border ${isDef ? 'border-amber-400 dark:border-amber-500/80 ring-1 ring-amber-400/40 bg-amber-50/20 dark:bg-amber-950/20' : 'border-slate-200 dark:border-slate-700/60'} flex flex-col gap-2.5 shadow-2xs transition-all">
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                            ${window.AvatarService ? AvatarService.render(a.email, a.name, 'w-8 h-8 text-xs', '', a.color) : `<span class="w-3 h-3 rounded-full shrink-0 shadow-xs" style="background-color: ${a.color || '#3b82f6'}"></span>`}
+                            <div class="truncate flex-1">
+                                <div class="flex items-center gap-1.5 truncate">
+                                    <p class="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">${this.escapeHtml(a.name)}</p>
+                                    ${isDef ? `<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700/60 px-1.5 py-0.2 rounded-md shrink-0">★ Predeterminada</span>` : ''}
+                                </div>
+                                <p class="text-[11px] text-slate-500 dark:text-slate-400 truncate">${this.escapeHtml(a.email)} &bull; <span class="uppercase">${a.provider}</span></p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-1 shrink-0">
+                            ${isDef ? `
+                                <div class="p-1.5 text-amber-500 rounded-lg cursor-default" title="Esta es tu cuenta por defecto">
+                                    <svg class="w-4 h-4 fill-amber-400 text-amber-500" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                                </div>
+                            ` : `
+                                <button onclick="EmailManager.setDefaultAccount(${a.id})" class="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer" title="Establecer como cuenta por defecto">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
+                                </button>
+                            `}
+                            <button onclick="EmailManager.testAccountConnection(${a.id})" class="p-1.5 text-slate-400 hover:text-indigo-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer" title="Probar conexión IMAP/SMTP">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                            </button>
+                            <button onclick="EmailManager.openEditAccountModal(${a.id})" class="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer" title="Editar cuenta y color">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                            </button>
+                            <button onclick="EmailManager.deleteAccount(${a.id}, '${this.escapeHtml(a.email)}')" class="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer" title="Eliminar cuenta">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="account-test-status-${a.id}" class="hidden text-[11px] p-2 rounded-lg"></div>
+                </div>
+                `;
+            }).join('') || '<p class="text-sm text-slate-500 py-4 text-center">No hay cuentas configuradas</p>';
         }
     },
 
@@ -2168,6 +2175,14 @@ const EmailManager = {
             const secondaryBar = document.getElementById('email-secondary-labels-bar');
             if (!topBar || !topSlot || !secondaryBar) return;
 
+            const activeContainer = (topSlot.children.length > 0) ? topSlot : secondaryBar;
+            const hasItems = activeContainer && activeContainer.children.length > 0;
+            if (!hasItems) {
+                secondaryBar.classList.add('hidden');
+                topSlot.classList.remove('hidden');
+                return;
+            }
+
             const actionsRight = document.getElementById('email-top-actions-right') || topBar.querySelector('#email-top-actions-right');
             const backBtn = topBar.querySelector('button[title="Volver a la lista"]');
 
@@ -2176,7 +2191,6 @@ const EmailManager = {
             const backWidth = (backBtn && window.getComputedStyle(backBtn).display !== 'none') ? backBtn.offsetWidth + 8 : 0;
             const availableWidth = topBarWidth - rightWidth - backWidth - 24;
 
-            const activeContainer = (topSlot.children.length > 0) ? topSlot : secondaryBar;
             let requiredWidth = 0;
             Array.from(activeContainer.children).forEach(ch => {
                 requiredWidth += (ch.offsetWidth || 0) + 8;

@@ -490,7 +490,7 @@ input[type="checkbox"]:indeterminate {
         display: none !important;
     }
 
-    /* Paneles de lista y detalle ocupan el 100% del ancho */
+    /* Paneles de lista y detalle ocupan el 100% del ancho y se alternan limpiamente */
     #email-list-container {
         width: 100% !important;
         min-width: 0 !important;
@@ -499,6 +499,17 @@ input[type="checkbox"]:indeterminate {
     #email-detail-container {
         width: 100% !important;
         min-width: 0 !important;
+    }
+
+    /* En móviles y ventanas compactas (< 768px): si el detalle del correo está abierto, la lista queda 100% oculta para evitar colisiones visuales */
+    #email-detail-container:not(.hidden) ~ #email-list-container,
+    #main-content:has(#email-detail-container:not(.hidden)) #email-list-container {
+        display: none !important;
+    }
+
+    #email-list-container.hidden,
+    #email-detail-container.hidden {
+        display: none !important;
     }
 
     /* Ajuste en modales y drawers para pantallas pequeñas */

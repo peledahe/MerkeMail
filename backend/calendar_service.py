@@ -5,70 +5,134 @@ from backend.database import get_db
 
 class CalendarService:
     @staticmethod
-    def get_calendars() -> List[Dict[str, Any]]:
-        """Devuelve únicamente los calendarios correspondientes a proveedores realmente conectados o configurados,
-        con sus colores y los colores/datos de la cuenta asociada."""
+    def sync_account_calendars():
+        """Sincroniza y crea calendarios para todas las cuentas conectadas que lo permitan."""
         conn = get_db()
-        account_rows = conn.execute("SELECT id, name, email, provider, color FROM accounts").fetchall()
-        accounts_by_provider = {}
-        for a in account_rows:
-            p = (a["provider"] or "").lower()
-            if p not in accounts_by_provider:
-                accounts_by_provider[p] = dict(a)
-            if p == "gmail" and "google" not in accounts_by_provider:
-                accounts_by_provider["google"] = dict(a)
-            elif p == "google" and "gmail" not in accounts_by_provider:
-                accounts_by_provider["gmail"] = dict(a)
-
-        account_providers = {r["provider"].lower() for r in account_rows if r["provider"]}
+        cursor = conn.cursor()
         
-        rows = conn.execute("SELECT * FROM calendars ORDER BY id ASC").fetchall()
+        accounts = cursor.execute("SELECT id, name, email, provider, color FROM accounts WHERE is_active = 1").fetchall()
+        
+        for acc in accounts:
+            acc_id = acc["id"]
+            prov = (acc["provider"] or "").lower()
+            acc_name = acc["name"] or acc["email"].split("@")[0]
+            acc_email = acc["email"]
+            acc_color = acc["color"] or "#4f46e5"
+            
+            # Si es cuenta de Google, intentar sincronizar con Google Calendar API si está disponible
+            if prov in ("google", "gmail"):
+                synced_from_api = False
+                try:
+                    from backend.google_oauth import GoogleOAuthService
+                    from googleapiclient.discovery import build
+                    creds = GoogleOAuthService.get_valid_credentials(acc_id)
+                    if creds:
+                        service = build('calendar', 'v3', credentials=creds)
+                        cal_list = service.calendarList().list().execute()
+                        items = cal_list.get('items', [])
+                        if items:
+                            for item in items:
+                                ext_id = item.get('id')
+                                is_primary = item.get('primary', False)
+                                summary = item.get('summary') or ("Google Calendar" if is_primary else ext_id)
+                                cal_title = f"{summary} ({acc_email})" if is_primary else f"{summary} ({acc_name})"
+                                cal_color = item.get('backgroundColor') or acc_color
+                                
+                                existing = cursor.execute(
+                                    "SELECT id FROM calendars WHERE account_id = ? AND (external_id = ? OR name = ?)",
+                                    (acc_id, ext_id, cal_title)
+                                ).fetchone()
+                                if existing:
+                                    cursor.execute(
+                                        "UPDATE calendars SET name = ?, color = ?, provider = 'google', external_id = ? WHERE id = ?",
+                                        (cal_title, cal_color, ext_id, existing["id"])
+                                    )
+                                else:
+                                    cursor.execute(
+                                        "INSERT INTO calendars (name, provider, color, account_id, external_id) VALUES (?, 'google', ?, ?, ?)",
+                                        (cal_title, cal_color, acc_id, ext_id)
+                                    )
+                            synced_from_api = True
+                except Exception:
+                    pass
+                
+                if not synced_from_api:
+                    # Asegurar que la cuenta Google tenga al menos un calendario
+                    existing = cursor.execute(
+                        "SELECT id FROM calendars WHERE account_id = ? OR (id = 1 AND account_id IS NULL)", 
+                        (acc_id,)
+                    ).fetchone()
+                    cal_title = f"Google Calendar ({acc_email})"
+                    if existing:
+                        cursor.execute(
+                            "UPDATE calendars SET name = ?, provider = 'google', color = ?, account_id = ?, external_id = 'primary' WHERE id = ?",
+                            (cal_title, acc_color, acc_id, existing["id"])
+                        )
+                    else:
+                        cursor.execute(
+                            "INSERT INTO calendars (name, provider, color, account_id, external_id) VALUES (?, 'google', ?, ?, 'primary')",
+                            (cal_title, acc_color, acc_id)
+                        )
+            
+            elif prov == "proton":
+                existing = cursor.execute(
+                    "SELECT id FROM calendars WHERE account_id = ? OR (id = 2 AND account_id IS NULL)", 
+                    (acc_id,)
+                ).fetchone()
+                cal_title = f"Proton Calendar ({acc_email})"
+                if existing:
+                    cursor.execute(
+                        "UPDATE calendars SET name = ?, provider = 'proton', color = ?, account_id = ? WHERE id = ?",
+                        (cal_title, acc_color, acc_id, existing["id"])
+                    )
+                else:
+                    cursor.execute(
+                        "INSERT INTO calendars (name, provider, color, account_id) VALUES (?, 'proton', ?, ?)",
+                        (cal_title, acc_color, acc_id)
+                    )
+            
+            else: # custom o cualquier otro proveedor que permita calendario
+                existing = cursor.execute(
+                    "SELECT id FROM calendars WHERE account_id = ?", 
+                    (acc_id,)
+                ).fetchone()
+                cal_title = f"Calendario ({acc_name})"
+                if existing:
+                    cursor.execute(
+                        "UPDATE calendars SET name = ?, provider = ?, color = ? WHERE id = ?",
+                        (cal_title, prov or "custom", acc_color, existing["id"])
+                    )
+                else:
+                    cursor.execute(
+                        "INSERT INTO calendars (name, provider, color, account_id) VALUES (?, ?, ?, ?)",
+                        (cal_title, prov or "custom", acc_color, acc_id)
+                    )
+                    
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_calendars() -> List[Dict[str, Any]]:
+        """Devuelve todos los calendarios sincronizados correspondientes a las cuentas conectadas y locales."""
+        CalendarService.sync_account_calendars()
+        conn = get_db()
+        rows = conn.execute('''
+            SELECT c.*, a.name as account_name, a.email as account_email, 
+                   a.color as account_color, a.provider as account_provider, a.is_default as account_is_default
+            FROM calendars c
+            LEFT JOIN accounts a ON c.account_id = a.id
+            WHERE (c.account_id IS NOT NULL AND a.id IS NOT NULL) OR c.provider = 'local'
+            ORDER BY COALESCE(a.is_default, 0) DESC, c.id ASC
+        ''').fetchall()
         conn.close()
         
-        active_calendars = []
+        cals = []
         for r in rows:
             cal = dict(r)
-            prov = (cal.get("provider") or "").lower()
-            acc = accounts_by_provider.get(prov)
-            
-            # Asociar cuenta vinculada si existe
-            if acc:
-                cal["account_id"] = acc["id"]
-                cal["account_name"] = acc["name"] or acc["email"]
-                cal["account_email"] = acc["email"]
-                cal["account_color"] = acc["color"]
-            else:
-                cal["account_id"] = None
-                cal["account_name"] = None
-                cal["account_email"] = None
-                cal["account_color"] = None
-
-            # Color efectivo: si el calendario no tiene color, usar el color de la cuenta
             cal["effective_color"] = cal.get("color") or cal.get("account_color") or "#4f46e5"
-
-            # Calendario de Google: requiere cuenta de Gmail/Google
-            if prov in ("google", "gmail"):
-                if "gmail" in account_providers or "google" in account_providers:
-                    active_calendars.append(cal)
-            # Calendario de Proton: requiere cuenta de Proton
-            elif prov == "proton":
-                if "proton" in account_providers:
-                    active_calendars.append(cal)
-            # Calendarios con URL iCal externa o locales
-            elif cal.get("ics_url") or prov == "local":
-                active_calendars.append(cal)
-            elif not account_providers:
-                # Si aún no se ha conectado ninguna cuenta, mostrar Google por defecto
-                if prov in ("google", "local"):
-                    active_calendars.append(cal)
-                    
-        # Salvaguarda: si no coincidió ninguno pero hay registros, usar el primero
-        if not active_calendars and rows:
-            cal0 = dict(rows[0])
-            cal0["effective_color"] = cal0.get("color") or "#4f46e5"
-            active_calendars = [cal0]
+            cals.append(cal)
             
-        return active_calendars
+        return cals
 
     @staticmethod
     def get_default_calendar_id() -> int:
@@ -84,6 +148,12 @@ class CalendarService:
                     return def_id
             except (ValueError, TypeError):
                 pass
+        
+        # Si no hay uno configurado explícitamente, preferir el calendario de la cuenta por defecto
+        for c in active_cals:
+            if c.get("account_is_default") == 1:
+                return c["id"]
+
         return valid_ids[0] if valid_ids else 1
 
     @staticmethod
@@ -94,11 +164,7 @@ class CalendarService:
                    a.name as account_name, a.email as account_email, a.color as account_color
             FROM events e
             JOIN calendars c ON e.calendar_id = c.id
-            LEFT JOIN accounts a ON a.id = COALESCE(e.account_id, (
-                SELECT id FROM accounts 
-                WHERE (provider = c.provider OR (c.provider IN ('google', 'gmail') AND provider IN ('google', 'gmail'))) 
-                ORDER BY id ASC LIMIT 1
-            ))
+            LEFT JOIN accounts a ON a.id = COALESCE(e.account_id, c.account_id)
             WHERE e.id = ?
         ''', (event_id,)).fetchone()
         conn.close()
@@ -124,11 +190,7 @@ class CalendarService:
                    a.name as account_name, a.email as account_email, a.color as account_color
             FROM events e
             JOIN calendars c ON e.calendar_id = c.id
-            LEFT JOIN accounts a ON a.id = COALESCE(e.account_id, (
-                SELECT id FROM accounts 
-                WHERE (provider = c.provider OR (c.provider IN ('google', 'gmail') AND provider IN ('google', 'gmail'))) 
-                ORDER BY id ASC LIMIT 1
-            ))
+            LEFT JOIN accounts a ON a.id = COALESCE(e.account_id, c.account_id)
             WHERE c.is_visible = 1 AND c.id IN ({placeholders})
               AND (e.start_time IS NOT NULL AND e.start_time != '')
         '''
@@ -164,11 +226,7 @@ class CalendarService:
                    a.name as account_name, a.email as account_email, a.color as account_color
             FROM events e
             JOIN calendars c ON e.calendar_id = c.id
-            LEFT JOIN accounts a ON a.id = COALESCE(e.account_id, (
-                SELECT id FROM accounts 
-                WHERE (provider = c.provider OR (c.provider IN ('google', 'gmail') AND provider IN ('google', 'gmail'))) 
-                ORDER BY id ASC LIMIT 1
-            ))
+            LEFT JOIN accounts a ON a.id = COALESCE(e.account_id, c.account_id)
             WHERE c.is_visible = 1 AND c.id IN ({placeholders})
               AND (e.is_task = 1 OR e.title LIKE '[Tarea]%' OR e.start_time = '' OR e.start_time IS NULL)
         '''

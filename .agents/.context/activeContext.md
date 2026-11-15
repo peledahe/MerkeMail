@@ -2,6 +2,46 @@
 
 ## Estado de Desarrollo Actual
 
+- **Fase 81 - Modal de Información Completa de Contactos, Edición, Eliminación y Sincronización Protegida:**
+  - **Modal Completa de Contacto (`modal-contact-detail`):**
+    - Al hacer clic en cualquier contacto de la lista o en el botón de ver detalle `[ 👁️ ]`, se despliega una modal enriquecida con avatar en degradado, nombre, correo, teléfono (con copiado en un clic), empresa/organización, cargo/puesto, dirección, notas, cuenta asociada y métricas de intercambios/última fecha.
+    - Pestañas fluidas para alternar entre "Información Completa" y "Editar Datos".
+    - Botones de acción directa: Redactar correo, Copiar correo, Editar y Borrar contacto.
+    - Creación manual accesible con el nuevo botón `+ Nuevo` en la cabecera de la libreta de contactos.
+  - **Edición y Actualización (`PUT /api/contacts/{id}`):**
+    - Permite modificar nombre, correo, teléfono, empresa, cargo, dirección y notas.
+    - Notificaciones sticky toast (`UI.showStickyToast`) tras guardar cambios.
+    - Marca el registro con `is_customized = 1` para preservar las modificaciones del usuario ante futuras sincronizaciones.
+  - **Eliminación y Sincronización Protegida (`DELETE /api/contacts/{id}` y `deleted_contacts`):**
+    - Confirmación segura mediante modal nativa (`UI.confirm` con `isDanger: true`), sin usar `alert` ni `confirm` nativos del navegador.
+    - Al eliminar un contacto, se registra su correo en la tabla `deleted_contacts`.
+    - El motor de sincronización (`ContactsService.sync_contacts`) omite los correos registrados en `deleted_contacts` y no sobreescribe campos personalizados (`is_customized = 1`), garantizando que los contactos borrados no reaparezcan al sincronizar y que las ediciones se conserven íntegras.
+  - **Corrección Crítica de Carga en Frontend (`frontend/js/email.js`):**
+    - Se eliminó un cierre de llave duplicado `},` en `frontend/js/email.js` que impedía la evaluación del script (`SyntaxError: Missing initializer in const declaration`).
+    - Verificada la evaluación sin errores en todos los módulos JS (`ui.js`, `avatars.js`, `composer.js`, `contacts.js`, `email.js`, `calendar.js`, `gemini.js`, etc.).
+    - Restaurada la API Key y cuentas en la UI con respuesta activa en `http://127.0.0.1:8000`.
+  - **Sincronización:**
+    - Actualizado el entorno de escritorio independiente con `install_desktop.sh`.
+
+- **Fase 80 - Calendarios Multi-Cuenta en Ajustes, Avatar Estático e Interacción de Perfil:**
+  - **Calendarios de Todas las Cuentas en Ajustes:**
+    - Migración de base de datos en tabla `calendars` con columnas `account_id INTEGER` y `external_id TEXT`.
+    - `CalendarService.sync_account_calendars()` y `CalendarService.get_calendars()` descubren y sincronizan los calendarios para todas las cuentas conectadas (Google, Proton, Custom), manejando tolerancias de API sin bloquear la experiencia de usuario.
+    - El selector en Ajustes (`#settings-default-calendar-select`) despliega todos los calendarios asociados a cada cuenta con su respectivo correo y proveedor, guardando la preferencia en `settings.default_calendar_id`.
+    - Corregido el error de ejecución `this.renderAccounts is not a function` en `frontend/js/email.js` modularizando `EmailManager.renderAccounts()`.
+  - **Avatar de Cabecera y Botón de Perfil de Usuario:**
+    - El avatar circular superior derecho (`#user-header-avatar`) opera exclusivamente como un indicador visual de la cuenta por defecto activa con `cursor-default`, sin abrir ningún drawer ni modal.
+    - El botón de perfil de usuario (`[ 👤 ]`, `#btn-open-user-profile`) en el header es el control designado para abrir el panel de perfil (`UserProfileAI.openDrawer()`).
+  - **Barra de Etiquetas Responsiva y Vista Móvil del Correo:**
+    - Perfeccionada la barra secundaria delgada (`#email-secondary-labels-bar`) para cuando el espacio horizontal se reduce.
+    - Regla CSS en `@media (max-width: 767px)` para alternancia limpia entre lista y panel de lectura sin colisiones ni traslapes visuales.
+  - **Corrección Crítica de Carga en Frontend (`frontend/js/email.js`):**
+    - Se eliminó un cierre de llave duplicado `},` en `frontend/js/email.js` que impedía la evaluación del script (`SyntaxError: Missing initializer in const declaration`).
+    - Verificada la evaluación sin errores en todos los módulos JS (`ui.js`, `avatars.js`, `composer.js`, `contacts.js`, `email.js`, `calendar.js`, `gemini.js`, etc.).
+    - Restaurada la API Key y cuentas en la UI con respuesta activa en `http://127.0.0.1:8000`.
+  - **Sincronización:**
+    - Actualizado el entorno de escritorio independiente con `install_desktop.sh`.
+
 - **Fase 79 - Restauración Integral de Funcionalidades (Contactos, Perfil de Usuario y Asistente Elio):**
   - **Libreta de Contactos y Agenda de Direcciones:**
     - Restaurado el acceso directo en la cabecera superior (`[ 👥 ]`) y en el menú de navegación lateral (`#nav-item-contacts`).
@@ -16,6 +56,10 @@
     - Sidebar actualizado con la marca e identidad visual de `Elio (@elio)` y su icono oficial `img/bot.png`.
     - Barra de búsqueda superior con invocación rápida a `@elio`, chip de acción rápida `Preguntar a Elio` y placeholder contextual.
     - Drawer de Elio (`drawer-antigravity-copilot`) restaurado con su interfaz moderna: botón de `+ Nuevo Chat` (`#btn-antigravity-new-chat`), botón de expansión/compresión, badges de capacidades centrados, saludo inteligente con cuentas reales y sugerencias rápidas sin fechas inventadas.
+  - **Corrección Crítica de Carga en Frontend (`frontend/js/email.js`):**
+    - Se eliminó un cierre de llave duplicado `},` en `frontend/js/email.js` que impedía la evaluación del script (`SyntaxError: Missing initializer in const declaration`).
+    - Verificada la evaluación sin errores en todos los módulos JS (`ui.js`, `avatars.js`, `composer.js`, `contacts.js`, `email.js`, `calendar.js`, `gemini.js`, etc.).
+    - Restaurada la API Key y cuentas en la UI con respuesta activa en `http://127.0.0.1:8000`.
   - **Sincronización:**
     - Verificación y sincronización con el instalador de escritorio (`install_desktop.sh`).
 
@@ -33,6 +77,10 @@
     - Actualiza el avatar del header (`#user-header-avatar`) y el del drawer de perfil de usuario (`#user-profile-header-avatar`), utilizando la imagen de perfil oficial de Google (`avatar_url`) o las iniciales estilizadas con el color de la cuenta.
   - **Redacción de Correos:**
     - El selector de remitente en la ventana de redacción (`#compose-account`) preselecciona automáticamente la cuenta por defecto con indicador visual `★`.
+  - **Corrección Crítica de Carga en Frontend (`frontend/js/email.js`):**
+    - Se eliminó un cierre de llave duplicado `},` en `frontend/js/email.js` que impedía la evaluación del script (`SyntaxError: Missing initializer in const declaration`).
+    - Verificada la evaluación sin errores en todos los módulos JS (`ui.js`, `avatars.js`, `composer.js`, `contacts.js`, `email.js`, `calendar.js`, `gemini.js`, etc.).
+    - Restaurada la API Key y cuentas en la UI con respuesta activa en `http://127.0.0.1:8000`.
   - **Sincronización:** Instalación de escritorio actualizada con `install_desktop.sh`.
 
 - **Fase 78 - Selección de Cuenta por Defecto y Avatar de Usuario:**
@@ -49,6 +97,10 @@
     - Actualiza el avatar del header (`#user-header-avatar`) y el del drawer de perfil de usuario (`#user-profile-header-avatar`), utilizando la imagen de perfil oficial de Google (`avatar_url`) o las iniciales estilizadas con el color de la cuenta.
   - **Redacción de Correos:**
     - El selector de remitente en la ventana de redacción (`#compose-account`) preselecciona automáticamente la cuenta por defecto con indicador visual `★`.
+  - **Corrección Crítica de Carga en Frontend (`frontend/js/email.js`):**
+    - Se eliminó un cierre de llave duplicado `},` en `frontend/js/email.js` que impedía la evaluación del script (`SyntaxError: Missing initializer in const declaration`).
+    - Verificada la evaluación sin errores en todos los módulos JS (`ui.js`, `avatars.js`, `composer.js`, `contacts.js`, `email.js`, `calendar.js`, `gemini.js`, etc.).
+    - Restaurada la API Key y cuentas en la UI con respuesta activa en `http://127.0.0.1:8000`.
   - **Sincronización:** Instalación de escritorio actualizada con `install_desktop.sh`.
 
 - **Fase 77 - Creación y Edición de Eventos con Características Completas Estilo Google Calendar:**
@@ -114,6 +166,10 @@
   - **Incompatibilidad pyOpenSSL en Virtualenv:** Se resolvió el conflicto de `AttributeError: module 'lib' has no attribute 'GEN_EMAIL'` originado por paquetes de sistema en Ubuntu 24.04 al importar bibliotecas de Google API con `cryptography` moderna.
   - **Fijación de pyopenssl:** Se instaló y fijó `pyopenssl==26.4.0` tanto en el venv de la app de escritorio (`~/.local/share/merkemail/.venv`) como en desarrollo y en `requirements.txt`.
   - **Margen de Arranque en Ventana:** Se aumentó la ventana de espera de arranque del backend a 8 segundos en `desktop/app_window.py` y `desktop/tray.py`.
+  - **Corrección Crítica de Carga en Frontend (`frontend/js/email.js`):**
+    - Se eliminó un cierre de llave duplicado `},` en `frontend/js/email.js` que impedía la evaluación del script (`SyntaxError: Missing initializer in const declaration`).
+    - Verificada la evaluación sin errores en todos los módulos JS (`ui.js`, `avatars.js`, `composer.js`, `contacts.js`, `email.js`, `calendar.js`, `gemini.js`, etc.).
+    - Restaurada la API Key y cuentas en la UI con respuesta activa en `http://127.0.0.1:8000`.
   - **Sincronización:** Se ejecutó `scripts/install_desktop.sh` y se validó que el backend responda en el puerto 6524.
 
 - **Fase 73 - Blindaje y Auditoría de Seguridad de Cuentas Conectadas:**
