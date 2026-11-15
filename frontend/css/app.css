@@ -1,0 +1,922 @@
+/* Estilos Personalizados - MerkeMail */
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    user-select: none;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.4);
+    border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 116, 139, 0.7);
+}
+
+/* Animaciones de Cajones Laterales (Drawers) */
+.drawer-backdrop {
+    transition: opacity 0.25s ease-in-out;
+}
+.drawer-panel {
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Notificaciones Sticky */
+#sticky-notifications-container {
+    pointer-events: none;
+}
+.sticky-toast {
+    pointer-events: auto;
+    animation: toast-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.sticky-toast.hiding {
+    animation: toast-out 0.25s ease-in forwards;
+}
+
+@keyframes toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(-16px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes toast-out {
+    from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-12px) scale(0.95);
+    }
+}
+
+/* Modal Animations */
+.modal-backdrop {
+    animation: modal-fade-in 0.2s ease-out forwards;
+}
+.modal-content {
+    animation: modal-zoom-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes modal-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes modal-zoom-in {
+    from {
+        opacity: 0;
+        transform: scale(0.94);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Shimmer de Carga */
+.skeleton-shimmer {
+    background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+/* Animación sutil de rotación para IA */
+@keyframes spin-slow {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+.animate-spin-slow {
+    animation: spin-slow 12s linear infinite;
+}
+
+/* Gmail Split Item Hover, Transition & Selection */
+.email-list-item {
+    border-left-width: 4px !important;
+    border-left-style: solid !important;
+    border-left-color: transparent !important;
+    transition: background-color 0.15s ease, border-left-color 0.15s ease;
+}
+.email-list-item:hover .email-checkbox {
+    opacity: 1;
+}
+
+/* ================= CHECKBOXES LIMPIOS Y VACÍOS (ESTILO GMAIL) ================= */
+input[type="checkbox"].email-checkbox,
+#split-select-all,
+input[type="checkbox"].custom-checkbox,
+input[type="checkbox"] {
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    width: 15px !important;
+    height: 15px !important;
+    border: 1.5px solid #cbd5e1 !important; /* slate-300 */
+    border-radius: 3.5px !important;
+    background-color: #ffffff !important;
+    outline: none !important;
+    cursor: pointer !important;
+    position: relative !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transition: all 0.15s ease !important;
+    flex-shrink: 0 !important;
+    margin: 0 !important;
+}
+
+.dark input[type="checkbox"].email-checkbox,
+.dark #split-select-all,
+.dark input[type="checkbox"].custom-checkbox,
+.dark input[type="checkbox"] {
+    border-color: #475569 !important; /* slate-600 */
+    background-color: #1e293b !important; /* slate-800 */
+}
+
+input[type="checkbox"].email-checkbox:hover,
+#split-select-all:hover,
+input[type="checkbox"]:hover {
+    border-color: #6366f1 !important; /* indigo-500 */
+}
+
+/* Checkbox Marcado: fondo índigo con tilde blanca */
+input[type="checkbox"].email-checkbox:checked,
+#split-select-all:checked,
+input[type="checkbox"].custom-checkbox:checked,
+input[type="checkbox"]:checked {
+    background-color: #4f46e5 !important; /* indigo-600 */
+    border-color: #4f46e5 !important;
+    background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e") !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+    background-size: 100% 100% !important;
+}
+
+/* Checkbox Indeterminado: guión blanco centrado */
+input[type="checkbox"].email-checkbox:indeterminate,
+#split-select-all:indeterminate,
+input[type="checkbox"].custom-checkbox:indeterminate,
+input[type="checkbox"]:indeterminate {
+    background-color: #4f46e5 !important; /* indigo-600 */
+    border-color: #4f46e5 !important;
+    background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath fill-rule='evenodd' d='M4 8a1 1 0 011-1h6a1 1 0 110 2H5a1 1 0 01-1-1z' clip-rule='evenodd'/%3e%3c/svg%3e") !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+    background-size: 100% 100% !important;
+}
+
+/* Correo seleccionado: franja azul nítida siempre visible en cualquier fila */
+.email-list-item.selected {
+    background-color: rgba(238, 242, 255, 0.95) !important; /* bg-indigo-50 */
+    border-left-color: #4f46e5 !important; /* border-indigo-600 */
+}
+.dark .email-list-item.selected {
+    background-color: rgba(30, 27, 75, 0.75) !important; /* dark:bg-indigo-950/70 */
+    border-left-color: #6366f1 !important; /* dark:border-indigo-500 */
+}
+
+/* ================= SIDEBAR COLAPSABLE & MODO COMPACTO ================= */
+#sidebar-container {
+    min-width: 64px;
+    max-width: 280px;
+    transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#sidebar-container.resizing {
+    transition: none !important;
+}
+
+#sidebar-container.collapsed {
+    width: 64px !important;
+}
+
+#sidebar-container.collapsed .sidebar-text,
+#sidebar-container.collapsed .sidebar-badge,
+#sidebar-container.collapsed .sidebar-section-header,
+#sidebar-container.collapsed #more-folders-container,
+#sidebar-container.collapsed #btn-toggle-more-folders,
+#sidebar-container.collapsed #sidebar-accounts-mini-list p,
+#sidebar-container.collapsed .label-nav-btn button,
+#sidebar-container.collapsed #sidebar-account-dropdown-wrapper {
+    display: none !important;
+}
+
+#sidebar-container.collapsed #btn-sidebar-collapse {
+    display: flex !important;
+    margin: 0 auto !important;
+    width: 38px !important;
+    height: 38px !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 0.75rem !important;
+}
+
+#sidebar-container.collapsed #sidebar-labels-list {
+    padding-right: 0 !important;
+    padding-left: 0 !important;
+    overflow-x: hidden !important;
+}
+
+#sidebar-container.collapsed .folder-nav-btn,
+#sidebar-container.collapsed .label-nav-btn {
+    justify-content: center !important;
+    align-items: center !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    width: 38px !important;
+    height: 38px !important;
+    margin: 2px auto !important;
+    border-radius: 0.75rem !important;
+}
+
+#sidebar-container.collapsed .folder-nav-btn span.flex,
+#sidebar-container.collapsed .label-nav-btn .label-left-content {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    width: 100% !important;
+    height: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    gap: 0 !important;
+}
+
+#sidebar-container.collapsed .label-nav-btn .label-dot {
+    margin: 0 auto !important;
+    width: 10px !important;
+    height: 10px !important;
+    min-width: 10px !important;
+    min-height: 10px !important;
+    display: inline-block !important;
+    flex-shrink: 0 !important;
+}
+
+#sidebar-container.collapsed #sidebar-accounts-mini-list > div {
+    justify-content: center !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+
+#sidebar-container.collapsed #sidebar-collapse-chevron {
+    transform: rotate(180deg);
+}
+
+/* Barra Flotante de Opciones en modo Colapsado (Reemplazo del Tooltip Nativo) */
+#sidebar-hover-bar {
+    pointer-events: none;
+    z-index: 100;
+    white-space: nowrap;
+    box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.2);
+}
+#sidebar-hover-bar.active {
+    display: flex !important;
+}
+
+/* Divisores interactivos ultra-delgados para redimensionar columnas sin consumir espacio */
+#sidebar-resizer,
+#email-list-resizer {
+    width: 1px !important;
+    background-color: #e2e8f0; /* slate-200 */
+    position: relative;
+    cursor: col-resize;
+    transition: background-color 0.15s ease;
+    flex-shrink: 0;
+    z-index: 20;
+}
+
+.dark #sidebar-resizer,
+.dark #email-list-resizer {
+    background-color: #1e293b; /* slate-800 */
+}
+
+/* Área interactiva de arrastre invisible (hitbox) para agarrar fácilmente */
+#sidebar-resizer::after,
+#email-list-resizer::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -4px;
+    width: 9px;
+    cursor: col-resize;
+    z-index: 30;
+}
+
+#sidebar-resizer:hover,
+#sidebar-resizer.active,
+#email-list-resizer:hover,
+#email-list-resizer.active {
+    background-color: #6366f1 !important; /* indigo-500 */
+}
+
+#email-list-container.resizing {
+    transition: none !important;
+}
+
+/* Modo compacto: se activa al reducir tamaño para que no se vea saturado */
+#email-list-container.compact-mode .email-item-snippet {
+    display: none !important;
+}
+#email-list-container.compact-mode .email-list-item {
+    padding-top: 0.35rem !important;
+    padding-bottom: 0.35rem !important;
+}
+#email-list-container.compact-mode #table-pagination-info {
+    display: none !important;
+}
+
+/* Modo ultra-compacto: para anchos menores a 260px */
+#email-list-container.ultra-compact-mode .email-item-date {
+    display: none !important;
+}
+#email-list-container.ultra-compact-mode .email-star-btn {
+    display: none !important;
+}
+#email-list-container.ultra-compact-mode .email-item-subject {
+    padding-left: 1.25rem !important;
+}
+
+/* ================= BARRA DE ACCIONES MASIVAS RESPONSIVA ================= */
+/* 1. Cuando hay suficiente espacio (ancho normal): todos los iconos están en la barra, y el selector (3) se oculta */
+#batch-more-wrapper {
+    display: none !important;
+}
+#batch-more-item-star,
+#batch-more-item-unstar,
+#batch-more-item-labels,
+#batch-more-item-read,
+#batch-more-item-spam,
+#batch-more-item-archive {
+    display: none !important;
+}
+
+/* 2. Modo compacto (<= 390px): falta espacio, se pasan estrellas y etiquetas al selector (3) */
+#email-list-container.compact-mode #batch-more-wrapper {
+    display: flex !important;
+}
+#email-list-container.compact-mode #btn-batch-star,
+#email-list-container.compact-mode #btn-batch-unstar,
+#email-list-container.compact-mode #batch-labels-wrapper {
+    display: none !important;
+}
+#email-list-container.compact-mode #batch-more-item-star,
+#email-list-container.compact-mode #batch-more-item-unstar,
+#email-list-container.compact-mode #batch-more-item-labels {
+    display: flex !important;
+}
+
+/* 3. Modo ultra-compacto (<= 290px): se pasan además leído/no leído y spam al selector (3) */
+#email-list-container.ultra-compact-mode #btn-batch-read,
+#email-list-container.ultra-compact-mode #btn-batch-spam {
+    display: none !important;
+}
+#email-list-container.ultra-compact-mode #batch-more-item-read,
+#email-list-container.ultra-compact-mode #batch-more-item-spam {
+    display: flex !important;
+}
+
+/* 4. Modo extremo (<= 230px): solo queda el botón de eliminar directo y el selector (3) */
+#email-list-container.extreme-compact-mode #btn-batch-archive {
+    display: none !important;
+}
+#email-list-container.extreme-compact-mode #batch-more-item-archive {
+    display: flex !important;
+}
+
+/* Botones de carpetas y etiquetas activas */
+.active-folder {
+    font-weight: 700 !important;
+}
+.active-label {
+    font-weight: 700 !important;
+}
+
+/* Contenedor y Aislamiento de Correos HTML para evitar desbordamiento */
+.email-body-content {
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+}
+
+.email-body-content table {
+    max-width: 100% !important;
+    width: auto !important;
+    table-layout: auto !important;
+}
+
+.email-body-content img {
+    max-width: 100% !important;
+    height: auto !important;
+    object-fit: contain !important;
+}
+
+.email-body-content pre,
+.email-body-content code {
+    white-space: pre-wrap !important;
+    word-break: break-all !important;
+    max-width: 100% !important;
+}
+
+.email-body-content * {
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+/* ================= DISEÑO RESPONSIVO PRÁCTICO (MOBILE & TABLET) ================= */
+@media (max-width: 767px) {
+    /* Barra lateral modo Drawer deslizante */
+    #sidebar-container {
+        position: fixed !important;
+        top: 0 !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        z-index: 50 !important;
+        width: 280px !important;
+        max-width: 85vw !important;
+        height: 100dvh !important;
+        transform: translateX(-100%) !important;
+        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+    }
+
+    #sidebar-container.mobile-open {
+        transform: translateX(0) !important;
+    }
+
+    /* Ocultar divisores de arrastre de escritorio en móvil */
+    #sidebar-resizer,
+    #email-list-resizer {
+        display: none !important;
+    }
+
+    /* Paneles de lista y detalle ocupan el 100% del ancho */
+    #email-list-container {
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    #email-detail-container {
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    /* Ajuste en modales y drawers para pantallas pequeñas */
+    .modal-content {
+        margin: 0.5rem !important;
+        max-width: calc(100vw - 1rem) !important;
+        padding: 1.25rem !important;
+    }
+}
+
+/* ================= JERARQUÍA RESPONSIVA: PREFERENCIA AL ÁREA DEL CORREO ================= */
+
+/* Protección del panel de lectura en todas las resoluciones a partir de tablet */
+@media (min-width: 768px) {
+    #email-detail-container {
+        flex: 1 1 0% !important;
+        min-width: 380px !important;
+    }
+}
+
+/* 1. Tablets horizontales y pantallas intermedias (768px a 1199px):
+   PASO 1: Colapsar primero la barra lateral para priorizar el espacio del correo */
+@media (min-width: 768px) and (max-width: 1199px) {
+    #sidebar-container {
+        width: 64px !important;
+    }
+    #sidebar-container .sidebar-text,
+    #sidebar-container .sidebar-badge,
+    #sidebar-container .sidebar-section-header,
+    #sidebar-container #more-folders-container,
+    #sidebar-container #btn-toggle-more-folders,
+    #sidebar-container #sidebar-accounts-mini-list p,
+    #sidebar-container .label-nav-btn button,
+    #sidebar-container #sidebar-account-dropdown-wrapper {
+        display: none !important;
+    }
+    #sidebar-container #btn-sidebar-collapse {
+        display: flex !important;
+        margin: 0 auto !important;
+        width: 38px !important;
+        height: 38px !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border-radius: 0.75rem !important;
+    }
+    #sidebar-container #sidebar-labels-list {
+        padding-right: 0 !important;
+        padding-left: 0 !important;
+        overflow-x: hidden !important;
+    }
+    #sidebar-container .folder-nav-btn,
+    #sidebar-container .label-nav-btn {
+        justify-content: center !important;
+        align-items: center !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        width: 38px !important;
+        height: 38px !important;
+        margin: 2px auto !important;
+        border-radius: 0.75rem !important;
+    }
+    #sidebar-container .folder-nav-btn span.flex,
+    #sidebar-container .label-nav-btn .label-left-content {
+        display: flex !important;
+        justify-content: center !important;
+        align-items: center !important;
+        width: 100% !important;
+        height: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        gap: 0 !important;
+    }
+    #sidebar-container .label-nav-btn .label-dot {
+        margin: 0 auto !important;
+        width: 10px !important;
+        height: 10px !important;
+        min-width: 10px !important;
+        min-height: 10px !important;
+        display: inline-block !important;
+        flex-shrink: 0 !important;
+    }
+    #sidebar-container #sidebar-collapse-chevron {
+        transform: rotate(180deg);
+    }
+
+    /* Lista de correos moderada (320px) para dejar ~600px al correo en 1024px */
+    #email-list-container {
+        width: 320px !important;
+        min-width: 250px !important;
+    }
+}
+
+/* 2. Tablets en orientación vertical / pantallas compactas (768px a 991px):
+   PASO 2: Reducir luego la lista de correos para maximizar la lectura del correo */
+@media (min-width: 768px) and (max-width: 991px) {
+    #email-list-container {
+        width: 270px !important;
+        min-width: 220px !important;
+    }
+    #email-detail-container {
+        min-width: 420px !important;
+    }
+}
+
+/* ========================================================
+   ESTILOS DEL EDITOR ENRIQUECIDO (WYSIWYG HTML COMPOSER)
+   ======================================================== */
+.composer-modal-expanded {
+    max-width: 95vw !important;
+    width: 95vw !important;
+    height: 92vh !important;
+    max-height: 92vh !important;
+}
+
+#compose-editor,
+#inline-reply-editor {
+    outline: none !important;
+    overflow-y: auto;
+    word-break: break-word;
+}
+
+#compose-editor {
+    min-height: 240px;
+    max-height: 480px;
+}
+
+#inline-reply-editor {
+    min-height: 140px;
+    max-height: 380px;
+}
+
+.composer-modal-expanded #compose-editor {
+    min-height: 420px;
+    max-height: calc(92vh - 280px);
+}
+
+#compose-editor,
+#inline-reply-editor {
+    position: relative;
+}
+
+#compose-editor:empty:before,
+#inline-reply-editor:empty:before {
+    content: attr(data-placeholder);
+    color: #94a3b8;
+    pointer-events: none;
+    display: block;
+    font-style: normal;
+}
+
+#compose-editor.is-empty-body:not(:focus-within):before,
+#inline-reply-editor.is-empty-body:not(:focus-within):before {
+    content: attr(data-placeholder);
+    color: #94a3b8;
+    pointer-events: none;
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    font-style: normal;
+    font-size: 0.875rem;
+    z-index: 1;
+}
+
+.dark #compose-editor:empty:before,
+.dark #inline-reply-editor:empty:before,
+.dark #compose-editor.is-empty-body:not(:focus-within):before,
+.dark #inline-reply-editor.is-empty-body:not(:focus-within):before {
+    color: #64748b;
+}
+
+.mail-signature {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+/* Tipografía interna del editor de correo */
+#compose-editor p,
+#inline-reply-editor p {
+    margin-bottom: 0.5em;
+    min-height: 1.25em;
+}
+
+#compose-editor h1,
+#inline-reply-editor h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-top: 0.75rem;
+    margin-bottom: 0.5rem;
+    line-height: 1.25;
+}
+
+#compose-editor h2,
+#inline-reply-editor h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-top: 0.6rem;
+    margin-bottom: 0.4rem;
+    line-height: 1.3;
+}
+
+#compose-editor h3,
+#inline-reply-editor h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-top: 0.5rem;
+    margin-bottom: 0.35rem;
+    line-height: 1.35;
+}
+
+#compose-editor ul,
+#inline-reply-editor ul {
+    list-style-type: disc;
+    padding-left: 1.5rem;
+    margin-top: 0.35rem;
+    margin-bottom: 0.5rem;
+}
+
+#compose-editor ol,
+#inline-reply-editor ol {
+    list-style-type: decimal;
+    padding-left: 1.5rem;
+    margin-top: 0.35rem;
+    margin-bottom: 0.5rem;
+}
+
+#compose-editor li,
+#inline-reply-editor li {
+    margin-bottom: 0.2rem;
+}
+
+#compose-editor blockquote,
+#inline-reply-editor blockquote {
+    border-left: 3px solid #6366f1;
+    padding-left: 0.85rem;
+    margin: 0.5rem 0;
+    color: #64748b;
+    font-style: italic;
+}
+
+.dark #compose-editor blockquote,
+.dark #inline-reply-editor blockquote {
+    color: #94a3b8;
+    border-left-color: #818cf8;
+}
+
+#compose-editor pre,
+#compose-editor code,
+#inline-reply-editor pre,
+#inline-reply-editor code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    background-color: rgba(148, 163, 184, 0.15);
+    border-radius: 0.375rem;
+    padding: 0.15rem 0.35rem;
+    font-size: 0.85em;
+}
+
+#compose-editor pre,
+#inline-reply-editor pre {
+    padding: 0.75rem;
+    margin: 0.5rem 0;
+    overflow-x: auto;
+    display: block;
+}
+
+#compose-editor a,
+#inline-reply-editor a {
+    color: #4f46e5;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.dark #compose-editor a,
+.dark #inline-reply-editor a {
+    color: #818cf8;
+}
+
+#compose-editor hr,
+#inline-reply-editor hr {
+    border: none;
+    border-top: 1px solid #cbd5e1;
+    margin: 1rem 0;
+}
+
+.dark #compose-editor hr,
+.dark #inline-reply-editor hr {
+    border-top-color: #334155;
+}
+
+/* Botones de la barra de formato */
+.format-btn {
+    padding: 0.375rem;
+    border-radius: 0.375rem;
+    color: #64748b;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+    cursor: pointer;
+}
+
+.format-btn:hover {
+    background-color: #f1f5f9;
+    color: #0f172a;
+}
+
+.dark .format-btn {
+    color: #94a3b8;
+}
+
+.dark .format-btn:hover {
+    background-color: #334155;
+    color: #f8fafc;
+}
+
+.format-btn.active {
+    background-color: #e0e7ff !important;
+    color: #4338ca !important;
+}
+
+.dark .format-btn.active {
+    background-color: #312e81 !important;
+    color: #c7d2fe !important;
+}
+
+/* Paleta de colores emergente */
+.color-picker-palette {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.375rem;
+    padding: 0.5rem;
+}
+
+.color-swatch {
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    transition: transform 0.1s ease;
+}
+
+.color-swatch:hover {
+    transform: scale(1.15);
+}
+
+/* Gestor de Firmas HTML */
+#sig-editor:empty:before {
+    content: attr(placeholder);
+    color: #94a3b8;
+    pointer-events: none;
+    display: block;
+    white-space: pre-wrap;
+}
+
+.sig-preview-html a {
+    color: #4f46e5;
+    text-decoration: underline;
+}
+
+.dark .sig-preview-html a {
+    color: #818cf8;
+}
+
+.sig-preview-html ul {
+    list-style-type: disc;
+    padding-left: 1.25rem;
+    margin: 0.25rem 0;
+}
+
+.sig-preview-html ol {
+    list-style-type: decimal;
+    padding-left: 1.25rem;
+    margin: 0.25rem 0;
+}
+
+.sig-preview-html p {
+    margin: 0.25rem 0;
+}
+
+/* ========================================================
+   ESTILOS DE IMPRESIÓN LIMPIA (PRINT MEDIA)
+   ======================================================== */
+@media print {
+    /* Ocultar elementos generales de la aplicación */
+    header,
+    aside,
+    #sidebar-container,
+    #sidebar-resizer,
+    #emails-list-panel,
+    #emails-list-resizer,
+    #sticky-notifications-container,
+    #sidebar-mobile-backdrop,
+    #sidebar-hover-bar,
+    .drawer-root,
+    .fixed-modal,
+    #inline-reply-container,
+    .email-top-action-bar,
+    #ai-summary-box,
+    button {
+        display: none !important;
+    }
+
+    body {
+        background: #ffffff !important;
+        color: #000000 !important;
+        height: auto !important;
+        overflow: visible !important;
+        font-size: 13px !important;
+    }
+
+    #main-content-layout,
+    #email-detail-panel {
+        width: 100% !important;
+        max-width: 100% !important;
+        height: auto !important;
+        overflow: visible !important;
+        display: block !important;
+        position: static !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        background: #ffffff !important;
+    }
+
+    .email-body-content {
+        max-width: 100% !important;
+        overflow: visible !important;
+    }
+
+    .email-body-content img {
+        max-width: 100% !important;
+        height: auto !important;
+    }
+
+    .email-body-content table {
+        max-width: 100% !important;
+    }
+}
+
+
+
+

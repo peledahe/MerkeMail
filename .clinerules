@@ -1,0 +1,6 @@
+# Reglas Generales del Agente
+
+IMPORTANTE: Antes de resolver cualquier tarea técnica compleja, revisa si existe un Skill relevante en la carpeta `.agents/skills/` y aplica sus instrucciones al pie de la letra.
+
+# Contexto del proyecto
+Utiliza y actualiza el contexto del proyecto ubicado en la carpeta .agents/.context/ para tener una visión general del proyecto y las decisiones de diseño que se han tomado.

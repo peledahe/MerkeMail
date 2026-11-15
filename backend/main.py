@@ -1,0 +1,1451 @@
+import os
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+from fastapi import FastAPI, HTTPException, Query, Body, BackgroundTasks
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr
+
+from backend.database import get_db, init_db, set_setting, get_setting
+from backend.email_service import EmailService
+from backend.calendar_service import CalendarService
+from backend.gemini_service import GeminiService
+from backend.config_service import ConfigService
+from backend.antigravity_agent import AntigravityMailAgent
+from backend.google_oauth import GoogleOAuthService
+
+app = FastAPI(title="MerkeMail - Email & Calendar Manager")
+
+# Habilitar CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+STATIC_DIR = BASE_DIR / "frontend"
+IMG_DIR = BASE_DIR / "img"
+
+# Montar archivos estáticos
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/img", StaticFiles(directory=str(IMG_DIR)), name="img")
+
+# Modelos Pydantic
+class AccountCreate(BaseModel):
+    name: str
+    email: EmailStr
+    provider: str # 'gmail', 'proton', 'custom'
+    imap_host: str
+    imap_port: int
+    imap_ssl: int = 1
+    imap_user: str
+    imap_password: str
+    smtp_host: str
+    smtp_port: int
+    smtp_ssl: int = 1
+    color: str = "#3b82f6"
+    sync_interval: Optional[int] = 5
+
+class AccountUpdate(BaseModel):
+    name: str
+    email: EmailStr
+    provider: str
+    imap_host: str
+    imap_port: int
+    imap_ssl: int = 1
+    imap_user: str
+    imap_password: Optional[str] = None
+    smtp_host: str
+    smtp_port: int
+    smtp_ssl: int = 1
+    color: str = "#3b82f6"
+    sync_interval: Optional[int] = 5
+
+class EmailAttachment(BaseModel):
+    filename: str
+    content_type: Optional[str] = "application/octet-stream"
+    data_base64: str
+    size: Optional[int] = 0
+
+class EmailSendRequest(BaseModel):
+    account_id: int
+    to_email: str
+    subject: str
+    body: str
+    is_html: bool = False
+    cc: Optional[str] = None
+    bcc: Optional[str] = None
+    attachments: Optional[List[EmailAttachment]] = []
+
+class AIDraftRequest(BaseModel):
+    prompt: str
+    tone: str = "formal"
+    language: str = "es"
+    recipient_context: Optional[str] = ""
+    current_draft: Optional[str] = ""
+
+class SmartReplyRequest(BaseModel):
+    user_instruction: Optional[str] = ""
+    current_draft: Optional[str] = ""
+    tone: Optional[str] = "formal"
+
+class AICleanupRequest(BaseModel):
+    prompt: str
+    folder: str = "INBOX"
+    account_id: Optional[int] = None
+
+class BatchDeleteRequest(BaseModel):
+    email_ids: List[int]
+    permanent: bool = False
+
+class BatchActionRequest(BaseModel):
+    email_ids: List[int]
+    action: str  # 'archive', 'spam', 'trash', 'mark_read', 'mark_unread', 'toggle_read', 'star', 'unstar', 'add_label', 'remove_label', 'move_folder'
+    folder: Optional[str] = None
+    label_id: Optional[int] = None
+
+class EventCreateRequest(BaseModel):
+    calendar_id: int
+    title: str
+    start_time: str
+    end_time: str
+    description: Optional[str] = ""
+    location: Optional[str] = ""
+    all_day: int = 0
+    origin_email_id: Optional[int] = None
+
+class SignatureCreateRequest(BaseModel):
+    name: str
+    content: str
+    account_id: Optional[int] = None
+    is_default: int = 0
+
+class LabelCreateRequest(BaseModel):
+    name: str
+    color: Optional[str] = "#3b82f6"
+    account_id: Optional[int] = None
+
+class EmailLabelRequest(BaseModel):
+    label_id: int
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
+
+@app.get("/")
+def serve_index():
+    return FileResponse(STATIC_DIR / "index.html")
+
+@app.get("/manifest.json")
+def serve_manifest():
+    return FileResponse(STATIC_DIR / "manifest.json", media_type="application/manifest+json")
+
+@app.get("/sw.js")
+def serve_sw():
+    return FileResponse(STATIC_DIR / "sw.js", media_type="application/javascript")
+
+
+# --- ENDPOINTS DE GOOGLE OAUTH 2.0 (SIGN IN WITH GOOGLE) ---
+class GoogleCredentialsRequest(BaseModel):
+    client_id: str
+    client_secret: str
+
+@app.get("/api/auth/google/config")
+def get_google_oauth_config():
+    cfg = GoogleOAuthService.get_credentials_config()
+    return {
+        "has_config": bool(cfg["client_id"] and cfg["client_secret"]),
+        "client_id": cfg["client_id"]
+    }
+
+@app.post("/api/auth/google/config")
+def save_google_oauth_config(req: GoogleCredentialsRequest):
+    set_setting("google_client_id", req.client_id.strip())
+    set_setting("google_client_secret", req.client_secret.strip())
+    return {"success": True, "message": "Credenciales OAuth de Google guardadas exitosamente"}
+
+@app.get("/api/auth/google/url")
+def get_google_auth_url(request: Request, redirect_uri: Optional[str] = None):
+    effective_uri = redirect_uri or f"{str(request.base_url).rstrip('/')}/api/auth/google/callback"
+    url = GoogleOAuthService.get_authorization_url(effective_uri)
+    if not url:
+        return {
+            "has_config": False,
+            "message": "Configura tu Client ID y Client Secret de Google Cloud Console primero."
+        }
+    return {"has_config": True, "url": url}
+
+@app.get("/api/auth/google/callback", response_class=HTMLResponse)
+def google_oauth_callback(request: Request, code: Optional[str] = None, error: Optional[str] = None):
+    if error:
+        return HTMLResponse(content=f"""
+            <html><body style="font-family: sans-serif; text-align: center; padding: 40px; background: #0f172a; color: #fff;">
+                <h2 style="color: #ef4444;">Autenticación Cancelada</h2>
+                <p>Google devolvió el error: {error}</p>
+                <button onclick="window.close()" style="padding: 10px 20px; background: #334155; color: #fff; border: none; border-radius: 8px; cursor: pointer;">Cerrar Ventana</button>
+            </body></html>
+        """)
+
+    if not code:
+        return HTMLResponse(content="<h3>No se recibió código de autorización</h3>")
+
+    try:
+        redirect_uri = f"{str(request.base_url).rstrip('/')}/api/auth/google/callback"
+        result = GoogleOAuthService.exchange_code_for_tokens(code, redirect_uri)
+        user_email = result.get("email", "")
+
+        return HTMLResponse(content=f"""
+            <!DOCTYPE html>
+            <html>
+            <head><title>Cuenta Conectada</title></head>
+            <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: #fff;">
+                <div style="text-align: center; padding: 30px; background: #1e293b; border-radius: 16px; border: 1px solid #334155; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+                    <div style="width: 50px; height: 50px; background: #10b981; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;">
+                        <svg style="width: 28px; height: 28px; fill: white;" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                    </div>
+                    <h2 style="margin: 0 0 8px; font-size: 18px;">¡Conexión Exitosa con Google!</h2>
+                    <p style="color: #94a3b8; font-size: 14px; margin: 0 0 20px;">Tu cuenta <strong>{user_email}</strong> ha sido conectada y autorizada.</p>
+                    <p style="color: #64748b; font-size: 12px;">Esta ventana se cerrará automáticamente...</p>
+                </div>
+                <script>
+                    if (window.opener) {{
+                        window.opener.postMessage({{ type: 'GOOGLE_AUTH_SUCCESS', email: '{user_email}' }}, '*');
+                        setTimeout(() => window.close(), 1500);
+                    }} else {{
+                        setTimeout(() => window.location.href = '/', 1500);
+                    }}
+                </script>
+            </body>
+            </html>
+        """)
+    except Exception as e:
+        return HTMLResponse(content=f"""
+            <html><body style="font-family: sans-serif; text-align: center; padding: 40px; background: #0f172a; color: #fff;">
+                <h2 style="color: #ef4444;">Error al Conectar Cuenta</h2>
+                <p>{str(e)}</p>
+                <button onclick="window.close()" style="padding: 10px 20px; background: #334155; color: #fff; border: none; border-radius: 8px; cursor: pointer;">Cerrar</button>
+            </body></html>
+        """)
+
+# --- ENDPOINTS DE AJUSTES Y API KEYS ---
+@app.get("/api/settings")
+def get_settings():
+    return ConfigService.get_settings()
+
+@app.post("/api/settings")
+def update_settings(data: Dict[str, Any] = Body(...)):
+    return ConfigService.update_settings(data)
+
+@app.post("/api/settings/test-gemini")
+def test_gemini_key(data: Dict[str, str] = Body(...)):
+    key = data.get("api_key", "")
+    return ConfigService.test_gemini(key)
+
+@app.post("/api/settings/models")
+def get_available_models(data: Dict[str, str] = Body(...)):
+    key = data.get("api_key", "")
+    return GeminiService.test_and_list_models(key)
+
+# --- ENDPOINTS DE APLICACIÓN DE ESCRITORIO (LINUX / UBUNTU) ---
+@app.get("/api/desktop/settings")
+def get_desktop_settings():
+    return ConfigService.get_desktop_settings()
+
+@app.post("/api/desktop/settings")
+def update_desktop_settings(data: Dict[str, Any] = Body(...)):
+    return ConfigService.update_desktop_settings(data)
+
+@app.post("/api/desktop/reinstall")
+def reinstall_desktop():
+    import subprocess
+    script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts", "install_desktop.sh")
+    if os.path.exists(script_path):
+        res = subprocess.run([script_path], capture_output=True, text=True)
+        if res.returncode == 0:
+            return {"success": True, "message": "MerkeMail Desktop sincronizado e instalado exitosamente"}
+        else:
+            raise HTTPException(status_code=500, detail=res.stderr or "Error durante la instalación")
+    raise HTTPException(status_code=404, detail="Script de instalación no encontrado")
+
+# --- ENDPOINTS DE CUENTAS ---
+@app.get("/api/accounts")
+def list_accounts():
+    conn = get_db()
+    rows = conn.execute("SELECT id, name, email, provider, imap_host, imap_port, imap_user, smtp_host, smtp_port, is_active, color, sync_interval, avatar_url FROM accounts ORDER BY id ASC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@app.get("/api/avatar/{email:path}")
+def get_avatar_for_email(email: str):
+    """Devuelve o redirige al avatar oficial en caché para la cuenta o remitente."""
+    clean_email = email.lower().strip()
+    # Si viene con nombre tipo "Google <families-noreply@google.com>", extraer el email
+    if "<" in clean_email and ">" in clean_email:
+        clean_email = clean_email.split("<")[1].split(">")[0].strip()
+
+    conn = get_db()
+    row = conn.execute("SELECT avatar_url FROM accounts WHERE LOWER(email) = ?", (clean_email,)).fetchone()
+    conn.close()
+
+    if row and row["avatar_url"]:
+        return RedirectResponse(
+            url=row["avatar_url"],
+            status_code=307,
+            headers={"Cache-Control": "public, max-age=604800, immutable"}
+        )
+
+    # Extraer dominio para remitentes generales
+    domain = clean_email.split("@")[-1] if "@" in clean_email else clean_email
+    domain = domain.strip("<>[](), ")
+    if domain and "." in domain:
+        favicon_url = f"https://www.google.com/s2/favicons?domain={domain}&sz=128"
+        return RedirectResponse(
+            url=favicon_url,
+            status_code=307,
+            headers={"Cache-Control": "public, max-age=604800, immutable"}
+        )
+
+    raise HTTPException(status_code=404, detail="Avatar no disponible")
+
+@app.get("/api/accounts/{account_id}")
+def get_account_detail(account_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+    data = dict(row)
+    # Devolver password vacío para evitar exponerlo en texto plano
+    data["imap_password"] = ""
+    return data
+
+@app.post("/api/accounts")
+def create_account(account: AccountCreate):
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        interval = account.sync_interval if account.sync_interval is not None else 5
+        imap_user = (account.imap_user or "").strip() or account.email
+        if imap_user.endswith("@gmail.com") and not account.email.endswith("@gmail.com") and "gmail.com" not in (account.imap_host or ""):
+            imap_user = account.email
+
+        cursor.execute('''
+            INSERT INTO accounts (name, email, provider, imap_host, imap_port, imap_ssl, imap_user, imap_password, smtp_host, smtp_port, smtp_ssl, color, sync_interval)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            account.name, account.email, account.provider, account.imap_host, account.imap_port,
+            account.imap_ssl, imap_user, account.imap_password, account.smtp_host,
+            account.smtp_port, account.smtp_ssl, account.color, interval
+        ))
+        conn.commit()
+        acc_id = cursor.lastrowid
+        return {"success": True, "id": acc_id, "message": "Cuenta agregada exitosamente"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+@app.put("/api/accounts/{account_id}")
+def update_account(account_id: int, account: AccountUpdate):
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        interval = account.sync_interval if account.sync_interval is not None else 5
+        imap_user = (account.imap_user or "").strip() or account.email
+        if imap_user.endswith("@gmail.com") and not account.email.endswith("@gmail.com") and "gmail.com" not in (account.imap_host or ""):
+            imap_user = account.email
+
+        if account.imap_password and account.imap_password.strip():
+            cursor.execute('''
+                UPDATE accounts SET name = ?, email = ?, provider = ?, imap_host = ?, imap_port = ?,
+                imap_ssl = ?, imap_user = ?, imap_password = ?, smtp_host = ?, smtp_port = ?, smtp_ssl = ?, color = ?, sync_interval = ?
+                WHERE id = ?
+            ''', (
+                account.name, account.email, account.provider, account.imap_host, account.imap_port,
+                account.imap_ssl, imap_user, account.imap_password, account.smtp_host,
+                account.smtp_port, account.smtp_ssl, account.color, interval, account_id
+            ))
+        else:
+            cursor.execute('''
+                UPDATE accounts SET name = ?, email = ?, provider = ?, imap_host = ?, imap_port = ?,
+                imap_ssl = ?, imap_user = ?, smtp_host = ?, smtp_port = ?, smtp_ssl = ?, color = ?, sync_interval = ?
+                WHERE id = ?
+            ''', (
+                account.name, account.email, account.provider, account.imap_host, account.imap_port,
+                account.imap_ssl, imap_user, account.smtp_host, account.smtp_port,
+                account.smtp_ssl, account.color, interval, account_id
+            ))
+        conn.commit()
+        return {"success": True, "message": "Cuenta actualizada exitosamente"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+@app.post("/api/accounts/test")
+def test_account_connection(account: AccountCreate):
+    acc_data = account.model_dump()
+    imap_user = (acc_data.get("imap_user") or "").strip() or acc_data.get("email", "")
+    if imap_user.endswith("@gmail.com") and not acc_data.get("email", "").endswith("@gmail.com") and "gmail.com" not in (acc_data.get("imap_host") or ""):
+        imap_user = acc_data.get("email", "")
+    acc_data["imap_user"] = imap_user
+    result = EmailService.test_connection(acc_data)
+    return result
+
+@app.post("/api/accounts/{account_id}/test")
+def test_saved_account(account_id: int):
+    account = EmailService.get_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+    result = EmailService.test_connection(account)
+    return result
+
+@app.delete("/api/accounts/{account_id}")
+def delete_account(account_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": "Cuenta eliminada correctamente"}
+
+@app.get("/api/image-proxy")
+def image_proxy(url: str = Query(..., description="URL de la imagen remota a servir")):
+    """Proxy seguro para servir imágenes remotas de correos con protección contra bloqueo de hotlinking."""
+    if not url or not (url.startswith("http://") or url.startswith("https://")):
+        raise HTTPException(status_code=400, detail="URL inválida")
+    try:
+        import requests
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+        }
+        try:
+            res = requests.get(url, headers=headers, timeout=12)
+        except requests.exceptions.SSLError:
+            res = requests.get(url, headers=headers, timeout=12, verify=False)
+        content_type = res.headers.get("content-type", "image/jpeg")
+        return Response(content=res.content, media_type=content_type, headers={"Cache-Control": "public, max-age=604800"})
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"No se pudo cargar la imagen remota: {e}")
+
+@app.get("/api/attachments/{attachment_id}/download")
+def download_attachment(attachment_id: int):
+    """Descarga el contenido de un archivo adjunto, extrayéndolo de disco o de Gmail API bajo demanda."""
+    conn = get_db()
+    row = conn.execute('''
+        SELECT a.id, a.email_id, a.filename, a.content_type, a.size, a.remote_id, a.file_path,
+               e.account_id, e.uid, acc.provider
+        FROM attachments a
+        JOIN emails e ON a.email_id = e.id
+        JOIN accounts acc ON e.account_id = acc.id
+        WHERE a.id = ?
+    ''', (attachment_id,)).fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Archivo adjunto no encontrado")
+
+    filename = row["filename"] or f"adjunto_{attachment_id}"
+    content_type = row["content_type"] or "application/octet-stream"
+    file_path = row["file_path"]
+
+    # 1. Si ya existe archivo en disco
+    if file_path and os.path.exists(file_path):
+        return FileResponse(file_path, filename=filename, media_type=content_type)
+
+    safe_filename = "".join(c for c in filename if c.isalnum() or c in "._- ")
+    local_path = os.path.join("data", "attachments", f"{attachment_id}_{safe_filename}")
+    if os.path.exists(local_path):
+        return FileResponse(local_path, filename=filename, media_type=content_type)
+
+    # 2. Si proviene de Google OAuth y tiene remote_id
+    if row["provider"] in ("google", "gmail") and row["remote_id"]:
+        try:
+            creds = GoogleOAuthService.get_valid_credentials(row["account_id"])
+            if not creds:
+                raise HTTPException(status_code=401, detail="Credenciales expiradas para esta cuenta")
+            from googleapiclient.discovery import build
+            import base64
+            service = build('gmail', 'v1', credentials=creds)
+            att_resp = service.users().messages().attachments().get(
+                userId='me', messageId=row["uid"], id=row["remote_id"]
+            ).execute()
+            data_b64 = att_resp.get("data", "")
+            raw_bytes = base64.urlsafe_b64decode(data_b64)
+
+            os.makedirs(os.path.join("data", "attachments"), exist_ok=True)
+            with open(local_path, "wb") as f:
+                f.write(raw_bytes)
+
+            conn = get_db()
+            conn.execute("UPDATE attachments SET file_path = ? WHERE id = ?", (local_path, attachment_id))
+            conn.commit()
+            conn.close()
+
+            return Response(
+                content=raw_bytes,
+                media_type=content_type,
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error obteniendo adjunto desde Gmail: {e}")
+
+    raise HTTPException(status_code=404, detail="El contenido del archivo no está disponible")
+
+# --- ENDPOINTS DE CORREOS ---
+@app.get("/api/emails/unread-counts")
+def get_unread_counts(account_id: Optional[int] = None):
+    conn = get_db()
+    acc_filter = " AND account_id = ?" if account_id else ""
+    acc_param = (account_id,) if account_id else ()
+
+    # 1. Conteo de INBOX (incluye INBOX y categorías estándar según vista Gmail)
+    inbox_row = conn.execute(
+        f"SELECT COUNT(*) as cnt FROM emails WHERE is_read = 0 AND folder IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS'){acc_filter}",
+        acc_param
+    ).fetchone()
+    inbox_cnt = inbox_row["cnt"] if inbox_row else 0
+
+    # 2. Conteo de Destacados (STARRED)
+    starred_row = conn.execute(
+        f"SELECT COUNT(*) as cnt FROM emails WHERE is_read = 0 AND is_starred = 1{acc_filter}",
+        acc_param
+    ).fetchone()
+    starred_cnt = starred_row["cnt"] if starred_row else 0
+
+    # 3. Conteo de Todos (ALL)
+    all_row = conn.execute(
+        f"SELECT COUNT(*) as cnt FROM emails WHERE is_read = 0{acc_filter}",
+        acc_param
+    ).fetchone()
+    all_cnt = all_row["cnt"] if all_row else 0
+
+    # 4. Conteos de carpetas directas
+    folder_rows = conn.execute(
+        f"SELECT folder, COUNT(*) as cnt FROM emails WHERE is_read = 0{acc_filter} GROUP BY folder",
+        acc_param
+    ).fetchall()
+    
+    folders_dict = {
+        "INBOX": inbox_cnt,
+        "STARRED": starred_cnt,
+        "ALL": all_cnt,
+        "SENT": 0,
+        "DRAFT": 0,
+        "SPAM": 0,
+        "TRASH": 0,
+        "IMPORTANT": 0,
+        "CATEGORY_PROMOTIONS": 0,
+        "CATEGORY_SOCIAL": 0,
+        "CATEGORY_UPDATES": 0,
+        "CATEGORY_FORUMS": 0
+    }
+    for r in folder_rows:
+        if r["folder"] != "INBOX":
+            folders_dict[r["folder"]] = r["cnt"]
+
+    # 5. Conteos por etiquetas (labels)
+    acc_label_filter = " AND e.account_id = ?" if account_id else ""
+    label_rows = conn.execute(
+        f"""SELECT el.label_id, COUNT(DISTINCT e.id) as cnt 
+            FROM email_labels el 
+            JOIN emails e ON el.email_id = e.id 
+            WHERE e.is_read = 0{acc_label_filter} 
+            GROUP BY el.label_id""",
+        acc_param
+    ).fetchall()
+    labels_dict = {str(r["label_id"]): r["cnt"] for r in label_rows}
+
+    conn.close()
+    return {
+        "folders": folders_dict,
+        "labels": labels_dict
+    }
+
+@app.get("/api/emails")
+def get_emails(
+    folder: Optional[str] = "INBOX",
+    account_id: Optional[int] = None,
+    label_id: Optional[int] = None,
+    label_ids: Optional[str] = None,
+    search: Optional[str] = None,
+    sender: Optional[str] = None,
+    recipient: Optional[str] = None,
+    subject: Optional[str] = None,
+    has_attachments: Optional[bool] = None,
+    is_starred: Optional[bool] = None,
+    read_status: Optional[str] = None,
+    unread_only: bool = False,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    ai_urgency: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 15,
+    auto_sync: bool = True
+):
+    conn = get_db()
+
+    # Si no se pasó account_id, obtener la cuenta activa principal
+    effective_acc_id = account_id
+    if not effective_acc_id:
+        acc = conn.execute("SELECT id FROM accounts WHERE is_active = 1 ORDER BY id ASC LIMIT 1").fetchone()
+        if acc:
+            effective_acc_id = acc["id"]
+
+    query = '''
+        SELECT emails.id, emails.account_id, emails.uid, emails.folder, emails.sender,
+               emails.sender_name, emails.recipient, emails.subject, emails.snippet,
+               emails.date, emails.is_read, emails.is_starred, emails.has_attachments,
+               emails.ai_urgency, accounts.name as account_name, accounts.color as account_color
+        FROM emails
+        LEFT JOIN accounts ON emails.account_id = accounts.id
+        WHERE 1=1
+    '''
+    count_query = "SELECT COUNT(*) as total FROM emails WHERE 1=1"
+    params = []
+
+    # 1. Filtro de Etiquetas (Múltiples o Individual)
+    if label_ids and label_ids.strip():
+        l_ids = [int(x.strip()) for x in label_ids.split(",") if x.strip().isdigit()]
+        if l_ids:
+            ph = ",".join("?" * len(l_ids))
+            query += f" AND emails.id IN (SELECT email_id FROM email_labels WHERE label_id IN ({ph}))"
+            count_query += f" AND emails.id IN (SELECT email_id FROM email_labels WHERE label_id IN ({ph}))"
+            params.extend(l_ids)
+    elif label_id:
+        query += " AND emails.id IN (SELECT email_id FROM email_labels WHERE label_id = ?)"
+        count_query += " AND emails.id IN (SELECT email_id FROM email_labels WHERE label_id = ?)"
+        params.append(label_id)
+
+    # 2. Filtro de Carpeta
+    if folder == "STARRED":
+        query += " AND emails.is_starred = 1"
+        count_query += " AND emails.is_starred = 1"
+    elif not folder or folder in ["ALL", "TODOS"]:
+        pass
+    elif folder == "INBOX":
+        query += " AND emails.folder IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS')"
+        count_query += " AND emails.folder IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS')"
+    elif folder:
+        query += " AND emails.folder = ?"
+        count_query += " AND emails.folder = ?"
+        params.append(folder)
+    
+    # 3. Cuenta
+    if account_id:
+        query += " AND emails.account_id = ?"
+        count_query += " AND emails.account_id = ?"
+        params.append(account_id)
+
+    # 4. Estado de Lectura
+    if read_status == "unread" or unread_only:
+        query += " AND emails.is_read = 0"
+        count_query += " AND emails.is_read = 0"
+    elif read_status == "read":
+        query += " AND emails.is_read = 1"
+        count_query += " AND emails.is_read = 1"
+
+    # 5. Remitente
+    if sender and sender.strip():
+        s_param = f"%{sender.strip()}%"
+        query += " AND (emails.sender LIKE ? OR emails.sender_name LIKE ?)"
+        count_query += " AND (emails.sender LIKE ? OR emails.sender_name LIKE ?)"
+        params.extend([s_param, s_param])
+
+    # 6. Destinatario
+    if recipient and recipient.strip():
+        r_param = f"%{recipient.strip()}%"
+        query += " AND emails.recipient LIKE ?"
+        count_query += " AND emails.recipient LIKE ?"
+        params.append(r_param)
+
+    # 7. Asunto
+    if subject and subject.strip():
+        sub_param = f"%{subject.strip()}%"
+        query += " AND emails.subject LIKE ?"
+        count_query += " AND emails.subject LIKE ?"
+        params.append(sub_param)
+
+    # 8. Archivos Adjuntos
+    if has_attachments is True:
+        query += " AND emails.has_attachments = 1"
+        count_query += " AND emails.has_attachments = 1"
+    elif has_attachments is False:
+        query += " AND (emails.has_attachments = 0 OR emails.has_attachments IS NULL)"
+        count_query += " AND (emails.has_attachments = 0 OR emails.has_attachments IS NULL)"
+
+    # 9. Destacados / Estrella
+    if is_starred is True:
+        query += " AND emails.is_starred = 1"
+        count_query += " AND emails.is_starred = 1"
+    elif is_starred is False:
+        query += " AND (emails.is_starred = 0 OR emails.is_starred IS NULL)"
+        count_query += " AND (emails.is_starred = 0 OR emails.is_starred IS NULL)"
+
+    # 10. Rango de Fechas y Horas (con normalización ISO)
+    if date_from and date_from.strip():
+        d_from = date_from.strip().replace("T", " ")
+        if len(d_from) == 16:
+            d_from += ":00"
+        query += " AND REPLACE(emails.date, 'T', ' ') >= ?"
+        count_query += " AND REPLACE(emails.date, 'T', ' ') >= ?"
+        params.append(d_from)
+
+    if date_to and date_to.strip():
+        d_to = date_to.strip().replace("T", " ")
+        if len(d_to) == 16:
+            d_to += ":59"
+        query += " AND REPLACE(emails.date, 'T', ' ') <= ?"
+        count_query += " AND REPLACE(emails.date, 'T', ' ') <= ?"
+        params.append(d_to)
+
+    # 11. Urgencia IA
+    if ai_urgency and ai_urgency.strip():
+        query += " AND LOWER(emails.ai_urgency) = LOWER(?)"
+        count_query += " AND LOWER(emails.ai_urgency) = LOWER(?)"
+        params.append(ai_urgency.strip())
+
+    # 12. Búsqueda Global por Palabra Clave
+    if search and search.strip():
+        search_param = f"%{search.strip()}%"
+        query += " AND (emails.subject LIKE ? OR emails.sender LIKE ? OR emails.snippet LIKE ? OR emails.body_text LIKE ?)"
+        count_query += " AND (emails.subject LIKE ? OR emails.sender LIKE ? OR emails.snippet LIKE ? OR emails.body_text LIKE ?)"
+        params.extend([search_param, search_param, search_param, search_param])
+
+    # Total de registros
+    total_records = conn.execute(count_query, params).fetchone()["total"]
+
+    # Si no hay registros y auto_sync está habilitado (y no es una búsqueda manual), intentar sincronizar la carpeta o etiqueta
+    has_advanced = bool(search or sender or recipient or subject or date_from or date_to or label_ids or has_attachments is not None or is_starred is not None or read_status or ai_urgency)
+    if total_records == 0 and auto_sync and not has_advanced:
+        try:
+            if account_id:
+                sync_accs = [account_id]
+            else:
+                acc_rows = conn.execute("SELECT id FROM accounts WHERE is_active = 1").fetchall()
+                sync_accs = [r["id"] for r in acc_rows]
+
+            for s_id in sync_accs:
+                if label_id:
+                    EmailService.sync_mailbox(s_id, folder=None, label_id=label_id, max_emails=25)
+                elif folder:
+                    EmailService.sync_mailbox(s_id, folder=folder, label_id=None, max_emails=25)
+            total_records = conn.execute(count_query, params).fetchone()["total"]
+        except Exception as sync_err:
+            print(f"Auto-sync aviso: {sync_err}")
+
+    # Paginación (orden descendente estricto por fecha y hora de recibido en el buzón: más nuevo arriba, más viejo al final)
+    offset = (page - 1) * page_size
+    query += " ORDER BY COALESCE(datetime(emails.date), emails.date) DESC, emails.id DESC LIMIT ? OFFSET ?"
+    query_params = params + [page_size, offset]
+
+    rows = conn.execute(query, query_params).fetchall()
+    email_items = [dict(r) for r in rows]
+
+    # Adjuntar etiquetas asignadas a los correos obtenidos
+    if email_items:
+        email_ids = [e["id"] for e in email_items]
+        placeholders = ",".join("?" for _ in email_ids)
+        lbl_rows = conn.execute(f'''
+            SELECT el.email_id, l.id as label_id, l.name as label_name, l.color as label_color
+            FROM email_labels el
+            JOIN labels l ON el.label_id = l.id
+            WHERE el.email_id IN ({placeholders})
+        ''', email_ids).fetchall()
+        labels_by_email = {}
+        for lr in lbl_rows:
+            labels_by_email.setdefault(lr["email_id"], []).append({
+                "id": lr["label_id"],
+                "name": lr["label_name"],
+                "color": lr["label_color"]
+            })
+        for e in email_items:
+            e["labels"] = labels_by_email.get(e["id"], [])
+
+    conn.close()
+
+    return {
+        "items": email_items,
+        "total": total_records,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total_records + page_size - 1) // page_size if total_records > 0 else 1
+    }
+
+@app.get("/api/emails/{email_id}")
+def get_email_detail(email_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+
+    email_data = dict(row)
+    label_rows = conn.execute('''
+        SELECT l.id, l.name, l.color
+        FROM labels l
+        JOIN email_labels el ON l.id = el.label_id
+        WHERE el.email_id = ?
+        ORDER BY l.name ASC
+    ''', (email_id,)).fetchall()
+    email_data["labels"] = [dict(lr) for lr in label_rows]
+
+    # Adjuntar lista de archivos adjuntos registrados
+    att_rows = conn.execute('''
+        SELECT id, filename, content_type, size
+        FROM attachments
+        WHERE email_id = ?
+        ORDER BY id ASC
+    ''', (email_id,)).fetchall()
+    
+    # Si tiene adjuntos marcados pero aún no están en la tabla, extraerlos bajo demanda
+    if email_data.get("has_attachments") and not att_rows and email_data.get("uid"):
+        try:
+            acc_row = conn.execute("SELECT provider FROM accounts WHERE id = ?", (email_data["account_id"],)).fetchone()
+            if acc_row and acc_row["provider"] in ("google", "gmail"):
+                creds = GoogleOAuthService.get_valid_credentials(email_data["account_id"])
+                if creds:
+                    from googleapiclient.discovery import build
+                    service = build('gmail', 'v1', credentials=creds)
+                    msg = service.users().messages().get(userId='me', id=email_data["uid"], format='full').execute()
+                    atts = GoogleOAuthService._extract_attachments_metadata(msg.get("payload", {}))
+                    for att in atts:
+                        conn.execute('''
+                            INSERT INTO attachments (email_id, filename, content_type, size, remote_id)
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (email_id, att["filename"], att["content_type"], att["size"], att.get("remote_id")))
+                    conn.commit()
+                    att_rows = conn.execute('''
+                        SELECT id, filename, content_type, size
+                        FROM attachments WHERE email_id = ? ORDER BY id ASC
+                    ''', (email_id,)).fetchall()
+        except Exception as att_err:
+            print(f"Aviso extrayendo adjuntos bajo demanda para email {email_id}: {att_err}")
+
+    email_data["attachments"] = [dict(ar) for ar in att_rows]
+
+    # Resolver CIDs inline en tiempo real si aún contiene cid:
+    if email_data.get("body_html") and "cid:" in email_data["body_html"]:
+        try:
+            resolved_html = GoogleOAuthService.resolve_cids_for_email(email_id, conn)
+            if resolved_html:
+                email_data["body_html"] = resolved_html
+        except Exception as cid_err:
+            print(f"Aviso resolviendo CIDs para email {email_id}: {cid_err}")
+
+    conn.close()
+    return email_data
+
+@app.post("/api/emails/{email_id}/read")
+def mark_email_as_read(email_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT id, is_read, account_id, uid, folder FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+    
+    if not row["is_read"]:
+        conn.execute("UPDATE emails SET is_read = 1 WHERE id = ?", (email_id,))
+        conn.commit()
+
+        try:
+            acc = conn.execute("SELECT id, provider FROM accounts WHERE id = ?", (row["account_id"],)).fetchone()
+            if acc and acc["provider"] in ("google", "gmail") and row["uid"]:
+                from backend.google_oauth import GoogleOAuthService
+                GoogleOAuthService.modify_message_labels(acc["id"], row["uid"], remove_labels=["UNREAD"])
+        except Exception as e:
+            print(f"Aviso sincronizando estado de lectura en Gmail remoto: {e}")
+
+    conn.close()
+    return {"status": "ok", "email_id": email_id, "is_read": 1}
+
+@app.post("/api/emails/{email_id}/toggle-read")
+def toggle_email_read(email_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT id, is_read, account_id, uid, folder FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+    
+    new_read = 0 if row["is_read"] else 1
+    conn.execute("UPDATE emails SET is_read = ? WHERE id = ?", (new_read, email_id))
+    conn.commit()
+
+    try:
+        acc = conn.execute("SELECT id, provider FROM accounts WHERE id = ?", (row["account_id"],)).fetchone()
+        if acc and acc["provider"] in ("google", "gmail") and row["uid"]:
+            from backend.google_oauth import GoogleOAuthService
+            if new_read:
+                GoogleOAuthService.modify_message_labels(acc["id"], row["uid"], remove_labels=["UNREAD"])
+            else:
+                GoogleOAuthService.modify_message_labels(acc["id"], row["uid"], add_labels=["UNREAD"])
+    except Exception as e:
+        print(f"Aviso sincronizando alternancia de lectura en Gmail remoto: {e}")
+
+    conn.close()
+    return {"status": "ok", "email_id": email_id, "is_read": new_read}
+
+@app.post("/api/emails/sync")
+def sync_emails(account_id: Optional[int] = None, folder: Optional[str] = "INBOX", label_id: Optional[int] = None):
+    conn = get_db()
+    if account_id:
+        accounts = conn.execute("SELECT id FROM accounts WHERE id = ?", (account_id,)).fetchall()
+    else:
+        accounts = conn.execute("SELECT id FROM accounts WHERE is_active = 1").fetchall()
+    conn.close()
+
+    if not accounts:
+        return {"success": False, "error": "No hay cuentas configuradas"}
+
+    total_synced = 0
+    errors = []
+
+    def sync_one(acc_id):
+        try:
+            return acc_id, EmailService.sync_mailbox(acc_id, folder=folder, label_id=label_id)
+        except Exception as e:
+            return acc_id, {"success": False, "error": str(e)}
+
+    import concurrent.futures
+    workers = min(len(accounts), 4)
+    if workers > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(sync_one, acc["id"]) for acc in accounts]
+            for f in concurrent.futures.as_completed(futures):
+                acc_id, res = f.result()
+                if res.get("success"):
+                    total_synced += res.get("synced_count", 0)
+                elif res.get("error"):
+                    errors.append(f"Cuenta {acc_id}: {res.get('error')}")
+    else:
+        for acc in accounts:
+            acc_id, res = sync_one(acc["id"])
+            if res.get("success"):
+                total_synced += res.get("synced_count", 0)
+            elif res.get("error"):
+                errors.append(f"Cuenta {acc_id}: {res.get('error')}")
+
+    return {
+        "success": True,
+        "synced_count": total_synced,
+        "errors": errors if errors else None
+    }
+
+@app.post("/api/emails/send")
+def send_email(req: EmailSendRequest):
+    attachments_data = [a.dict() for a in req.attachments] if req.attachments else []
+    result = EmailService.send_email(
+        account_id=req.account_id,
+        to_email=req.to_email,
+        subject=req.subject,
+        body=req.body,
+        is_html=req.is_html,
+        cc=req.cc,
+        bcc=req.bcc,
+        attachments=attachments_data
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Error al enviar correo"))
+    return result
+
+@app.post("/api/emails/{email_id}/star")
+def toggle_star(email_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT is_starred FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+    new_status = 0 if row["is_starred"] else 1
+    conn.execute("UPDATE emails SET is_starred = ? WHERE id = ?", (new_status, email_id))
+    conn.commit()
+    conn.close()
+    return {"success": True, "is_starred": new_status}
+
+@app.post("/api/emails/{email_id}/not-spam")
+def mark_email_not_spam(email_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT account_id, uid, folder FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+    
+    conn.execute("UPDATE emails SET folder = 'INBOX' WHERE id = ?", (email_id,))
+    conn.commit()
+    account_id = row["account_id"]
+    uid = row["uid"]
+    conn.close()
+
+    try:
+        GoogleOAuthService.modify_message_labels(account_id, uid, add_labels=["INBOX"], remove_labels=["SPAM"])
+    except Exception as e:
+        print(f"Aviso modificando etiquetas en Gmail para not-spam: {e}")
+
+    return {"success": True, "message": "Correo marcado como legítimo y movido a Recibidos"}
+
+@app.delete("/api/emails/{email_id}")
+def delete_email(email_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": "Correo eliminado"}
+
+@app.post("/api/emails/batch-delete")
+def batch_delete_emails(req: BatchDeleteRequest):
+    if not req.email_ids:
+        return {"success": True, "deleted_count": 0}
+    conn = get_db()
+    placeholders = ",".join("?" for _ in req.email_ids)
+    if req.permanent:
+        conn.execute(f"DELETE FROM emails WHERE id IN ({placeholders})", req.email_ids)
+    else:
+        conn.execute(f"UPDATE emails SET folder = 'TRASH' WHERE id IN ({placeholders})", req.email_ids)
+    conn.commit()
+    conn.close()
+    return {"success": True, "deleted_count": len(req.email_ids), "message": f"{len(req.email_ids)} correos procesados exitosamente"}
+
+@app.post("/api/emails/batch-action")
+def batch_action_emails(req: BatchActionRequest):
+    if not req.email_ids:
+        return {"success": True, "count": 0, "message": "No hay correos seleccionados"}
+    conn = get_db()
+    placeholders = ",".join("?" for _ in req.email_ids)
+
+    if req.action == "archive":
+        conn.execute(
+            f"UPDATE emails SET folder = CASE WHEN folder = 'ARCHIVE' THEN 'INBOX' ELSE 'ARCHIVE' END WHERE id IN ({placeholders})",
+            req.email_ids
+        )
+        msg = f"{len(req.email_ids)} correos procesados (Archivado / Restaurar a Recibidos)"
+    elif req.action == "spam":
+        conn.execute(
+            f"UPDATE emails SET folder = CASE WHEN folder = 'SPAM' THEN 'INBOX' ELSE 'SPAM' END WHERE id IN ({placeholders})",
+            req.email_ids
+        )
+        msg = f"{len(req.email_ids)} correos procesados (Spam / Restaurar a Recibidos)"
+    elif req.action == "trash":
+        conn.execute(
+            f"UPDATE emails SET folder = CASE WHEN folder = 'TRASH' THEN 'INBOX' ELSE 'TRASH' END WHERE id IN ({placeholders})",
+            req.email_ids
+        )
+        msg = f"{len(req.email_ids)} correos procesados (Papelera / Restaurados)"
+    elif req.action in ("mark_read", "mark_unread", "toggle_read"):
+        conn.execute(
+            f"UPDATE emails SET is_read = CASE WHEN is_read = 1 THEN 0 ELSE 1 END WHERE id IN ({placeholders})",
+            req.email_ids
+        )
+        msg = f"Estado de lectura alternado en {len(req.email_ids)} correos"
+    elif req.action in ("star", "unstar", "toggle_star"):
+        conn.execute(
+            f"UPDATE emails SET is_starred = CASE WHEN is_starred = 1 THEN 0 ELSE 1 END WHERE id IN ({placeholders})",
+            req.email_ids
+        )
+        msg = f"Destacado alternado en {len(req.email_ids)} correos"
+    elif (req.action in ("add_label", "toggle_label")) and req.label_id:
+        added = 0
+        removed = 0
+        for eid in req.email_ids:
+            exists = conn.execute(
+                "SELECT 1 FROM email_labels WHERE email_id = ? AND label_id = ?",
+                (eid, req.label_id)
+            ).fetchone()
+            if exists:
+                conn.execute(
+                    "DELETE FROM email_labels WHERE email_id = ? AND label_id = ?",
+                    (eid, req.label_id)
+                )
+                removed += 1
+            else:
+                conn.execute(
+                    "INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)",
+                    (eid, req.label_id)
+                )
+                added += 1
+        msg = f"Etiqueta actualizada (+{added} asignadas, -{removed} removidas)"
+    elif req.action == "remove_label" and req.label_id:
+        conn.execute(f"DELETE FROM email_labels WHERE label_id = ? AND email_id IN ({placeholders})", [req.label_id] + req.email_ids)
+        msg = f"Etiqueta removida de {len(req.email_ids)} correos"
+    elif req.action == "move_folder" and req.folder:
+        conn.execute(f"UPDATE emails SET folder = ? WHERE id IN ({placeholders})", [req.folder] + req.email_ids)
+        msg = f"{len(req.email_ids)} correos movidos a {req.folder}"
+    else:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Acción no soportada")
+
+    conn.commit()
+    conn.close()
+    return {"success": True, "count": len(req.email_ids), "action": req.action, "message": msg}
+
+# --- ENDPOINTS DE FIRMAS DE CORREO ---
+@app.get("/api/signatures")
+def list_signatures(account_id: Optional[int] = None):
+    conn = get_db()
+    query = '''
+        SELECT s.*, a.name as account_name, a.email as account_email
+        FROM signatures s
+        LEFT JOIN accounts a ON s.account_id = a.id
+        WHERE 1=1
+    '''
+    params = []
+    if account_id:
+        query += " AND (s.account_id = ? OR s.account_id IS NULL)"
+        params.append(account_id)
+    query += " ORDER BY s.is_default DESC, s.id ASC"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@app.post("/api/signatures")
+def create_signature(req: SignatureCreateRequest):
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Si se marca como default, desmarcar las existentes para esa cuenta
+    if req.is_default:
+        if req.account_id:
+            cursor.execute("UPDATE signatures SET is_default = 0 WHERE account_id = ?", (req.account_id,))
+        else:
+            cursor.execute("UPDATE signatures SET is_default = 0 WHERE account_id IS NULL")
+
+    cursor.execute('''
+        INSERT INTO signatures (name, content, account_id, is_default)
+        VALUES (?, ?, ?, ?)
+    ''', (req.name, req.content, req.account_id, req.is_default))
+    conn.commit()
+    sig_id = cursor.lastrowid
+    conn.close()
+    return {"success": True, "id": sig_id, "message": "Firma guardada correctamente"}
+
+@app.put("/api/signatures/{sig_id}")
+def update_signature(sig_id: int, req: SignatureCreateRequest):
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    row = cursor.execute("SELECT id FROM signatures WHERE id = ?", (sig_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Firma no encontrada")
+
+    if req.is_default:
+        if req.account_id:
+            cursor.execute("UPDATE signatures SET is_default = 0 WHERE account_id = ? AND id != ?", (req.account_id, sig_id))
+        else:
+            cursor.execute("UPDATE signatures SET is_default = 0 WHERE account_id IS NULL AND id != ?", (sig_id,))
+
+    cursor.execute('''
+        UPDATE signatures
+        SET name = ?, content = ?, account_id = ?, is_default = ?
+        WHERE id = ?
+    ''', (req.name, req.content, req.account_id, req.is_default, sig_id))
+    conn.commit()
+    conn.close()
+    return {"success": True, "id": sig_id, "message": "Firma actualizada correctamente"}
+
+@app.delete("/api/signatures/{sig_id}")
+def delete_signature(sig_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM signatures WHERE id = ?", (sig_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": "Firma eliminada"}
+
+@app.post("/api/signatures/{sig_id}/set-default")
+def set_default_signature(sig_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT account_id FROM signatures WHERE id = ?", (sig_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Firma no encontrada")
+    
+    acc_id = row["account_id"]
+    cursor = conn.cursor()
+    if acc_id:
+        cursor.execute("UPDATE signatures SET is_default = 0 WHERE account_id = ?", (acc_id,))
+    else:
+        cursor.execute("UPDATE signatures SET is_default = 0 WHERE account_id IS NULL")
+    
+    cursor.execute("UPDATE signatures SET is_default = 1 WHERE id = ?", (sig_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": "Firma establecida como predeterminada"}
+
+# --- ENDPOINTS DE AGENTE AUTÓNOMO ANTIGRAVITY ---
+class AgentChatRequest(BaseModel):
+    message: str
+
+@app.post("/api/agent/chat")
+async def chat_with_agent(req: AgentChatRequest):
+    result = await AntigravityMailAgent.chat(req.message)
+    return result
+
+# --- ENDPOINTS DE IA CON GEMINI ---
+@app.post("/api/ai/draft")
+def generate_draft(req: AIDraftRequest):
+    try:
+        result = GeminiService.generate_email_draft(
+            prompt=req.prompt,
+            tone=req.tone,
+            language=req.language,
+            recipient_context=req.recipient_context or "",
+            current_draft=req.current_draft or ""
+        )
+        return {"success": True, "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.api_route("/api/gemini/smart-reply/{email_id}", methods=["GET", "POST"])
+@app.api_route("/api/ai/smart-reply/{email_id}", methods=["GET", "POST"])
+def get_smart_reply(email_id: int, req: Optional[SmartReplyRequest] = None):
+    """Genera una respuesta inteligente para el correo especificado tomando su contexto completo."""
+    conn = get_db()
+    row = conn.execute("SELECT subject, sender, snippet, body_text, body_html FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+    
+    body = row["body_text"] or row["snippet"] or ""
+    subject = row["subject"] or ""
+    sender = row["sender"] or ""
+    conn.close()
+
+    user_inst = req.user_instruction if req else ""
+    current_draft = req.current_draft if req else ""
+    tone = req.tone if req else "formal"
+
+    try:
+        reply_data = GeminiService.generate_smart_reply(
+            subject=subject,
+            sender=sender,
+            body=body,
+            current_draft=current_draft,
+            user_instruction=user_inst,
+            tone=tone
+        )
+        return {"success": True, "draft_reply": reply_data.get("draft_reply", "")}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/ai/summarize/{email_id}")
+def summarize_email(email_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT subject, sender, snippet, body_text, body_html, ai_summary FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+    
+    body = row["body_text"] or row["snippet"] or ""
+    try:
+        summary_data = GeminiService.summarize_email(row["subject"], row["sender"], body)
+        conn.execute("UPDATE emails SET ai_summary = ?, ai_urgency = ? WHERE id = ?", (summary_data.get("summary", ""), summary_data.get("urgency", "media"), email_id))
+        conn.commit()
+        return {"success": True, "data": summary_data}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+@app.post("/api/ai/cleanup-preview")
+def cleanup_preview(req: AICleanupRequest):
+    """Evalúa los correos de la bandeja según el prompt y devuelve candidatos con justificación."""
+    conn = get_db()
+    query = "SELECT id, folder, sender, subject, snippet, date FROM emails WHERE folder = ?"
+    params = [req.folder]
+    if req.account_id:
+        query += " AND account_id = ?"
+        params.append(req.account_id)
+    query += " ORDER BY COALESCE(datetime(date), date) DESC, id DESC LIMIT 80"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+
+    emails_data = [dict(r) for r in rows]
+    if not emails_data:
+        return {"success": True, "candidates": []}
+
+    try:
+        result = GeminiService.analyze_cleanup_by_prompt(req.prompt, emails_data)
+        return {"success": True, "candidates": result.get("candidates", [])}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# --- ENDPOINTS DE CALENDARIOS Y EVENTOS ---
+@app.get("/api/calendars")
+def get_calendars():
+    return CalendarService.get_calendars()
+
+@app.get("/api/events")
+def get_events(start_date: Optional[str] = None, end_date: Optional[str] = None):
+    return CalendarService.get_events(start_date, end_date)
+
+@app.post("/api/events")
+def create_event(event: EventCreateRequest):
+    result = CalendarService.create_event(
+        calendar_id=event.calendar_id,
+        title=event.title,
+        start_time=event.start_time,
+        end_time=event.end_time,
+        description=event.description or "",
+        location=event.location or "",
+        all_day=event.all_day,
+        origin_email_id=event.origin_email_id
+    )
+    return {"success": True, "event": result, "message": "Evento guardado en el calendario"}
+
+@app.delete("/api/events/{event_id}")
+def delete_event(event_id: int):
+    success = CalendarService.delete_event(event_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Evento no encontrado")
+    return {"success": True, "message": "Evento eliminado del calendario"}
+
+@app.post("/api/events/from-email/{email_id}")
+def create_event_from_email(email_id: int, calendar_id: int = Query(1)):
+    conn = get_db()
+    row = conn.execute("SELECT subject, sender, body_text, snippet FROM emails WHERE id = ?", (email_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+
+    body = row["body_text"] or row["snippet"] or ""
+    try:
+        event_info = GeminiService.extract_calendar_event(row["subject"], row["sender"], body)
+        if not event_info:
+            return {"success": False, "message": "No se detectaron fechas ni eventos específicos en el correo"}
+
+        event = CalendarService.create_event(
+            calendar_id=calendar_id,
+            title=event_info.get("title", row["subject"]),
+            start_time=event_info.get("start_time", "2026-11-20T10:00:00"),
+            end_time=event_info.get("end_time", "2026-11-20T11:00:00"),
+            description=event_info.get("description", ""),
+            location=event_info.get("location", ""),
+            origin_email_id=email_id
+        )
+        return {"success": True, "event": event, "message": "Evento creado exitosamente desde el correo"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# --- ENDPOINTS DE ETIQUETAS (LABELS) ---
+@app.get("/api/labels")
+def list_labels(account_id: Optional[int] = None):
+    conn = get_db()
+
+    # Si hay una cuenta activa pero no tiene etiquetas sincronizadas, sincronizarlas
+    effective_acc_id = account_id
+    if not effective_acc_id:
+        acc = conn.execute("SELECT id, auth_type FROM accounts WHERE is_active = 1 ORDER BY id ASC LIMIT 1").fetchone()
+        if acc:
+            effective_acc_id = acc["id"]
+
+    if effective_acc_id:
+        # Verificar si ya existen etiquetas para esta cuenta
+        existing_acc_labels = conn.execute("SELECT COUNT(*) as total FROM labels WHERE account_id = ?", (effective_acc_id,)).fetchone()["total"]
+        if existing_acc_labels == 0:
+            acc_info = conn.execute("SELECT auth_type FROM accounts WHERE id = ?", (effective_acc_id,)).fetchone()
+            if acc_info and acc_info["auth_type"] == "oauth2":
+                try:
+                    from backend.google_oauth import GoogleOAuthService
+                    GoogleOAuthService.sync_gmail_labels(effective_acc_id)
+                except Exception as sync_e:
+                    print(f"Aviso sync_labels: {sync_e}")
+
+    if account_id:
+        rows = conn.execute("SELECT * FROM labels WHERE account_id = ? OR account_id IS NULL ORDER BY name ASC", (account_id,)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM labels ORDER BY name ASC").fetchall()
+
+    conn.close()
+    return [dict(r) for r in rows]
+
+@app.post("/api/labels/sync")
+def sync_labels(account_id: Optional[int] = None):
+    conn = get_db()
+    if not account_id:
+        acc = conn.execute("SELECT id FROM accounts WHERE is_active = 1 ORDER BY id ASC LIMIT 1").fetchone()
+        if acc:
+            account_id = acc["id"]
+        else:
+            conn.close()
+            return {"success": False, "error": "No hay cuentas configuradas"}
+    conn.close()
+
+    from backend.google_oauth import GoogleOAuthService
+    labels = GoogleOAuthService.sync_gmail_labels(account_id)
+    return {"success": True, "count": len(labels), "labels": labels}
+
+@app.post("/api/labels")
+def create_label(req: LabelCreateRequest):
+    if not req.name.strip():
+        raise HTTPException(status_code=400, detail="El nombre de la etiqueta es obligatorio")
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO labels (name, color, account_id) VALUES (?, ?, ?)", (req.name.strip(), req.color or "#3b82f6", req.account_id))
+    conn.commit()
+    label_id = cursor.lastrowid
+    conn.close()
+    return {"success": True, "label_id": label_id, "name": req.name.strip(), "color": req.color, "account_id": req.account_id}
+
+@app.put("/api/labels/{label_id}")
+def update_label(label_id: int, req: LabelCreateRequest):
+    conn = get_db()
+    conn.execute("UPDATE labels SET name = ?, color = ? WHERE id = ?", (req.name.strip(), req.color, label_id))
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": "Etiqueta actualizada"}
+
+@app.delete("/api/labels/{label_id}")
+def delete_label(label_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM email_labels WHERE label_id = ?", (label_id,))
+    conn.execute("DELETE FROM labels WHERE id = ?", (label_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": "Etiqueta eliminada"}
+
+@app.post("/api/emails/{email_id}/labels")
+def add_label_to_email(email_id: int, req: EmailLabelRequest):
+    conn = get_db()
+    conn.execute("INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)", (email_id, req.label_id))
+    conn.commit()
+
+    email_row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
+    label_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (req.label_id,)).fetchone()
+    conn.close()
+
+    if email_row and label_row and label_row["remote_id"]:
+        try:
+            from backend.google_oauth import GoogleOAuthService
+            GoogleOAuthService.modify_message_labels(
+                account_id=email_row["account_id"],
+                message_uid=email_row["uid"],
+                add_labels=[label_row["remote_id"]]
+            )
+        except Exception as e:
+            print(f"Error sincronizando adición de etiqueta con Gmail: {e}")
+
+    return {"success": True, "message": "Etiqueta agregada al correo"}
+
+@app.delete("/api/emails/{email_id}/labels/{label_id}")
+def remove_label_from_email(email_id: int, label_id: int):
+    conn = get_db()
+    email_row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
+    label_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (label_id,)).fetchone()
+    conn.execute("DELETE FROM email_labels WHERE email_id = ? AND label_id = ?", (email_id, label_id))
+    conn.commit()
+    conn.close()
+
+    if email_row and label_row and label_row["remote_id"]:
+        try:
+            from backend.google_oauth import GoogleOAuthService
+            GoogleOAuthService.modify_message_labels(
+                account_id=email_row["account_id"],
+                message_uid=email_row["uid"],
+                remove_labels=[label_row["remote_id"]]
+            )
+        except Exception as e:
+            print(f"Error sincronizando eliminación de etiqueta con Gmail: {e}")
+
+    return {"success": True, "message": "Etiqueta removida del correo"}
