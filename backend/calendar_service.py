@@ -5,124 +5,77 @@ from backend.database import get_db
 
 class CalendarService:
     @staticmethod
-    def sync_account_calendars():
-        """Sincroniza y crea calendarios para todas las cuentas conectadas que lo permitan."""
+    def ensure_google_calendars():
+        """Asegura que cada cuenta de Google activa tenga sus calendarios sincronizados y su calendario de Tareas."""
         conn = get_db()
         cursor = conn.cursor()
         
-        accounts = cursor.execute("SELECT id, name, email, provider, color FROM accounts WHERE is_active = 1").fetchall()
+        # Purgar cualquier calendario que no sea de Google
+        cursor.execute("DELETE FROM calendars WHERE provider != 'google'")
+
+        # Obtener únicamente cuentas de Google activas
+        accounts = cursor.execute("SELECT id, name, email, provider, color FROM accounts WHERE is_active = 1 AND provider IN ('google', 'gmail')").fetchall()
         
         for acc in accounts:
             acc_id = acc["id"]
-            prov = (acc["provider"] or "").lower()
             acc_name = acc["name"] or acc["email"].split("@")[0]
             acc_email = acc["email"]
             acc_color = acc["color"] or "#4f46e5"
-            
-            # Si es cuenta de Google, intentar sincronizar con Google Calendar API si está disponible
-            if prov in ("google", "gmail"):
-                synced_from_api = False
-                try:
-                    from backend.google_oauth import GoogleOAuthService
-                    from googleapiclient.discovery import build
-                    creds = GoogleOAuthService.get_valid_credentials(acc_id)
-                    if creds:
-                        service = build('calendar', 'v3', credentials=creds)
-                        cal_list = service.calendarList().list().execute()
-                        items = cal_list.get('items', [])
-                        if items:
-                            for item in items:
-                                ext_id = item.get('id')
-                                is_primary = item.get('primary', False)
-                                summary = item.get('summary') or ("Google Calendar" if is_primary else ext_id)
-                                cal_title = f"{summary} ({acc_email})" if is_primary else f"{summary} ({acc_name})"
-                                cal_color = item.get('backgroundColor') or acc_color
-                                
-                                existing = cursor.execute(
-                                    "SELECT id FROM calendars WHERE account_id = ? AND (external_id = ? OR name = ?)",
-                                    (acc_id, ext_id, cal_title)
-                                ).fetchone()
-                                if existing:
-                                    cursor.execute(
-                                        "UPDATE calendars SET name = ?, color = ?, provider = 'google', external_id = ? WHERE id = ?",
-                                        (cal_title, cal_color, ext_id, existing["id"])
-                                    )
-                                else:
-                                    cursor.execute(
-                                        "INSERT INTO calendars (name, provider, color, account_id, external_id) VALUES (?, 'google', ?, ?, ?)",
-                                        (cal_title, cal_color, acc_id, ext_id)
-                                    )
-                            synced_from_api = True
-                except Exception:
-                    pass
-                
-                if not synced_from_api:
-                    # Asegurar que la cuenta Google tenga al menos un calendario
-                    existing = cursor.execute(
-                        "SELECT id FROM calendars WHERE account_id = ? OR (id = 1 AND account_id IS NULL)", 
-                        (acc_id,)
-                    ).fetchone()
-                    cal_title = f"Google Calendar ({acc_email})"
-                    if existing:
-                        cursor.execute(
-                            "UPDATE calendars SET name = ?, provider = 'google', color = ?, account_id = ?, external_id = 'primary' WHERE id = ?",
-                            (cal_title, acc_color, acc_id, existing["id"])
-                        )
-                    else:
-                        cursor.execute(
-                            "INSERT INTO calendars (name, provider, color, account_id, external_id) VALUES (?, 'google', ?, ?, 'primary')",
-                            (cal_title, acc_color, acc_id)
-                        )
-            
-            elif prov == "proton":
-                existing = cursor.execute(
-                    "SELECT id FROM calendars WHERE account_id = ? OR (id = 2 AND account_id IS NULL)", 
-                    (acc_id,)
-                ).fetchone()
-                cal_title = f"Proton Calendar ({acc_email})"
-                if existing:
-                    cursor.execute(
-                        "UPDATE calendars SET name = ?, provider = 'proton', color = ?, account_id = ? WHERE id = ?",
-                        (cal_title, acc_color, acc_id, existing["id"])
-                    )
-                else:
-                    cursor.execute(
-                        "INSERT INTO calendars (name, provider, color, account_id) VALUES (?, 'proton', ?, ?)",
-                        (cal_title, acc_color, acc_id)
-                    )
-            
-            else: # custom o cualquier otro proveedor que permita calendario
-                existing = cursor.execute(
-                    "SELECT id FROM calendars WHERE account_id = ?", 
-                    (acc_id,)
-                ).fetchone()
-                cal_title = f"Calendario ({acc_name})"
-                if existing:
-                    cursor.execute(
-                        "UPDATE calendars SET name = ?, provider = ?, color = ? WHERE id = ?",
-                        (cal_title, prov or "custom", acc_color, existing["id"])
-                    )
-                else:
-                    cursor.execute(
-                        "INSERT INTO calendars (name, provider, color, account_id) VALUES (?, ?, ?, ?)",
-                        (cal_title, prov or "custom", acc_color, acc_id)
-                    )
-                    
+
+            # Asegurar que la cuenta Google tenga al menos un calendario base si aún no existe ninguno
+            has_cals = cursor.execute("SELECT COUNT(*) FROM calendars WHERE account_id = ?", (acc_id,)).fetchone()[0]
+            if has_cals == 0:
+                cal_title = f"Google Calendar ({acc_email})"
+                cursor.execute(
+                    "INSERT INTO calendars (name, provider, color, account_id, external_id, is_visible) VALUES (?, 'google', ?, ?, 'primary', 1)",
+                    (cal_title, acc_color, acc_id)
+                )
+
+            # Asegurar calendario de Tareas (Google Tasks) para la cuenta
+            task_cal = cursor.execute(
+                "SELECT id FROM calendars WHERE account_id = ? AND (external_id = 'tasks_default' OR name LIKE 'Tareas%')",
+                (acc_id,)
+            ).fetchone()
+            if not task_cal:
+                cursor.execute(
+                    "INSERT INTO calendars (name, provider, color, account_id, external_id, is_visible) VALUES (?, 'google', ?, ?, 'tasks_default', 1)",
+                    ("Tareas", "#4285f4", acc_id)
+                )
+                task_cal_id = cursor.lastrowid
+            else:
+                task_cal_id = task_cal["id"]
+
+            # Reasignar cualquier tarea que tenga calendar_id huérfano al calendario de Tareas
+            cursor.execute(
+                """
+                UPDATE events 
+                SET calendar_id = ?, account_id = ?
+                WHERE (is_task = 1 OR title LIKE '[Tarea]%')
+                  AND (account_id = ? OR account_id IS NULL)
+                  AND (calendar_id IS NULL OR calendar_id NOT IN (SELECT id FROM calendars))
+                """,
+                (task_cal_id, acc_id, acc_id)
+            )
+
         conn.commit()
         conn.close()
 
     @staticmethod
+    def sync_account_calendars():
+        """Asegura calendarios locales para cuentas de Google."""
+        CalendarService.ensure_google_calendars()
+
+    @staticmethod
     def get_calendars() -> List[Dict[str, Any]]:
-        """Devuelve todos los calendarios sincronizados correspondientes a las cuentas conectadas y locales."""
-        CalendarService.sync_account_calendars()
+        """Devuelve únicamente los calendarios sincronizados correspondientes a cuentas de Google activas."""
         conn = get_db()
         rows = conn.execute('''
             SELECT c.*, a.name as account_name, a.email as account_email, 
                    a.color as account_color, a.provider as account_provider, a.is_default as account_is_default
             FROM calendars c
-            LEFT JOIN accounts a ON c.account_id = a.id
-            WHERE (c.account_id IS NOT NULL AND a.id IS NOT NULL) OR c.provider = 'local'
-            ORDER BY COALESCE(a.is_default, 0) DESC, c.id ASC
+            INNER JOIN accounts a ON c.account_id = a.id
+            WHERE c.provider = 'google' AND a.provider IN ('google', 'gmail') AND a.is_active = 1
+            ORDER BY COALESCE(a.is_default, 0) DESC, a.email ASC, c.name ASC
         ''').fetchall()
         conn.close()
         
@@ -248,7 +201,12 @@ class CalendarService:
     def toggle_task(task_id: int) -> Optional[Dict[str, Any]]:
         """Marca una tarea como completada o pendiente."""
         conn = get_db()
-        row = conn.execute("SELECT is_completed FROM events WHERE id = ?", (task_id,)).fetchone()
+        row = conn.execute('''
+            SELECT e.is_completed, e.external_id, c.account_id, c.external_id as cal_ext_id 
+            FROM events e
+            LEFT JOIN calendars c ON e.calendar_id = c.id
+            WHERE e.id = ?
+        ''', (task_id,)).fetchone()
         if not row:
             conn.close()
             return None
@@ -256,6 +214,16 @@ class CalendarService:
         new_val = 0 if current_val == 1 else 1
         conn.execute("UPDATE events SET is_completed = ? WHERE id = ?", (new_val, task_id))
         conn.commit()
+
+        # Si pertenece a Google Tasks, propagar el cambio
+        if row["external_id"] and row["cal_ext_id"] and str(row["cal_ext_id"]).startswith("tasks_list_") and row["account_id"]:
+            try:
+                from backend.google_oauth import GoogleOAuthService
+                tl_id = str(row["cal_ext_id"]).replace("tasks_list_", "")
+                GoogleOAuthService.toggle_google_task(row["account_id"], tl_id, row["external_id"], bool(new_val == 1))
+            except Exception as e:
+                print(f"[CalendarService] Error notificando toggle a Google Tasks: {e}")
+
         conn.close()
         return CalendarService.get_event_by_id(task_id)
 
@@ -296,18 +264,40 @@ class CalendarService:
 
         conn = get_db()
         cursor = conn.cursor()
+
+        # Si el calendario pertenece a Google, propagar la creación en vivo a Google Calendar
+        cal_meta = cursor.execute("SELECT provider, account_id, external_id FROM calendars WHERE id = ?", (target_cal_id,)).fetchone()
+        ext_ev_id = None
+        if cal_meta and cal_meta["provider"] == "google" and cal_meta["account_id"]:
+            try:
+                from backend.google_oauth import GoogleOAuthService
+                ext_ev_id = GoogleOAuthService.create_google_event(
+                    account_id=cal_meta["account_id"],
+                    ext_calendar_id=cal_meta["external_id"],
+                    event_data={
+                        "title": title,
+                        "description": description,
+                        "location": location,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "all_day": all_day
+                    }
+                )
+            except Exception as e:
+                print(f"[CalendarService] Aviso propagando evento a Google Calendar: {e}")
+
         cursor.execute('''
             INSERT INTO events (
                 calendar_id, title, description, location, start_time, end_time, 
                 all_day, origin_email_id, is_task, account_id, meeting_url, color,
-                recurrence, notification_minutes, attendees, availability, visibility
+                recurrence, notification_minutes, attendees, availability, visibility, external_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             target_cal_id, title, description or "", location or "", start_time, end_time, 
             all_day, origin_email_id, is_task, account_id, meeting_url or "", color or "",
             recurrence or "none", notification_minutes if notification_minutes is not None else 10,
-            attendees or "", availability or "busy", visibility or "default"
+            attendees or "", availability or "busy", visibility or "default", ext_ev_id
         ))
         event_id = cursor.lastrowid
         conn.commit()
@@ -337,10 +327,35 @@ class CalendarService:
     ) -> Optional[Dict[str, Any]]:
         conn = get_db()
         cursor = conn.cursor()
-        row = cursor.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+        row = cursor.execute('''
+            SELECT e.*, c.provider as cal_provider, c.account_id as cal_account_id, c.external_id as cal_external_id 
+            FROM events e
+            LEFT JOIN calendars c ON e.calendar_id = c.id
+            WHERE e.id = ?
+        ''', (event_id,)).fetchone()
         if not row:
             conn.close()
             return None
+
+        # Si el evento está sincronizado con Google Calendar, propagar la actualización
+        if row["cal_provider"] == "google" and row["external_id"] and row["cal_account_id"]:
+            try:
+                from backend.google_oauth import GoogleOAuthService
+                up_data = {}
+                if title is not None: up_data["title"] = title
+                if description is not None: up_data["description"] = description
+                if location is not None: up_data["location"] = location
+                if start_time is not None: up_data["start_time"] = start_time
+                if end_time is not None: up_data["end_time"] = end_time
+                if all_day is not None: up_data["all_day"] = all_day
+                GoogleOAuthService.update_google_event(
+                    account_id=row["cal_account_id"],
+                    ext_calendar_id=row["cal_external_id"],
+                    ext_event_id=row["external_id"],
+                    event_data=up_data
+                )
+            except Exception as e:
+                print(f"[CalendarService] Aviso actualizando evento en Google Calendar: {e}")
 
         # Construir campos a actualizar
         updates = []
@@ -401,6 +416,24 @@ class CalendarService:
     def delete_event(event_id: int) -> bool:
         conn = get_db()
         cursor = conn.cursor()
+        ev_meta = cursor.execute('''
+            SELECT e.external_id, c.provider as cal_provider, c.account_id as cal_account_id, c.external_id as cal_external_id 
+            FROM events e
+            LEFT JOIN calendars c ON e.calendar_id = c.id
+            WHERE e.id = ?
+        ''', (event_id,)).fetchone()
+
+        if ev_meta and ev_meta["cal_provider"] == "google" and ev_meta["external_id"] and ev_meta["cal_account_id"]:
+            try:
+                from backend.google_oauth import GoogleOAuthService
+                GoogleOAuthService.delete_google_event(
+                    account_id=ev_meta["cal_account_id"],
+                    ext_calendar_id=ev_meta["cal_external_id"],
+                    ext_event_id=ev_meta["external_id"]
+                )
+            except Exception as e:
+                print(f"[CalendarService] Aviso eliminando evento de Google Calendar: {e}")
+
         cursor.execute("DELETE FROM events WHERE id = ?", (event_id,))
         deleted = cursor.rowcount > 0
         conn.commit()

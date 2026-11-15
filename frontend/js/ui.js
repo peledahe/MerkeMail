@@ -170,16 +170,54 @@ const UI = {
         document.body.classList.remove('overflow-hidden');
     },
 
-    // Gestión del Tema Dual (Light / Dark)
+    // Gestión del Tema Dual (Light / Dark) con Persistencia Triple (localStorage + SQLite Backend + Head Script)
     toggleTheme() {
         const isDark = document.documentElement.classList.toggle('dark');
-        localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        const theme = isDark ? 'dark' : 'light';
+        try {
+            localStorage.setItem('theme', theme);
+        } catch (e) {}
         this.updateThemeButton();
+
+        // Persistir en SQLite en el backend para que se mantenga aunque se cierre o reinicie la app
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ theme })
+        }).catch(() => {});
     },
 
-    initTheme() {
-        const saved = localStorage.getItem('theme') || 'dark';
-        if (saved === 'dark') {
+    async initTheme() {
+        // 1. Aplicar de inmediato desde localStorage para evitar parpadeos visuales
+        let currentTheme = 'dark';
+        try {
+            const saved = localStorage.getItem('theme');
+            if (saved === 'light' || saved === 'dark') {
+                currentTheme = saved;
+            }
+        } catch (e) {}
+
+        this.applyTheme(currentTheme);
+
+        // 2. Sincronizar con la base de datos persistente del backend (SQLite)
+        try {
+            const res = await fetch('/api/settings');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.theme && (data.theme === 'light' || data.theme === 'dark')) {
+                    if (data.theme !== currentTheme) {
+                        this.applyTheme(data.theme);
+                        try {
+                            localStorage.setItem('theme', data.theme);
+                        } catch (e) {}
+                    }
+                }
+            }
+        } catch (e) {}
+    },
+
+    applyTheme(theme) {
+        if (theme === 'dark') {
             document.documentElement.classList.add('dark');
         } else {
             document.documentElement.classList.remove('dark');

@@ -2,6 +2,73 @@
 
 ## Historial de Hitos Completados
 
+- [x] **Fase 107: Rediseño y Optimización Visual de Campos del Perfil de Usuario:**
+  - Conversión de *Estilo de Comunicación* a área de texto multilínea espaciosa.
+  - Ampliación y rediseño de *Biografía* y *Contexto Extra para IA* en tarjetas con iconos temáticos y altura cómoda.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 106: Persistencia Permanente del Modo Oscuro / Claro:**
+  - Persistencia de la selección de tema (oscuro/claro) en la base de datos SQLite (`settings`) y `localStorage`.
+  - Script en `<head>` para inicialización inmediata antes del renderizado (eliminando parpadeos).
+  - Configuración de almacenamiento persistente (`setPersistentStoragePath`) en el perfil de Qt WebEngine para la app de escritorio.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 105: Detección y Conversión Automática de URLs a Enlaces en Navegador Predeterminado:**
+  - Conversión de URLs en enlaces clickeables interactivos tanto en el campo Ubicación/Dirección como en Descripción y Notas.
+  - Apertura forzada en el navegador web predeterminado del sistema operativo (`DesktopBridge.openExternalUrl`).
+  - Botón interactivo de reunión directa (*Teams, Zoom, Meet*) en ubicaciones que contienen enlaces.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 104: Optimización y Desacople de Sincronización de Calendario y Filtrado Reactivo de Tareas:**
+  - Desacople de lecturas y consultas (`/api/calendars`, `/api/events`, `/api/tasks`) respecto a llamadas de red a Google, reduciendo los tiempos de respuesta de 10s a menos de 50ms.
+  - Implementación de control de concurrencia y bloqueo en `/api/calendars/sync` y en el frontend para evitar peticiones duplicadas o colisiones de socket que provocaban errores de conexión.
+  - Creación del calendario `"Tareas"` para cuentas de Google y actualización de `getFilteredTasks()` y `renderTasks()` para mostrar y ocultar tareas dinámicamente según la selección de cada calendario.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 103: Exclusión Estricta de Calendarios No-Google y Modal Lateral Agrupado por Conexión:**
+  - Depuración y omisión de cuentas no pertenecientes a Google Calendar (Proton, IMAP/custom).
+  - Eliminación de la fila horizontal masiva de checkboxes en el encabezado del calendario.
+  - Implementación del modal lateral `drawer-calendars` agrupado por cuenta de Google con controles de activación individual y masiva (*Todos* / *Ninguno*).
+  - Sincronización exitosa con `install_desktop.sh`.
+
+
+- [x] **Fase 102: Eliminación de Enlace Redundante en Firmas y Verificación Integral de Sincronizaciones:**
+  - Supresión del texto `"Seleccionar para editar ↑"` en las tarjetas de firmas guardadas.
+  - Sincronización de 8 calendarios de Google y 260 actividades y eventos verificada con éxito total.
+  - 610 contactos indexados y sincronización periódica de correo activa en segundo plano.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+
+- [x] **Fase 101: Integración de Scope de Google Tasks API:**
+  - Inclusión del scope `https://www.googleapis.com/auth/tasks` en `GOOGLE_SCOPES`.
+  - Enlace directo a Google Cloud Console para habilitar la API.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+  - Supresión de saltos de línea e indentación residual en el template literal de `appendMessage` en `frontend/js/antigravity.js`.
+  - Aplicación de `.trim()` estricto en mensajes de usuario y respuestas del asistente con clase `whitespace-pre-wrap`.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+
+- [x] **Fase 99: Sincronización Bidireccional de Google Calendar y Diagnóstico de Google Tasks:**
+  - Sincronización en tiempo real desde MerkeMail hacia Google Calendar al crear, editar o eliminar eventos.
+  - Sincronización multi-calendario para abarcar todos los calendarios secundarios (Personal, Familia, Merke Software, Setesa, etc.).
+  - Detección reactiva de Google Calendar API en Google Cloud Console con enlace directo para habilitarla.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+  - Bucle en segundo plano permanente en el backend (`_periodic_background_sync_loop`) para sincronizar correos e insensibilizar la app al estado de la ventana (visible u oculta en el Systray).
+  - Flags de Chromium contra throttling en `desktop/app_window.py` (`--disable-background-timer-throttling`, `--disable-backgrounding-occluded-windows`, `--disable-renderer-backgrounding`).
+  - Detección de nuevos correos y notificaciones nativas en el System Tray cada 15 segundos cuando la ventana se encuentra oculta.
+  - Sincronización periódica de calendarios y Google Calendar ajustada a un mínimo de 5 minutos (300 segundos / 300.000 ms) en frontend y backend.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+
+- [x] **Fase 97: Corrección Integral de Descargas Multi-entorno y Cero Almacenamiento Residual Local:**
+  - Soporte nativo de descargas en aplicación instalada (`QWebEngineProfile.downloadRequested`), PWA y Browser, guardando en `~/Descargas`.
+  - Notificación sticky al completar la descarga de cualquier archivo adjunto.
+  - Streaming bajo demanda desde Gmail API / servidor IMAP sin guardar copias innecesarias en disco local de la app.
+  - Supresión de copias en disco para archivos adjuntos enviados por correo; eliminación de archivos residuales en `data/attachments/`.
+  - Sincronización exitosa con `install_desktop.sh`.
+
 - [x] **Fase 96: Color Dinámico de la Orilla de Selección según la Cuenta del Correo:**
   - Sustitución del color fijo índigo en la orilla vertical del correo seleccionado por el color correspondiente a la cuenta de dicho correo (`email.account_color`).
   - Coincidencia exacta con el punto indicador cromático de la cuenta.

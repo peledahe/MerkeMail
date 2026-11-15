@@ -36,11 +36,11 @@ const CalendarManager = {
         this.renderColorPalette();
         this.setView(this.currentView, false);
 
-        // Sincronización periódica en segundo plano (cada 60s), rápida e imperceptible sin interrumpir la app
+        // Sincronización periódica en segundo plano (cada 5 minutos = 300.000 ms), rápida e imperceptible sin interrumpir la app
         if (this.syncIntervalId) clearInterval(this.syncIntervalId);
         this.syncIntervalId = setInterval(() => {
             this.syncPeriodically();
-        }, 60000);
+        }, 300000);
     },
 
     async syncPeriodically() {
@@ -49,7 +49,13 @@ const CalendarManager = {
         if (eventModal && !eventModal.classList.contains('hidden')) return;
 
         try {
-            await fetch('/api/calendars/sync', { method: 'POST' }).catch(() => {});
+            const res = await fetch('/api/calendars/sync', { method: 'POST' }).then(r => r.json()).catch(() => null);
+            if (res && res.api_disabled) {
+                this.showApiDisabledWarning(res.enable_url);
+            } else if (res && res.success) {
+                this.hideApiDisabledWarning();
+            }
+
             await this.loadEvents();
             await this.loadTasks();
             
@@ -64,10 +70,99 @@ const CalendarManager = {
         }
     },
 
+    showApiDisabledWarning(enableUrl) {
+        const warningEl = document.getElementById('calendar-api-warning');
+        const linkEl = document.getElementById('calendar-api-enable-link');
+        if (warningEl) {
+            warningEl.classList.remove('hidden');
+            if (linkEl && enableUrl) {
+                linkEl.href = enableUrl;
+            }
+        }
+    },
+
+    hideApiDisabledWarning() {
+        const warningEl = document.getElementById('calendar-api-warning');
+        if (warningEl) {
+            warningEl.classList.add('hidden');
+        }
+    },
+
+    isSyncing: false,
+
+    async syncNow(btnEl) {
+        if (this.isSyncing) return;
+        this.isSyncing = true;
+
+        const icon = btnEl ? btnEl.querySelector('svg') : document.querySelector('#btn-sync-calendars svg');
+        if (btnEl) btnEl.disabled = true;
+        if (icon) icon.classList.add('animate-spin');
+
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 25000);
+
+            const res = await fetch('/api/calendars/sync', { 
+                method: 'POST',
+                signal: controller.signal
+            }).then(r => r.json());
+
+            clearTimeout(timeoutId);
+
+            if (res.api_disabled) {
+                this.showApiDisabledWarning(res.enable_url);
+                if (window.UI && typeof UI.showStickyToast === 'function') {
+                    UI.showStickyToast(
+                        'Google Calendar API Deshabilitada',
+                        'Debes habilitar la Google Calendar API en Google Cloud Console para sincronizar tus actividades.',
+                        'warning'
+                    );
+                }
+            } else if (res.success) {
+                this.hideApiDisabledWarning();
+                await this.loadCalendars();
+                await this.loadEvents();
+                await this.loadTasks();
+                this.renderCurrentView();
+                this.renderUpcomingList();
+                this.renderTasks();
+                if (window.UI && typeof UI.showStickyToast === 'function') {
+                    UI.showStickyToast('Calendario Sincronizado', 'Todos tus calendarios y eventos han sido actualizados.', 'success', 3000);
+                }
+            } else {
+                if (window.UI && typeof UI.showStickyToast === 'function') {
+                    UI.showStickyToast('Aviso de Sincronización', res.error || 'No se pudieron sincronizar los calendarios.', 'warning', 3000);
+                }
+            }
+        } catch (e) {
+            console.warn('Aviso durante sincronización de calendario:', e);
+            // Si la llamada fue cancelada por timeout o se ejecuta en segundo plano, refrescar datos locales sin alarmar
+            if (window.UI && typeof UI.showStickyToast === 'function') {
+                UI.showStickyToast('Sincronización en Proceso', 'La sincronización continúa ejecutándose en segundo plano.', 'info', 3000);
+            }
+            try {
+                await this.loadCalendars();
+                await this.loadEvents();
+                await this.loadTasks();
+                this.renderCurrentView();
+                this.renderUpcomingList();
+                this.renderTasks();
+            } catch (err) {}
+        } finally {
+            this.isSyncing = false;
+            if (btnEl) btnEl.disabled = false;
+            if (icon) {
+                setTimeout(() => icon.classList.remove('animate-spin'), 600);
+            }
+        }
+    },
+
     async loadCalendars() {
         try {
             const res = await fetch('/api/calendars');
-            this.calendars = await res.json();
+            const allCals = await res.json();
+            // Filtrar estrictamente solo calendarios de Google Calendar
+            this.calendars = (allCals || []).filter(c => c.provider === 'google');
             const selectEl = document.getElementById('event-calendar-select');
 
             if (!this.activeCalendarIds) {
@@ -88,11 +183,12 @@ const CalendarManager = {
                 }
             }
 
-            this.renderCalendarSourcesList();
+            this.updateActiveCountBadge();
+            this.renderCalendarsDrawer();
 
             if (selectEl) {
                 selectEl.innerHTML = this.calendars.map(c => `
-                    <option value="${c.id}">${c.account_name || c.name} (${c.provider})</option>
+                    <option value="${c.id}">${c.name} (${c.account_email || c.account_name})</option>
                 `).join('');
                 if (this.defaultCalendarId) {
                     selectEl.value = this.defaultCalendarId;
@@ -111,41 +207,207 @@ const CalendarManager = {
         }
     },
 
-    renderCalendarSourcesList() {
-        const listEl = document.getElementById('calendar-sources-list');
-        if (!listEl) return;
+    updateActiveCountBadge() {
+        const badge = document.getElementById('calendar-active-count-badge');
+        if (!badge) return;
+        const total = (this.calendars || []).length;
+        const active = this.activeCalendarIds ? [...this.activeCalendarIds].filter(id => this.calendars.some(c => c.id === id)).length : total;
+        badge.textContent = `${active}/${total}`;
+        badge.title = `${active} de ${total} calendarios visibles`;
+    },
 
-        listEl.innerHTML = this.calendars.map(c => {
-            const color = c.effective_color || c.color || c.account_color || '#4f46e5';
-            const displayName = c.account_name || c.name;
-            const isChecked = this.activeCalendarIds ? this.activeCalendarIds.has(c.id) : true;
-            return `
-                <label class="flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300 cursor-pointer select-none hover:text-slate-900 dark:hover:text-white transition-all ${isChecked ? 'opacity-100' : 'opacity-40 hover:opacity-75'}" title="${c.name} ${c.account_email ? '(' + c.account_email + ')' : ''}">
-                    <input type="checkbox" ${isChecked ? 'checked' : ''} class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer" onchange="CalendarManager.toggleCalendar(${c.id}, this.checked)">
-                    <span class="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style="background-color: ${color}"></span>
-                    <span class="font-medium">${displayName}</span>
-                </label>
+    openCalendarsDrawer() {
+        if (window.UI && typeof UI.openDrawer === 'function') {
+            this.renderCalendarsDrawer();
+            UI.openDrawer('drawer-calendars');
+        }
+    },
+
+    renderCalendarsDrawer() {
+        const container = document.getElementById('drawer-calendars-content');
+        if (!container) return;
+
+        if (!this.calendars || this.calendars.length === 0) {
+            container.innerHTML = `
+                <div class="p-8 text-center text-slate-400">
+                    <svg class="w-12 h-12 mx-auto mb-3 opacity-40 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    <p class="text-xs font-semibold text-slate-700 dark:text-slate-300">No hay calendarios de Google vinculados</p>
+                    <p class="text-[11px] text-slate-500 mt-1">Conecta tu cuenta de Google en la sección de cuentas para sincronizar tus calendarios.</p>
+                </div>
             `;
-        }).join('');
+            return;
+        }
+
+        // Agrupar calendarios por cuenta de Google
+        const accountsMap = {};
+        for (const c of this.calendars) {
+            const accKey = c.account_email || c.account_name || 'Cuenta Google';
+            if (!accountsMap[accKey]) {
+                accountsMap[accKey] = {
+                    email: c.account_email || '',
+                    name: c.account_name || accKey,
+                    color: c.account_color || '#3b82f6',
+                    accountId: c.account_id,
+                    calendars: []
+                };
+            }
+            accountsMap[accKey].calendars.push(c);
+        }
+
+        let html = '';
+        for (const [accKey, acc] of Object.entries(accountsMap)) {
+            const activeInAcc = acc.calendars.filter(c => this.activeCalendarIds ? this.activeCalendarIds.has(c.id) : true).length;
+            const totalInAcc = acc.calendars.length;
+
+            html += `
+                <div class="bg-slate-50/70 dark:bg-slate-850/70 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-3.5 space-y-3 shadow-2xs">
+                    <!-- Cabecera de la cuenta / conexión -->
+                    <div class="flex items-center justify-between pb-2 border-b border-slate-200/60 dark:border-slate-800">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <span class="w-3 h-3 rounded-full shrink-0 shadow-xs" style="background-color: ${acc.color}"></span>
+                            <div class="truncate">
+                                <h3 class="text-xs font-bold text-slate-900 dark:text-white truncate">${acc.email || acc.name}</h3>
+                                <p class="text-[10px] text-slate-500">${activeInAcc} de ${totalInAcc} activos</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-1.5 shrink-0 text-[11px]">
+                            <button type="button" onclick="CalendarManager.toggleAccountCalendars(${acc.accountId}, true)" class="px-2 py-0.5 rounded-md hover:bg-slate-200/60 dark:hover:bg-slate-700 text-indigo-600 dark:text-indigo-400 font-semibold cursor-pointer">
+                                Todos
+                            </button>
+                            <span class="text-slate-300 dark:text-slate-700">·</span>
+                            <button type="button" onclick="CalendarManager.toggleAccountCalendars(${acc.accountId}, false)" class="px-2 py-0.5 rounded-md hover:bg-slate-200/60 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer">
+                                Ninguno
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Lista de calendarios de la cuenta -->
+                    <div class="space-y-1.5">
+            `;
+
+            for (const cal of acc.calendars) {
+                const color = cal.effective_color || cal.color || acc.color;
+                const isChecked = this.activeCalendarIds ? this.activeCalendarIds.has(cal.id) : true;
+                
+                // Conteo de eventos y tareas en este calendario
+                const evCount = (this.events || []).filter(e => e.calendar_id === cal.id).length;
+                const taskCount = (this.tasks || []).filter(t => t.calendar_id === cal.id).length;
+                const totalItems = evCount + taskCount;
+
+                html += `
+                    <label class="flex items-center justify-between p-2 rounded-xl transition-all cursor-pointer select-none ${isChecked ? 'bg-white dark:bg-slate-800 shadow-2xs border border-slate-200/80 dark:border-slate-750' : 'bg-transparent hover:bg-white/60 dark:hover:bg-slate-800/50 opacity-60 hover:opacity-90'}">
+                        <div class="flex items-center gap-2.5 min-w-0">
+                            <input type="checkbox" ${isChecked ? 'checked' : ''} class="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" onchange="CalendarManager.toggleCalendar(${cal.id}, this.checked)">
+                            <span class="w-3 h-3 rounded-full shrink-0 shadow-xs" style="background-color: ${color}"></span>
+                            <span class="text-xs font-medium text-slate-800 dark:text-slate-200 truncate" title="${cal.name}">${cal.name}</span>
+                        </div>
+                        ${totalItems > 0 ? `<span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-750 text-slate-600 dark:text-slate-400 font-mono" title="${evCount} evento(s), ${taskCount} tarea(s)">${totalItems}</span>` : ''}
+                    </label>
+                `;
+            }
+
+            html += `
+                    </div>
+                </div>
+            `;
+        }
+
+        container.innerHTML = html;
+        this.updateActiveCountBadge();
+    },
+
+    toggleCalendar(calId, isChecked) {
+        if (!this.activeCalendarIds) {
+            this.activeCalendarIds = new Set();
+        }
+        if (isChecked) {
+            this.activeCalendarIds.add(calId);
+        } else {
+            this.activeCalendarIds.delete(calId);
+        }
+        try {
+            localStorage.setItem('merke_active_calendar_ids', JSON.stringify([...this.activeCalendarIds]));
+        } catch (e) {}
+
+        this.updateActiveCountBadge();
+        this.renderCalendarsDrawer();
+        this.renderCurrentView();
+        this.renderUpcomingList();
+        this.renderTasks();
+    },
+
+    toggleAccountCalendars(accountId, enableAll) {
+        if (!this.activeCalendarIds) {
+            this.activeCalendarIds = new Set();
+        }
+        const accCals = (this.calendars || []).filter(c => c.account_id === accountId);
+        for (const c of accCals) {
+            if (enableAll) {
+                this.activeCalendarIds.add(c.id);
+            } else {
+                this.activeCalendarIds.delete(c.id);
+            }
+        }
+        try {
+            localStorage.setItem('merke_active_calendar_ids', JSON.stringify([...this.activeCalendarIds]));
+        } catch (e) {}
+
+        this.updateActiveCountBadge();
+        this.renderCalendarsDrawer();
+        this.renderCurrentView();
+        this.renderUpcomingList();
+        this.renderTasks();
+    },
+
+    toggleAllCalendars(enableAll) {
+        if (!this.activeCalendarIds) {
+            this.activeCalendarIds = new Set();
+        }
+        for (const c of (this.calendars || [])) {
+            if (enableAll) {
+                this.activeCalendarIds.add(c.id);
+            } else {
+                this.activeCalendarIds.delete(c.id);
+            }
+        }
+        try {
+            localStorage.setItem('merke_active_calendar_ids', JSON.stringify([...this.activeCalendarIds]));
+        } catch (e) {}
+
+        this.updateActiveCountBadge();
+        this.renderCalendarsDrawer();
+        this.renderCurrentView();
+        this.renderUpcomingList();
+        this.renderTasks();
     },
 
     getFilteredEvents() {
-        if (!this.activeCalendarIds) {
-            return this.events;
+        if (!this.activeCalendarIds || this.activeCalendarIds.size === 0) {
+            return [];
         }
-        return this.events.filter(e => {
+        return (this.events || []).filter(e => {
             const cid = e.calendar_id ? parseInt(e.calendar_id, 10) : null;
-            return cid ? this.activeCalendarIds.has(cid) : true;
+            if (cid) return this.activeCalendarIds.has(cid);
+            if (e.account_id) {
+                const accCals = (this.calendars || []).filter(c => c.account_id === e.account_id);
+                return accCals.some(c => this.activeCalendarIds.has(c.id));
+            }
+            return false;
         });
     },
 
     getFilteredTasks() {
-        if (!this.activeCalendarIds) {
-            return this.tasks;
+        if (!this.activeCalendarIds || this.activeCalendarIds.size === 0) {
+            return [];
         }
-        return this.tasks.filter(t => {
+        return (this.tasks || []).filter(t => {
             const cid = t.calendar_id ? parseInt(t.calendar_id, 10) : null;
-            return cid ? this.activeCalendarIds.has(cid) : true;
+            if (cid) return this.activeCalendarIds.has(cid);
+            if (t.account_id) {
+                const accCals = (this.calendars || []).filter(c => c.account_id === t.account_id);
+                return accCals.some(c => this.activeCalendarIds.has(c.id));
+            }
+            return false;
         });
     },
 
@@ -674,21 +936,42 @@ const CalendarManager = {
         if (!listEl) return;
 
         const filteredTasks = this.getFilteredTasks();
-        // Tareas sin fecha fija
-        const undatedTasks = filteredTasks.filter(t => !t.start_time || t.start_time.trim() === '');
-        const pendingCount = undatedTasks.filter(t => !t.is_completed).length;
+        const pendingCount = filteredTasks.filter(t => !t.is_completed).length;
 
         if (countEl) countEl.textContent = pendingCount;
 
-        if (undatedTasks.length === 0) {
-            listEl.innerHTML = `<p class="text-xs text-slate-400 text-center py-3">No hay tareas sin fecha pendientes</p>`;
+        if (filteredTasks.length === 0) {
+            listEl.innerHTML = `<p class="text-xs text-slate-400 text-center py-4">No hay tareas para los calendarios seleccionados</p>`;
             return;
         }
 
-        listEl.innerHTML = undatedTasks.map(t => {
+        // Ordenar: tareas pendientes primero, luego completadas; y por ID descendente
+        const sortedTasks = [...filteredTasks].sort((a, b) => {
+            const compA = a.is_completed ? 1 : 0;
+            const compB = b.is_completed ? 1 : 0;
+            if (compA !== compB) return compA - compB;
+            return (b.id || 0) - (a.id || 0);
+        });
+
+        listEl.innerHTML = sortedTasks.map(t => {
             const isCompleted = !!t.is_completed;
             const color = this.getEventColor(t);
             const cleanTitle = t.title.replace(/^\[Tarea\]\s*/i, '');
+            const titleHtml = this.linkifyText(cleanTitle);
+            const hasDate = t.start_time && t.start_time.trim() !== '';
+            let dateBadge = '';
+            if (hasDate) {
+                try {
+                    const rawDate = t.start_time.includes('T') ? t.start_time.split('T')[0] : t.start_time;
+                    const parts = rawDate.split('-');
+                    if (parts.length === 3) {
+                        const dayNum = parseInt(parts[2], 10);
+                        const monthIdx = parseInt(parts[1], 10) - 1;
+                        const monthStr = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][monthIdx] || '';
+                        dateBadge = `<span class="text-[9px] px-1.5 py-0.2 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 font-medium shrink-0">${dayNum} ${monthStr}</span>`;
+                    }
+                } catch (e) {}
+            }
 
             return `
                 <div class="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-2 shadow-2xs group hover:border-indigo-400 dark:hover:border-indigo-600 transition-colors">
@@ -696,10 +979,13 @@ const CalendarManager = {
                         <button onclick="CalendarManager.toggleTaskCompletion(${t.id})" class="w-4 h-4 rounded border ${isCompleted ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 dark:border-slate-600 hover:border-indigo-500'} flex items-center justify-center shrink-0 transition-colors cursor-pointer" title="${isCompleted ? 'Marcar como pendiente' : 'Marcar como completada'}">
                             ${isCompleted ? '<svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
                         </button>
-                        <span class="w-2 h-2 rounded-full shrink-0" style="background-color: ${color}" title="Calendario: ${t.calendar_name || ''}${t.account_name ? ' | Cuenta: ' + t.account_name : ''}"></span>
+                        <span class="w-2 h-2 rounded-full shrink-0 shadow-2xs" style="background-color: ${color}" title="Calendario: ${t.calendar_name || ''}${t.account_name ? ' | Cuenta: ' + t.account_name : ''}"></span>
                         <div class="min-w-0 flex-1 cursor-pointer" onclick="CalendarManager.viewEventDetail(${t.id})">
-                            <span class="text-xs block truncate ${isCompleted ? 'line-through text-slate-400 dark:text-slate-500' : 'font-medium text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400'}">${cleanTitle}</span>
-                            <span class="text-[10px] text-slate-400 truncate block">${t.account_name || t.calendar_name || 'Calendario'}</span>
+                            <span class="text-xs block truncate ${isCompleted ? 'line-through text-slate-400 dark:text-slate-500' : 'font-medium text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400'}">${titleHtml}</span>
+                            <div class="flex items-center gap-1.5 mt-0.5">
+                                <span class="text-[10px] text-slate-400 truncate">${t.account_name || t.calendar_name || 'Calendario'}</span>
+                                ${dateBadge}
+                            </div>
                         </div>
                     </div>
                     <button onclick="CalendarManager.deleteEvent(${t.id})" class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 p-1 transition-opacity shrink-0 cursor-pointer" title="Eliminar tarea">
@@ -1139,38 +1425,80 @@ const CalendarManager = {
         }
     },
 
+    openExternal(url) {
+        if (!url) return;
+        let cleanUrl = String(url).trim();
+        if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://') && !cleanUrl.startsWith('mailto:')) {
+            cleanUrl = 'https://' + cleanUrl;
+        }
+
+        if (window.DesktopBridge && typeof DesktopBridge.openExternalUrl === 'function') {
+            DesktopBridge.openExternalUrl(cleanUrl);
+            return;
+        }
+
+        // Fallback al endpoint backend /api/desktop/open-url
+        fetch('/api/desktop/open-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: cleanUrl })
+        }).catch(() => {
+            window.open(cleanUrl, '_blank', 'noopener,noreferrer');
+        });
+    },
+
     linkifyText(text) {
         if (!text) return '';
         const div = document.createElement('div');
         div.textContent = text;
         const escaped = div.innerHTML;
 
+        // Detectar URLs válidas (http:// o https://)
         const urlRegex = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/g;
         return escaped.replace(urlRegex, (url) => {
-            return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline font-semibold hover:opacity-80 inline-flex items-center gap-1">${url} <svg class="w-3 h-3 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg></a>`;
+            const safeAttrUrl = url.replace(/"/g, '&quot;');
+            return `<a href="${safeAttrUrl}" onclick="event.preventDefault(); event.stopPropagation(); CalendarManager.openExternal('${safeAttrUrl}');" class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline font-semibold break-all inline-flex items-center gap-1 cursor-pointer transition-colors" title="Abrir enlace en navegador predeterminado">${url} <svg class="w-3 h-3 shrink-0 inline-block opacity-75" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg></a>`;
         });
     },
 
     formatLocationHtml(location) {
         if (!location) return '';
         const trimmed = location.trim();
-        const urlRegex = /(https?:\/\/[^\s]+)/;
-        const match = trimmed.match(urlRegex);
+        const urlRegex = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/g;
+        const matches = trimmed.match(urlRegex);
         
-        if (match || trimmed.toLowerCase().includes('meet.google.com') || trimmed.toLowerCase().includes('zoom.us') || trimmed.toLowerCase().includes('teams.microsoft.com')) {
-            let url = match ? match[0] : (trimmed.startsWith('http') ? trimmed : 'https://' + trimmed);
+        if (matches && matches.length > 0) {
+            const firstUrl = matches[0];
+            const isMeeting = firstUrl.toLowerCase().includes('teams.microsoft.com') ||
+                              firstUrl.toLowerCase().includes('zoom.us') ||
+                              firstUrl.toLowerCase().includes('meet.google.com') ||
+                              firstUrl.toLowerCase().includes('webex.com');
+            const safeAttrUrl = firstUrl.replace(/"/g, '&quot;');
+
             return `
-                <div class="space-y-1.5">
-                    <p class="text-xs text-slate-700 dark:text-slate-300 font-medium">${trimmed}</p>
-                    <a href="${url}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer">
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                        <span>Unirse a la videollamada / Abrir enlace</span>
-                        <svg class="w-3 h-3 ml-0.5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-                    </a>
+                <div class="space-y-2">
+                    <div class="text-xs text-slate-700 dark:text-slate-300 break-all leading-relaxed">
+                        ${this.linkifyText(trimmed)}
+                    </div>
+                    <button type="button" onclick="event.preventDefault(); event.stopPropagation(); CalendarManager.openExternal('${safeAttrUrl}');" class="inline-flex items-center gap-1.5 px-3 py-1.5 ${isMeeting ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white rounded-xl text-xs font-semibold shadow-2xs hover:shadow-xs transition-all cursor-pointer">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${isMeeting ? 'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z' : 'M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14'}"/></svg>
+                        <span>${isMeeting ? 'Unirse a la reunión (Abrir en navegador)' : 'Abrir enlace en navegador'}</span>
+                    </button>
                 </div>
             `;
         }
-        return `<span class="text-xs text-slate-700 dark:text-slate-300 font-medium">📍 ${trimmed}</span>`;
+
+        // Si es una dirección física normal, mostrar enlace directo para verla en Google Maps
+        const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(trimmed)}`;
+        return `
+            <div class="space-y-1.5">
+                <p class="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium">📍 ${trimmed}</p>
+                <button type="button" onclick="event.preventDefault(); event.stopPropagation(); CalendarManager.openExternal('${mapsUrl}');" class="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <span>Ver en Google Maps</span>
+                </button>
+            </div>
+        `;
     },
 
     formatEventDateTime(startTimeStr, endTimeStr, allDay = 0) {
@@ -1288,7 +1616,12 @@ const CalendarManager = {
             if (ev.meeting_url && ev.meeting_url.trim().length > 0) {
                 const url = ev.meeting_url.trim();
                 meetContainer.classList.remove('hidden');
-                if (joinMeetBtn) joinMeetBtn.href = url.startsWith('http') ? url : 'https://' + url;
+                if (joinMeetBtn) {
+                    joinMeetBtn.onclick = (e) => {
+                        e.preventDefault();
+                        CalendarManager.openExternal(url);
+                    };
+                }
                 if (meetText) meetText.textContent = url;
                 if (copyMeetBtn) {
                     copyMeetBtn.onclick = () => {
@@ -1301,16 +1634,16 @@ const CalendarManager = {
             }
         }
 
-        // Ubicación Física
+        // Ubicación / Direcciones (con URLs clickeables que abren en el navegador predeterminado)
         const locContainer = document.getElementById('event-detail-location-container');
         const locContent = document.getElementById('event-detail-location-content');
         if (locContainer && locContent) {
             if (ev.location && ev.location.trim().length > 0) {
-                locContent.textContent = ev.location.trim();
+                locContent.innerHTML = this.formatLocationHtml(ev.location);
                 locContainer.classList.remove('hidden');
             } else {
                 locContainer.classList.add('hidden');
-                locContent.textContent = '';
+                locContent.innerHTML = '';
             }
         }
 

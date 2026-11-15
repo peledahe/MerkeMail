@@ -172,11 +172,21 @@ def create_tray_pixmap(unread_count: int):
 def run_pyqt_window():
     from PyQt6.QtWidgets import QApplication, QMainWindow, QSystemTrayIcon, QMenu
     from PyQt6.QtWebEngineWidgets import QWebEngineView
-    from PyQt6.QtWebEngineCore import QWebEnginePage
-    from PyQt6.QtCore import Qt, QUrl, QPoint, QTimer, QRectF, QObject, pyqtSlot, QEvent
+    from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineDownloadRequest
+    from PyQt6.QtCore import Qt, QUrl, QPoint, QTimer, QRectF, QObject, pyqtSlot, QEvent, QStandardPaths
     from PyQt6.QtGui import QIcon, QAction, QPixmap, QPainter, QColor, QBrush, QPen, QImage, QDesktopServices
     from PyQt6.QtNetwork import QLocalSocket, QLocalServer
     from PyQt6.QtWebChannel import QWebChannel
+
+    # Evitar el throttling de temporizadores de Chromium cuando la ventana está oculta en el System Tray
+    chromium_flags = [
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+    ]
+    for flag in chromium_flags:
+        if flag not in sys.argv:
+            sys.argv.append(flag)
 
     app = QApplication(sys.argv)
     app.setApplicationName("MerkeMail")
@@ -290,20 +300,30 @@ def run_pyqt_window():
             super().javaScriptConsoleMessage(level, message, line, source_id)
 
         def acceptNavigationRequest(self, url, nav_type, is_main_frame):
-            # Cualquier navegación hacia sitios web externos debe abrirse en el navegador por defecto del sistema
-            if url.isValid() and url.scheme() in ("http", "https", "mailto"):
+            # Si es una descarga de adjunto de la propia app, procesarla localmente
+            if url.isValid() and url.scheme() in ("http", "https"):
+                if "/api/attachments/" in url.path():
+                    return True
                 host = url.host()
                 if host not in ("127.0.0.1", "localhost"):
                     QDesktopServices.openUrl(url)
                     return False
+            elif url.isValid() and url.scheme() == "mailto":
+                QDesktopServices.openUrl(url)
+                return False
             return super().acceptNavigationRequest(url, nav_type, is_main_frame)
 
         def createWindow(self, window_type):
-            # Cuando un enlace abre popup / target="_blank", abrir en el navegador predeterminado del sistema operativo
+            # Cuando un enlace abre popup / target="_blank", abrir en el navegador predeterminado salvo descargas locales
             class ExternalUrlCatchPage(QWebEnginePage):
                 def acceptNavigationRequest(inner_self, url, nav_type, is_main_frame):
-                    if url.isValid() and url.scheme() in ("http", "https", "mailto"):
-                        QDesktopServices.openUrl(url)
+                    if url.isValid() and url.scheme() in ("http", "https"):
+                        if "/api/attachments/" in url.path():
+                            return True
+                        host = url.host()
+                        if host not in ("127.0.0.1", "localhost"):
+                            QDesktopServices.openUrl(url)
+                            return False
                     return False
             return ExternalUrlCatchPage(self)
 
@@ -323,6 +343,17 @@ def run_pyqt_window():
             self.custom_page = CustomWebEnginePage(self, parent=self.view)
             self.view.setPage(self.custom_page)
 
+            # Conectar gestor de almacenamiento persistente y descargas de Qt WebEngine
+            try:
+                profile = self.view.page().profile()
+                web_data_dir = DATA_DIR / "web_profile"
+                web_data_dir.mkdir(parents=True, exist_ok=True)
+                profile.setPersistentStoragePath(str(web_data_dir))
+                profile.setCachePath(str(web_data_dir / "cache"))
+                profile.downloadRequested.connect(self.on_download_requested)
+            except Exception as dl_init_err:
+                print(f"Aviso configurando perfil de almacenamiento web: {dl_init_err}")
+
             self.channel = QWebChannel(self.view.page())
             self.bridge = DesktopBridgeObject(self)
             self.channel.registerObject("pyqtBridge", self.bridge)
@@ -330,6 +361,43 @@ def run_pyqt_window():
 
             self.view.setUrl(QUrl(f"http://127.0.0.1:{APP_PORT}/?desktop=1"))
             self.setCentralWidget(self.view)
+
+        def on_download_requested(self, download: QWebEngineDownloadRequest):
+            try:
+                downloads_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+                if not downloads_dir or not os.path.exists(downloads_dir):
+                    downloads_dir = str(Path.home() / "Descargas")
+                    if not os.path.exists(downloads_dir):
+                        downloads_dir = str(Path.home() / "Downloads")
+
+                os.makedirs(downloads_dir, exist_ok=True)
+
+                raw_filename = download.suggestedFileName() or download.downloadFileName() or "adjunto"
+                clean_filename = os.path.basename(raw_filename).replace('"', '').replace("'", "")
+                if not clean_filename:
+                    clean_filename = "adjunto"
+
+                download.setDownloadDirectory(downloads_dir)
+                download.setDownloadFileName(clean_filename)
+                download.accept()
+
+                full_path = os.path.join(downloads_dir, clean_filename)
+                print(f"[Desktop Download] Guardando adjunto en: {full_path}")
+
+                def on_finished():
+                    if download.isFinished():
+                        print(f"[Desktop Download] Descarga completada: {full_path}")
+                        try:
+                            msg = f"Guardado en Descargas/{clean_filename}"
+                            self.view.page().runJavaScript(
+                                f"if (window.UI && typeof UI.showStickyToast === 'function') UI.showStickyToast('Descarga Completada', '{msg}', 'success');"
+                            )
+                        except Exception:
+                            pass
+
+                download.isFinishedChanged.connect(on_finished)
+            except Exception as e:
+                print(f"Error procesando descarga: {e}")
 
         def changeEvent(self, event):
             super().changeEvent(event)
@@ -518,6 +586,7 @@ def run_pyqt_window():
     tray_timer = None
     if QSystemTrayIcon.isSystemTrayAvailable():
         initial_unread = get_unread_count()
+        last_notified_unread = initial_unread
         tray_icon = QSystemTrayIcon(QIcon(create_tray_pixmap(initial_unread)), app)
         if initial_unread > 0:
             tray_icon.setToolTip(f"MerkeMail - {initial_unread} correo{'s' if initial_unread != 1 else ''} sin leer")
@@ -550,6 +619,7 @@ def run_pyqt_window():
         ))
 
         def update_tray_status():
+            nonlocal last_notified_unread
             if not tray_icon:
                 return
             unread = get_unread_count()
@@ -557,16 +627,29 @@ def run_pyqt_window():
             tray_icon.setIcon(QIcon(pix))
             if unread > 0:
                 tray_icon.setToolTip(f"MerkeMail - {unread} correo{'s' if unread != 1 else ''} sin leer")
+                # Si llegaron correos nuevos mientras la ventana está oculta en segundo plano, mostrar notificación nativa
+                if unread > last_notified_unread and not window.isVisible():
+                    diff = unread - last_notified_unread
+                    try:
+                        tray_icon.showMessage(
+                            "MerkeMail",
+                            f"Tienes {diff} correo{'s' if diff != 1 else ''} nuevo{'s' if diff != 1 else ''}",
+                            QSystemTrayIcon.MessageIcon.Information,
+                            5000
+                        )
+                    except Exception:
+                        pass
             else:
                 tray_icon.setToolTip("MerkeMail - Todo al día (0 sin leer)")
+            last_notified_unread = unread
 
         if is_tray_enabled():
             tray_icon.show()
 
-        # Temporizador periódico cada 10 segundos para actualizar el estado del icono
+        # Temporizador periódico cada 15 segundos para actualizar el estado del icono
         tray_timer = QTimer()
         tray_timer.timeout.connect(update_tray_status)
-        tray_timer.start(10000)
+        tray_timer.start(15000)
 
     # Si no es autostart, mostrar ventana
     is_autostart = "--autostart" in sys.argv

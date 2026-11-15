@@ -133,22 +133,19 @@ const AntigravityCopilot = {
         const container = document.getElementById('antigravity-messages-container');
         if (!container) return;
 
+        const cleanText = (text || '').trim();
         const msgEl = document.createElement('div');
         msgEl.className = `flex items-start gap-2.5 w-full min-w-0 ${role === 'user' ? 'justify-end' : ''}`;
 
         if (role === 'user') {
             msgEl.innerHTML = `
-                <div class="p-3 bg-indigo-600 text-white rounded-2xl rounded-tr-xs text-xs max-w-[85%] leading-relaxed shadow-sm break-words whitespace-pre-wrap overflow-hidden">
-                    ${EmailManager.escapeHtml(text)}
-                </div>
+                <div class="p-3 bg-indigo-600 text-white rounded-2xl rounded-tr-xs text-xs max-w-[85%] leading-relaxed shadow-sm break-words whitespace-pre-wrap overflow-hidden">${EmailManager.escapeHtml(cleanText)}</div>
                 ${this.getUserAvatarHTML()}
             `;
         } else {
             msgEl.innerHTML = `
                 <img src="/img/bot.png" alt="Elio" class="w-6 h-6 rounded-full object-cover shrink-0 shadow-xs ring-1 ring-indigo-400/40">
-                <div class="p-3 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl rounded-tl-xs text-xs flex-1 min-w-0 max-w-full leading-relaxed border border-slate-200 dark:border-slate-700/60 whitespace-pre-wrap shadow-2xs break-words overflow-hidden">
-                    ${this.formatResponse(text)}
-                </div>
+                <div class="p-3 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl rounded-tl-xs text-xs flex-1 min-w-0 max-w-full leading-relaxed border border-slate-200 dark:border-slate-700/60 whitespace-pre-wrap shadow-2xs break-words overflow-hidden">${this.formatResponse(cleanText)}</div>
             `;
         }
 
@@ -159,7 +156,7 @@ const AntigravityCopilot = {
     formatResponse(text) {
         if (!text) return '';
 
-        let html = EmailManager.escapeHtml(text)
+        let html = EmailManager.escapeHtml(text.trim())
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             .replace(/\*(.*?)\*/g, '<em>$1</em>')
             .replace(/`([^`]+)`/g, '<code class="bg-slate-200 dark:bg-slate-700 px-1 py-0.5 rounded text-[11px] font-mono">$1</code>');

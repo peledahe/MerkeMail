@@ -2036,7 +2036,7 @@ const EmailManager = {
                                         const badge = this.getAttachmentBadge(att.filename, att.content_type);
                                         const formattedSize = window.Composer ? Composer.formatFileSize(att.size) : (att.size || 0) + ' B';
                                         return `
-                                            <a href="/api/attachments/${att.id}/download" download="${this.escapeHtml(att.filename)}" target="_blank" class="group flex items-center justify-between gap-3 p-3 bg-white dark:bg-slate-800/90 hover:bg-indigo-50/50 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-700/80 hover:border-indigo-400 dark:hover:border-indigo-500 rounded-xl shadow-2xs hover:shadow-xs transition-all text-xs cursor-pointer min-w-0" title="Clic para descargar '${this.escapeHtml(att.filename)}'">
+                                            <a href="/api/attachments/${att.id}/download" download="${this.escapeHtml(att.filename)}" onclick="EmailManager.downloadAttachment(${att.id}, '${this.escapeHtml(att.filename)}', event)" class="group flex items-center justify-between gap-3 p-3 bg-white dark:bg-slate-800/90 hover:bg-indigo-50/50 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-700/80 hover:border-indigo-400 dark:hover:border-indigo-500 rounded-xl shadow-2xs hover:shadow-xs transition-all text-xs cursor-pointer min-w-0" title="Clic para descargar '${this.escapeHtml(att.filename)}'">
                                                 <div class="flex items-center gap-2.5 min-w-0">
                                                     <span class="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-[11px] shrink-0 border ${badge.bg}">
                                                         ${badge.label}
@@ -2859,6 +2859,22 @@ const EmailManager = {
             label: (ext.toUpperCase().slice(0, 4) || 'FILE'),
             desc: 'Archivo adjunto'
         };
+    },
+
+    downloadAttachment(attId, filename, e) {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        const link = document.createElement('a');
+        link.href = `/api/attachments/${attId}/download`;
+        link.download = filename || 'adjunto';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        if (window.UI && typeof UI.showStickyToast === 'function') {
+            UI.showStickyToast('Descargando archivo', `Descargando ${filename || 'adjunto'}...`, 'info', 3000);
+        }
     },
 
     downloadAllAttachments(emailId) {

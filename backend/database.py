@@ -59,6 +59,7 @@ def init_db():
         "ALTER TABLE labels ADD COLUMN type TEXT DEFAULT 'user'",
         "ALTER TABLE calendars ADD COLUMN account_id INTEGER",
         "ALTER TABLE calendars ADD COLUMN external_id TEXT",
+        "ALTER TABLE events ADD COLUMN external_id TEXT",
         "ALTER TABLE contacts ADD COLUMN company TEXT",
         "ALTER TABLE contacts ADD COLUMN job_title TEXT",
         "ALTER TABLE contacts ADD COLUMN address TEXT",

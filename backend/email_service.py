@@ -416,28 +416,19 @@ class EmailService:
             ))
             sent_email_id = cursor.lastrowid
 
-            # Guardar registros en la tabla attachments y persistir ficheros en disco
+            # Guardar registros de metadata en la tabla attachments sin guardar ficheros innecesarios en disco local
             if attachments and sent_email_id:
                 for att in attachments:
                     try:
                         att_fn = att.get("filename", "adjunto")
                         att_ct = att.get("content_type", "application/octet-stream")
                         att_sz = att.get("size", 0)
-                        att_b64 = att.get("data_base64", "")
                         cursor.execute('''
                             INSERT INTO attachments (email_id, filename, content_type, size)
                             VALUES (?, ?, ?, ?)
                         ''', (sent_email_id, att_fn, att_ct, att_sz))
-                        new_att_id = cursor.lastrowid
-                        if att_b64 and new_att_id:
-                            safe_fn = "".join(c for c in att_fn if c.isalnum() or c in "._- ")
-                            fpath = os.path.join("data", "attachments", f"{new_att_id}_{safe_fn}")
-                            os.makedirs(os.path.join("data", "attachments"), exist_ok=True)
-                            with open(fpath, "wb") as f:
-                                f.write(base64.b64decode(att_b64))
-                            cursor.execute("UPDATE attachments SET file_path = ? WHERE id = ?", (fpath, new_att_id))
                     except Exception as ins_att_err:
-                        print(f"Error guardando attachment db: {ins_att_err}")
+                        print(f"Error guardando metadata de attachment: {ins_att_err}")
 
             conn.commit()
             conn.close()

@@ -47,6 +47,26 @@ IMG_DIR = BASE_DIR / "img"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/img", StaticFiles(directory=str(IMG_DIR)), name="img")
 
+def cleanup_local_attachments():
+    """Elimina ficheros residuales locales en data/attachments para no almacenar archivos innecesariamente."""
+    try:
+        att_dir = BASE_DIR / "data" / "attachments"
+        if att_dir.exists():
+            for p in att_dir.iterdir():
+                if p.is_file():
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
+        conn = get_db()
+        conn.execute("UPDATE attachments SET file_path = NULL WHERE file_path IS NOT NULL")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Aviso limpiando archivos adjuntos locales: {e}")
+
+cleanup_local_attachments()
+
 # Modelos Pydantic
 class AccountCreate(BaseModel):
     name: str
@@ -180,17 +200,89 @@ class EmailLabelRequest(BaseModel):
     label_id: int
 
 import asyncio
+import time
+
+_last_calendar_sync = 0
+_last_email_sync = {}
 
 async def _periodic_contacts_sync():
     """Sincroniza periódicamente la libreta de contactos cada 15 minutos."""
     while True:
         try:
             await asyncio.sleep(900)  # 15 minutos
-            ContactsService.sync_contacts()
+            await asyncio.to_thread(ContactsService.sync_contacts)
         except asyncio.CancelledError:
             break
         except Exception as e:
             print(f"[Contacts] Error en sincronización periódica: {e}")
+
+async def _periodic_background_sync_loop():
+    """
+    Sincronizador en segundo plano continuo del backend.
+    Garantiza que, incluso cuando la aplicación esté oculta en el System Tray,
+    se cumplan las sincronizaciones periódicas:
+    1. Calendario: cada 5 minutos (300 segundos) como mínimo.
+    2. Correos: según el intervalo configurado de cada cuenta activa (mínimo 5 min por defecto).
+    """
+    global _last_calendar_sync, _last_email_sync
+    # Espera inicial para permitir arranque ágil del backend
+    await asyncio.sleep(15)
+    
+    while True:
+        try:
+            now = time.time()
+
+            # 1. Sincronización periódica de Calendarios (cada 5 minutos = 300s)
+            if now - _last_calendar_sync >= 300:
+                _last_calendar_sync = now
+                try:
+                    await asyncio.to_thread(CalendarService.sync_account_calendars)
+                    conn = get_db()
+                    g_accounts = conn.execute("SELECT id FROM accounts WHERE is_active = 1 AND provider IN ('google', 'gmail')").fetchall()
+                    conn.close()
+                    for g_acc in g_accounts:
+                        try:
+                            await asyncio.to_thread(GoogleOAuthService.sync_google_calendar, g_acc["id"])
+                            await asyncio.to_thread(GoogleOAuthService.sync_google_tasks, g_acc["id"])
+                        except Exception as ge:
+                            print(f"[Calendar Background Sync] Aviso en cuenta Google {g_acc['id']}: {ge}")
+                    print("[Calendar Background Sync] Sincronización periódica de 5 minutos finalizada.")
+                except Exception as ce:
+                    print(f"[Calendar Background Sync] Error en sincronización: {ce}")
+
+            # 2. Sincronización periódica de Correos (según sync_interval de cada cuenta activa)
+            try:
+                conn = get_db()
+                accounts = conn.execute("SELECT id, name, email, sync_interval, is_active FROM accounts WHERE is_active = 1").fetchall()
+                conn.close()
+
+                for acc in accounts:
+                    acc_id = acc["id"]
+                    # Intervalo en minutos (mínimo 1 minuto, por defecto 5 min)
+                    interval_min = int(acc["sync_interval"]) if acc["sync_interval"] is not None else 5
+                    if interval_min < 1:
+                        interval_min = 5
+                    interval_sec = interval_min * 60
+
+                    last_sync = _last_email_sync.get(acc_id, 0)
+                    if now - last_sync >= interval_sec:
+                        _last_email_sync[acc_id] = now
+                        print(f"[Email Background Sync] Sincronizando cuenta {acc['email']} (cada {interval_min} min)...")
+                        try:
+                            # Sincroniza INBOX con hasta 30 correos recientes
+                            await asyncio.to_thread(EmailService.sync_mailbox, acc_id, "INBOX", None, 30)
+                        except Exception as ee:
+                            print(f"[Email Background Sync] Error sincronizando {acc['email']}: {ee}")
+            except Exception as dbe:
+                print(f"[Email Background Sync] Error consultando cuentas: {dbe}")
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[Background Sync Loop] Excepción no controlada: {e}")
+
+        # Revisar cada 20 segundos
+        await asyncio.sleep(20)
 
 @app.on_event("startup")
 async def on_startup():
@@ -200,6 +292,7 @@ async def on_startup():
     except Exception as e:
         print(f"[Contacts] Error en sincronización inicial: {e}")
     asyncio.create_task(_periodic_contacts_sync())
+    asyncio.create_task(_periodic_background_sync_loop())
 
 @app.get("/")
 def serve_index():
@@ -758,11 +851,11 @@ def image_proxy(url: str = Query(..., description="URL de la imagen remota a ser
 
 @app.get("/api/attachments/{attachment_id}/download")
 def download_attachment(attachment_id: int):
-    """Descarga el contenido de un archivo adjunto, extrayéndolo de disco o de Gmail API bajo demanda."""
+    """Descarga el contenido de un archivo adjunto bajo demanda directamente por streaming sin guardarlo en disco local."""
     conn = get_db()
     row = conn.execute('''
         SELECT a.id, a.email_id, a.filename, a.content_type, a.size, a.remote_id, a.file_path,
-               e.account_id, e.uid, acc.provider
+               e.account_id, e.uid, e.folder, acc.provider, acc.auth_type
         FROM attachments a
         JOIN emails e ON a.email_id = e.id
         JOIN accounts acc ON e.account_id = acc.id
@@ -777,17 +870,37 @@ def download_attachment(attachment_id: int):
     content_type = row["content_type"] or "application/octet-stream"
     file_path = row["file_path"]
 
-    # 1. Si ya existe archivo en disco
-    if file_path and os.path.exists(file_path):
-        return FileResponse(file_path, filename=filename, media_type=content_type)
-
+    import urllib.parse
     safe_filename = "".join(c for c in filename if c.isalnum() or c in "._- ")
-    local_path = os.path.join("data", "attachments", f"{attachment_id}_{safe_filename}")
-    if os.path.exists(local_path):
-        return FileResponse(local_path, filename=filename, media_type=content_type)
+    if not safe_filename:
+        safe_filename = f"adjunto_{attachment_id}"
+    encoded_fn = urllib.parse.quote(filename)
+    headers = {
+        "Content-Disposition": f'attachment; filename="{safe_filename}"; filename*=UTF-8\'\'{encoded_fn}',
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+    }
 
-    # 2. Si proviene de Google OAuth y tiene remote_id
-    if row["provider"] in ("google", "gmail") and row["remote_id"]:
+    # 1. Si existe archivo residual de versiones previas en disco, leerlo y limpiarlo
+    if file_path and os.path.exists(file_path):
+        try:
+            with open(file_path, "rb") as f:
+                raw_bytes = f.read()
+            # Eliminar copia local innecesaria en la app
+            try:
+                os.remove(file_path)
+                conn = get_db()
+                conn.execute("UPDATE attachments SET file_path = NULL WHERE id = ?", (attachment_id,))
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
+            headers["Content-Length"] = str(len(raw_bytes))
+            return Response(content=raw_bytes, media_type=content_type, headers=headers)
+        except Exception:
+            pass
+
+    # 2. Si proviene de Google OAuth y tiene remote_id (Gmail API bajo demanda)
+    if (row["provider"] in ("google", "gmail") or row["auth_type"] == "oauth2") and row["remote_id"]:
         try:
             creds = GoogleOAuthService.get_valid_credentials(row["account_id"])
             if not creds:
@@ -801,22 +914,47 @@ def download_attachment(attachment_id: int):
             data_b64 = att_resp.get("data", "")
             raw_bytes = base64.urlsafe_b64decode(data_b64)
 
-            os.makedirs(os.path.join("data", "attachments"), exist_ok=True)
-            with open(local_path, "wb") as f:
-                f.write(raw_bytes)
-
-            conn = get_db()
-            conn.execute("UPDATE attachments SET file_path = ? WHERE id = ?", (local_path, attachment_id))
-            conn.commit()
-            conn.close()
-
-            return Response(
-                content=raw_bytes,
-                media_type=content_type,
-                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-            )
+            # Entregar directamente por streaming al usuario sin escribir a disco local
+            headers["Content-Length"] = str(len(raw_bytes))
+            return Response(content=raw_bytes, media_type=content_type, headers=headers)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error obteniendo adjunto desde Gmail: {e}")
+
+    # 3. Si proviene de una cuenta IMAP tradicional, extraer bajo demanda del buzón remoto
+    if row["account_id"] and row["uid"]:
+        try:
+            account = EmailService.get_account(row["account_id"])
+            if account and account.get("auth_type") != "oauth2":
+                import ssl, imaplib, email as email_pkg
+                from backend.crypto_service import CryptoService
+                is_local = "127.0.0.1" in account["imap_host"] or "localhost" in account["imap_host"]
+                if account.get("imap_ssl", 1):
+                    ctx = ssl.create_default_context()
+                    if is_local:
+                        ctx.check_hostname = False
+                        ctx.verify_mode = ssl.CERT_NONE
+                    mail = imaplib.IMAP4_SSL(account["imap_host"], int(account["imap_port"]), ssl_context=ctx)
+                else:
+                    mail = imaplib.IMAP4(account["imap_host"], int(account["imap_port"]))
+                raw_pass = CryptoService.decrypt(account.get("imap_password", "")) or ""
+                mail.login(account["imap_user"].strip(), raw_pass.replace(" ", "").strip())
+                mail.select(row["folder"] or "INBOX", readonly=True)
+                res, msg_data = mail.fetch(str(row["uid"]).encode(), "(RFC822)")
+                mail.logout()
+                if res == "OK" and msg_data and msg_data[0]:
+                    msg = email_pkg.message_from_bytes(msg_data[0][1])
+                    for part in msg.walk():
+                        part_fn = part.get_filename()
+                        if part_fn:
+                            from backend.email_service import decode_mime_header
+                            dec_fn = decode_mime_header(part_fn)
+                            if dec_fn == filename or dec_fn == row["filename"]:
+                                raw_bytes = part.get_payload(decode=True)
+                                if raw_bytes:
+                                    headers["Content-Length"] = str(len(raw_bytes))
+                                    return Response(content=raw_bytes, media_type=content_type, headers=headers)
+        except Exception as imap_err:
+            print(f"Error descargando adjunto IMAP bajo demanda: {imap_err}")
 
     raise HTTPException(status_code=404, detail="El contenido del archivo no está disponible")
 
@@ -1780,17 +1918,57 @@ def cleanup_preview(req: AICleanupRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 # --- ENDPOINTS DE CALENDARIOS Y EVENTOS ---
+_calendar_sync_lock = threading.Lock()
+_calendar_sync_in_progress = False
+
 @app.get("/api/calendars")
 def get_calendars():
     return CalendarService.get_calendars()
 
 @app.post("/api/calendars/sync")
 def sync_calendars():
+    global _calendar_sync_in_progress
+    with _calendar_sync_lock:
+        if _calendar_sync_in_progress:
+            return {"success": True, "message": "Sincronización ya en curso en segundo plano", "in_progress": True}
+        _calendar_sync_in_progress = True
+
     try:
-        CalendarService.sync_account_calendars()
-        return {"success": True, "message": "Calendarios sincronizados"}
+        CalendarService.ensure_google_calendars()
+        conn = get_db()
+        google_accounts = conn.execute("SELECT id FROM accounts WHERE is_active = 1 AND provider IN ('google', 'gmail')").fetchall()
+        conn.close()
+        
+        google_results = []
+        any_api_disabled = False
+        enable_url = None
+
+        for g_acc in google_accounts:
+            try:
+                res_cal = GoogleOAuthService.sync_google_calendar(g_acc["id"])
+                res_tasks = GoogleOAuthService.sync_google_tasks(g_acc["id"])
+                google_results.append({"account_id": g_acc["id"], "calendar": res_cal, "tasks": res_tasks})
+                if isinstance(res_cal, dict) and res_cal.get("api_disabled"):
+                    any_api_disabled = True
+                    enable_url = res_cal.get("enable_url")
+            except Exception as ge:
+                print(f"[Calendar Sync] Aviso en cuenta Google {g_acc['id']}: {ge}")
+
+        if any_api_disabled:
+            return {
+                "success": False,
+                "api_disabled": True,
+                "enable_url": enable_url or "https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=627907237091",
+                "message": "La API de Google Calendar está deshabilitada en la consola de Google Cloud para este proyecto."
+            }
+
+        return {"success": True, "message": "Calendarios sincronizados", "details": google_results}
     except Exception as e:
+        print(f"[Calendar Sync] Error general: {e}")
         return {"success": False, "error": str(e)}
+    finally:
+        with _calendar_sync_lock:
+            _calendar_sync_in_progress = False
 
 @app.get("/api/events")
 def get_events(start_date: Optional[str] = None, end_date: Optional[str] = None):

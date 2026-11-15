@@ -2,6 +2,133 @@
 
 ## Estado de Desarrollo Actual
 
+- **Fase 107 - Rediseño y Optimización Visual de Campos del Perfil de Usuario:**
+  - **Ampliación y Formato Multilínea:**
+    - **Estilo de Comunicación:** Se transformó de un campo `input` de una sola línea a un `textarea` estilizado con altura mínima y redimensión vertical para leer y editar cómodamente párrafos de estilo y tono sin cortes horizontales.
+    - **Biografía / Resumen Personal:** Se expandió de 2 líneas a un área espaciosa de 4 filas (`min-h-[96px]`) con tipografía `leading-relaxed`, eliminando la barra de desplazamiento interna angosta.
+    - **Contexto Extra para Redacción IA:** Se rediseñó con una tarjeta de tono púrpura suave distintiva de IA, área de 3 filas (`min-h-[78px]`) y badges explicativos claros.
+  - **Mejora Estética Global del Formulario:**
+    - Encabezados de campo con iconos identificativos (comunicación, biografía, IA), etiquetas descriptivas claras, bordes redondeados `rounded-xl`, sombras sutiles y transiciones de foco `focus:ring-2 focus:ring-indigo-500/20`.
+  - **Despliegue y Verificación:**
+    - Verificado y desplegado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+- **Fase 106 - Persistencia Total del Modo Oscuro / Claro al Cerrar y Reabrir la Aplicación:**
+  - **Triple Mecanismo de Persistencia:**
+    1. **Pre-render en `<head>` (`index.html`):** Inyección de un script autoejecutable antes de la carga de hojas de estilo para leer la preferencia de tema y aplicar la clase `.dark` sin parpadeos visuales ni depender de scripts asíncronos.
+    2. **Persistencia en Base de Datos SQLite:** En `UI.toggleTheme()`, la preferencia se guarda simultáneamente en `localStorage` y en la base de datos backend (`POST /api/settings` -> clave `theme` en la tabla `settings`), y `UI.initTheme()` sincroniza bidireccionalmente la base de datos con el cliente.
+    3. **Persistencia de Perfil en Qt WebEngine (`desktop/app_window.py`):** Se configuraron explícitamente `profile.setPersistentStoragePath` y `profile.setCachePath` en `data/web_profile` para que Qt conserve el almacenamiento local (LocalStorage/Cookies) de forma permanente entre ejecuciones del escritorio.
+  - **Despliegue y Verificación:**
+    - Verificado con `curl` sobre `/api/settings` y desplegado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+- **Fase 105 - Detección y Conversión Automática de URLs a Enlaces en Navegador Predeterminado (Ubicación y Descripción):**
+  - **Apertura en el Navegador Predeterminado del Sistema Operativo:**
+    - Se implementó `CalendarManager.openExternal(url)`, el cual canaliza la apertura de enlaces a través de `DesktopBridge.openExternalUrl(url)` (que usa el comando nativo de PyQt o el endpoint `/api/desktop/open-url` vía `webbrowser.open`).
+    - Garantiza que cualquier enlace (Teams, Zoom, Google Meet, Google Maps o páginas web) se abra de inmediato en el navegador del sistema operativo (Chrome, Firefox, etc.) en lugar de dentro de la aplicación o quedar inerte.
+  - **Detección de URLs en Ubicación y Direcciones:**
+    - Se actualizó el panel de detalle (`locContent` en `viewEventDetail`) usando `formatLocationHtml(ev.location)`.
+    - Cuando una ubicación contiene una URL (como enlaces de Microsoft Teams, Zoom, Google Meet o sitios web), la convierte en un enlace clickeable formateado y renderiza un botón de acción destacado: *"Unirse a la reunión (Abrir en navegador)"*.
+    - Si es una dirección física normal, ofrece un acceso directo *"Ver en Google Maps"*.
+  - **Detección de URLs en Descripción y Tareas:**
+    - `linkifyText(text)` ahora intercepta los clics con `CalendarManager.openExternal(url)`, garantizando apertura externa tanto en la descripción del evento/tarea como en los títulos de tareas en el listado lateral.
+  - **Despliegue y Verificación:**
+    - Sincronizado y desplegado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+- **Fase 104 - Optimización y Desacople de Sincronización de Calendario y Filtrado Reactivo de Tareas:**
+  - **Eliminación del Cuello de Botella y Errores de Conexión:**
+    - Se identificó y resolvió la causa de los errores repetidos: `CalendarService.get_calendars()` llamaba a `sync_account_calendars()` en cada lectura (`GET /api/calendars`, `GET /api/events`, `GET /api/tasks`). Al leer eventos y tareas de forma secuencial, se disparaban llamadas a Google API redundantes que bloqueaban Uvicorn, provocaban timeouts de red y lanzaban toasts falsos de error de conexión.
+    - Se eliminaron las llamadas a red de los métodos de lectura `get_calendars()`, reduciendo el tiempo de respuesta de 5-10 segundos a solo 25-50 milisegundos.
+    - Se introdujo `threading.Lock()` y control de concurrencia en `/api/calendars/sync` para evitar llamadas simultáneas duplicadas o solapadas.
+    - En el frontend (`frontend/js/calendar.js`), se añadió control de bloqueo `isSyncing`, deshabilitación del botón mientras sincroniza y timeout con `AbortController`.
+  - **Filtrado Reactivo de Tareas por Calendario:**
+    - Se creó y garantizó automáticamente la existencia del calendario `"Tareas"` para cada cuenta de Google activa (`tasks_default`).
+    - Se corrigió `getFilteredTasks()` y `getFilteredEvents()` para respetar estrictamente `activeCalendarIds`.
+    - En `renderTasks()`, ahora se muestran y filtran todas las tareas (con fecha o sin fecha) de los calendarios activos. Al desmarcar un calendario (o desactivar una cuenta con "Ninguno"), sus tareas se ocultan inmediatamente del panel de tareas y de la cuadrícula. Al marcarlo de nuevo, reaparecen al instante.
+  - **Despliegue y Verificación:**
+    - Probado exitosamente vía API y desplegado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`. Backend activo y validado en el puerto 6524.
+
+- **Fase 103 - Exclusión Estricta de Calendarios No-Google y Modal Lateral Agrupado por Conexión:**
+  - **Exclusión de Cuentas No-Google:**
+    - Se depuraron y eliminaron de la base de datos y de la lógica de sincronización todos los calendarios no asociados a cuentas de Google/Gmail (`provider != 'google'`), como Proton o cuentas IMAP personalizadas.
+    - `CalendarService.sync_account_calendars` y `CalendarService.get_calendars` operan de forma exclusiva sobre cuentas Google conectadas y activas.
+  - **Modal Lateral de Mis Calendarios (`drawer-calendars`):**
+    - Se eliminó la fila horizontal abarrotada del header del calendario.
+    - Se incorporó un botón limpio en el encabezado con contador dinámico: `Mis Calendarios [X/Total]`.
+    - Se creó un modal lateral deslizante (drawer) que agrupa los calendarios por conexión/cuenta de Google (`perrydaniels@gmail.com`, `merke.software@gmail.com`, etc.).
+    - Cada cuenta cuenta con controles rápidos de selección masiva (*"Todos"* / *"Ninguno"*), switches individuales con el color representativo de Google Calendar y contador de eventos.
+    - Filtro reactivo en tiempo real con persistencia en `localStorage`.
+  - **Sincronización y Despliegue:**
+    - Desplegado y verificado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+
+- **Fase 102 - Eliminación de Enlace Redundante en Firmas y Verificación Integral de Sincronizaciones:**
+  - **Limpieza de Interfaz en Firmas Guardadas:**
+    - Se eliminó el enlace redundante `"Seleccionar para editar ↑"` de cada tarjeta de firma en `frontend/js/signatures.js`, dejando exclusivamente el icono de lápiz para cargar y editar en el formulario.
+  - **Verificación de Sincronizaciones en Pleno Funcionamiento:**
+    - **Google Calendar:** Totalmente verificado y activo. Se han descargado todos los 8 calendarios del usuario (*Familia, Festivos en Guatemala, Merke Software, Personal, Setesa, Mk Organizer, Minichrome*) y 260 eventos y actividades con sus colores y asociaciones correctas. Sincronización bidireccional lista.
+    - **Google Tasks:** Módulo `sync_google_tasks` y `toggle_google_task` implementado con soporte bidireccional. Permiso `https://www.googleapis.com/auth/tasks` registrado.
+    - **Correos:** Sincronización en segundo plano activa (intervalos de 5 min) vía Gmail REST API e IMAP, más sincronización total de carpetas.
+    - **Direcciones de Contactos:** 610 contactos indexados con nombre, email, empresas, conteo de interacciones y notas.
+  - **Sincronización y Despliegue:**
+    - Desplegado y verificado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+
+- **Fase 101 - Integración de Scope de Google Tasks API:**
+  - Se agregó el scope oficial `"https://www.googleapis.com/auth/tasks"` a `GOOGLE_SCOPES` en `backend/google_oauth.py`.
+  - Permite la autorización directa de Google Tasks API para la sincronización de listas y tareas de Google.
+  - Sincronizado y desplegado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+  - **Corrección de Espacios y Saltos de Línea en Burbujas de Chat:**
+    - Se identificó que en `appendMessage` (`frontend/js/antigravity.js`), el template literal HTML incluía saltos de línea e indentación de 20 espacios antes del contenido dinámico (`${EmailManager.escapeHtml(text)}` y `${this.formatResponse(text)}`).
+    - Al tener la clase CSS `whitespace-pre-wrap`, el navegador interpretaba y renderizaba literalmente ese salto de línea y la sangría al principio de cada mensaje enviado o recibido.
+    - Se compactó la interpolación directamente sobre los tags `<div>...</div>` y se aplicó `.trim()` al texto antes del renderizado y en `formatResponse`.
+  - **Sincronización y Despliegue:**
+    - Desplegado y verificado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+
+- **Fase 99 - Sincronización Bidireccional de Google Calendar y Diagnóstico de Google Tasks:**
+  - **Sincronización Bidireccional (Crear/Editar/Eliminar en Google Calendar):**
+    - Se implementaron los métodos `create_google_event`, `update_google_event` y `delete_google_event` en `backend/google_oauth.py`.
+    - `CalendarService.create_event`, `update_event` y `delete_event` ahora propagan en tiempo real cualquier creación, modificación o eliminación hacia Google Calendar cuando el calendario de destino es de Google.
+    - Se añadió la columna `external_id` a la tabla `events` para almacenar el ID externo del evento en Google Calendar y mantener el mapeo 1:1 sin duplicados.
+  - **Sincronización Multi-Calendario de Google:**
+    - `GoogleOAuthService.sync_google_calendar` ahora recorre y sincroniza todos los calendarios de la cuenta (Personal, Familia, Merke Software, Setesa, etc.), no solo el 'primary'.
+    - Rango temporal ampliado de 60 días al pasado hasta 180 días en el futuro para abarcar toda la cuadrícula activa y actividades pasadas recientes.
+  - **Detección de Google Calendar API Deshabilitada en Google Cloud Console:**
+    - El backend y frontend detectan el error 403 `accessNotConfigured` de Google y muestran un banner interactivo y notificación con el enlace directo para habilitar la API en la consola de Google:
+      `https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=627907237091`.
+  - **Aclaración sobre Tasks:**
+    - Documentada la diferencia entre eventos de calendario y la Google Tasks API.
+  - **Sincronización y Despliegue:**
+    - Compilado y desplegado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+  - **Sincronización Continua en Segundo Plano (Systray Oculto):**
+    - Se implementó un bucle asíncrono permanente en el backend (`_periodic_background_sync_loop`) en `backend/main.py`.
+    - Garantiza que cuando la ventana de escritorio de MerkeMail esté minimizada u oculta en el System Tray (`hide()`), el backend continúe ejecutando automáticamente la sincronización de correos de cada cuenta activa según su intervalo configurado (`sync_interval`, por defecto 5 minutos).
+    - Se agregaron banderas nativas a QtWebEngine/Chromium (`--disable-background-timer-throttling`, `--disable-backgrounding-occluded-windows`, `--disable-renderer-backgrounding`) en `desktop/app_window.py` para prevenir la suspensión de temporizadores web al ocultar la ventana.
+    - Se integró detección y notificación nativa en el System Tray (`tray_icon.showMessage`) cada 15 segundos cuando llegan correos nuevos mientras la aplicación permanece oculta.
+  - **Ajuste de Sincronización de Calendario a 5 Minutos Mínimo:**
+    - Se actualizó el intervalo de sincronización periódica de eventos y tareas de calendario en `frontend/js/calendar.js` de 60 segundos (60.000 ms) a 5 minutos (300.000 ms).
+    - Se integró en el scheduler de background del backend la sincronización periódica de calendarios y eventos de Google Calendar cada 300 segundos (5 minutos exactos).
+  - **Sincronización y Despliegue:**
+    - Desplegado y verificado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+
+- **Fase 97 - Corrección Integral de Descargas Multi-entorno y Cero Almacenamiento Residual Local:**
+  - **Soporte Nativo de Descargas en Desktop (PyQt6), PWA y Browser:**
+    - Conectada la señal nativa `QWebEngineProfile.downloadRequested` a `on_download_requested` en `desktop/app_window.py`.
+    - Guarda automáticamente los adjuntos en el directorio de descargas del usuario (`QStandardPaths.DownloadLocation`, típicamente `~/Descargas` o `~/Downloads`) sin congelar la app.
+    - Notificación sticky en tiempo real en la interfaz (`UI.showStickyToast`) al finalizar la descarga.
+    - Actualizado `createWindow` y `acceptNavigationRequest` para permitir las peticiones de descarga de `/api/attachments/` localmente sin desviarlas a navegadores externos.
+    - Método JavaScript `EmailManager.downloadAttachment` que descarga directamente sin abrir pestañas en blanco.
+  - **Streaming Directo Bajo Demanda (Sin Guardar Archivos en Local):**
+    - El endpoint `@app.get("/api/attachments/{id}/download")` extrae los bytes directamente desde la API oficial de Gmail (`service.users().messages().attachments().get`) o servidor IMAP y los sirve directamente al cliente con cabecera `Content-Disposition`.
+    - No se escriben copias en disco en `data/attachments/`. En la BD solo queda la referencia/link al correo.
+  - **Eliminación de Copias Locales al Enviar Adjuntos:**
+    - Al enviar correos (`send_gmail` y `send_email`), los archivos se codifican e incluyen en el mensaje MIME transmitido al servidor de correo (llegando intactos a destino), pero ya no se guardan en `data/attachments/`.
+    - Implementada función de limpieza que purga cualquier archivo temporal o huérfano de `data/attachments/`.
+  - **Sincronización:**
+    - Desplegado y verificado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
 - **Fase 96 - Color Dinámico de la Orilla de Selección según la Cuenta del Correo:**
   - La orilla vertical de selección (`border-left`) del correo seleccionado ya no tiene un color azul/índigo fijo.
   - Ahora toma de forma reactiva y dinámica el color exacto de la cuenta a la que pertenece el correo (`email.account_color`), igualando el punto indicador cromático de la cuenta.
