@@ -476,6 +476,14 @@ def run_pyqt_window():
                         QTimer.singleShot(0, window.toggle_visibility)
                     elif data == "start_drag":
                         QTimer.singleShot(0, window.start_drag)
+                    elif data.startswith("move_by:"):
+                        try:
+                            parts = data.split(":")
+                            dx = int(parts[1])
+                            dy = int(parts[2])
+                            QTimer.singleShot(0, lambda dx=dx, dy=dy: window.move_by(dx, dy))
+                        except Exception:
+                            pass
                     elif data == "is_maximized":
                         resp = "true" if window.isMaximized() else "false"
                     conn.sendall(resp.encode("utf-8"))

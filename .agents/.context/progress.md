@@ -2,6 +2,33 @@
 
 ## Historial de Hitos Completados
 
+- [x] **Fase 96: Color Dinámico de la Orilla de Selección según la Cuenta del Correo:**
+  - Sustitución del color fijo índigo en la orilla vertical del correo seleccionado por el color correspondiente a la cuenta de dicho correo (`email.account_color`).
+  - Coincidencia exacta con el punto indicador cromático de la cuenta.
+  - Implementación con variable CSS `--account-accent-color`, atributo de datos y sincronización en tiempo real al seleccionar cualquier elemento.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 95: Optimización y Reducción del Espacio Superior de Arrastre de Ventana:**
+  - Reducción de la franja superior `#desktop-window-drag-strip` de 10px a solo 3px.
+  - Integración cromática con el fondo del header (`bg-white dark:bg-slate-900`), eliminando la banda oscura gruesa.
+  - Preservación completa de la interacción de arrastre de ventana con clic sostenido.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 94: Sincronización Total de la Cuenta en Background e Indicador en Barra Lateral Izquierda:**
+  - Opción especial *"Sincronización Total (Todas las carpetas)"* en la configuración de cuentas (`drawer-accounts`).
+  - Worker asíncrono en background con endpoints `/api/accounts/{account_id}/sync-full` y `/api/accounts/sync-status`.
+  - Recorrido y sincronización completa de todas las carpetas del servidor (INBOX, SENT, Promociones, Social, Actualizaciones, Foros, Destacados, Borradores, Spam, Papelera) y etiquetas personalizadas.
+  - Paginación completa de correos en Gmail REST API (`all_pages=True`) y soporte total para buzones IMAP.
+  - Indicador de progreso dinámico en la parte inferior de la barra lateral izquierda (`#sidebar-sync-progress`) con descripción en tiempo real, spinner, porcentaje y barra de carga fluida.
+  - Notificación sticky al completar y actualización de la vista sin interrupción.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 93: Franja Superior y Arrastre Continuo de Ventana en Tiempo Real (Clic Sostenido):**
+  - Implementación de franja superior de arrastre `#desktop-window-drag-strip` a lo largo de todo el borde superior de la ventana.
+  - Corrección de selector `id="main-header"` que impedía la vinculación de eventos de ratón.
+  - Motor de arrastre continuo en tiempo real con transmisión instantánea `__PYQT_MOVE__:<dx>:<dy>` y reposicionamiento nativo con `window.move_by(dx, dy)`.
+  - Sincronización exitosa con `install_desktop.sh`.
+
 - [x] **Fase 92: Simplificación Estricta del Menú de la Barra de Tareas y Bandeja del Sistema:**
   - Reducción del menú contextual tanto en la barra de tareas (dock/panel) como en el System Tray a únicamente dos opciones: *"Mostrar la aplicación"* y *"Cerrar"*.
   - Limpieza de metadatos superfluos en el archivo `.desktop` y actualización de la base de datos de escritorio de Ubuntu.

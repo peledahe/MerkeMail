@@ -2,6 +2,51 @@
 
 ## Estado de Desarrollo Actual
 
+- **Fase 96 - Color Dinámico de la Orilla de Selección según la Cuenta del Correo:**
+  - La orilla vertical de selección (`border-left`) del correo seleccionado ya no tiene un color azul/índigo fijo.
+  - Ahora toma de forma reactiva y dinámica el color exacto de la cuenta a la que pertenece el correo (`email.account_color`), igualando el punto indicador cromático de la cuenta.
+  - Implementado mediante variables CSS `--account-accent-color: ${accColor}`, atributo `data-account-color` y actualización reactiva en `highlightSelectedItem(emailId)` y `renderEmails()`.
+  - Sincronizado y desplegado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+- **Fase 95 - Optimización y Reducción del Espacio Superior de Arrastre de Ventana:**
+  - Se redujo drásticamente el espacio muerto superior (`#desktop-window-drag-strip`) de 10px (`h-2.5`) a solo 3px (`style="height: 3px;"`), eliminando la separación oscura gruesa por encima del encabezado.
+  - Se integró el fondo de la franja a juego con el tema del header (`bg-white dark:bg-slate-900`) para una apariencia limpia y compacta.
+  - La capacidad de mover la ventana mediante clic sostenido se mantiene intacta tanto en el borde superior como en cualquier área libre del header.
+  - Sincronizado y desplegado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+- **Fase 94 - Sincronización Total de la Cuenta en Background e Indicador en Barra Lateral Izquierda:**
+  - **Opción Especial de Sincronización Total:**
+    - Añadido el botón *"Sincronización Total (Todas las carpetas)"* en la tarjeta de cada cuenta dentro de la Configuración de Cuentas (`drawer-accounts`).
+    - Permite al usuario iniciar la sincronización total de cualquier cuenta con un solo clic.
+  - **Sincronización Asíncrona en Background:**
+    - Creado worker asíncrono con subproceso (`threading.Thread`) en `backend/main.py`.
+    - Endpoints implementados:
+      - `POST /api/accounts/{account_id}/sync-full`: Inicia la sincronización en segundo plano sin congelar ni bloquear la interfaz de usuario.
+      - `GET /api/accounts/sync-status`: Informa en vivo del progreso (carpeta actual, índice de carpeta, total de carpetas, porcentaje y correos procesados).
+    - Soporte integral para todas las carpetas y etiquetas del servidor (INBOX, SENT, CATEGORY_PROMOTIONS, CATEGORY_SOCIAL, CATEGORY_UPDATES, CATEGORY_FORUMS, STARRED, DRAFT, SPAM, TRASH y todas las etiquetas personalizadas de usuario).
+    - Soporte para paginación de mensajes completa en Gmail REST API (`all_pages=True` con `nextPageToken`) y descarga de todas las carpetas IMAP.
+  - **Indicador Dinámico en el Inferior de la Barra Lateral Izquierda:**
+    - Creado el contenedor `#sidebar-sync-progress` en el pie de `aside#sidebar-container`.
+    - Muestra spinner animado, nombre de la cuenta, descripción en tiempo real de la carpeta y progreso `(X/Total)`, porcentaje y barra de progreso fluida.
+    - Soporta modo normal y modo barra lateral colapsada (`#sidebar-container.collapsed`).
+    - Al terminar, emite una notificación sticky en el sistema (`UI.showStickyToast`) y actualiza los buzones, etiquetas y contadores sin recargar la página.
+  - **Sincronización:**
+    - Compilado y desplegado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+- **Fase 93 - Franja Superior y Arrastre Continuo de Ventana en Tiempo Real (Clic Sostenido):**
+  - **Identificación y Corrección de Causa Raíz:**
+    - Se identificó que el elemento `<header>` en `frontend/index.html` carecía del identificador `id="main-header"`, lo cual provocaba que `document.getElementById('main-header')` devolviera `null` y el listener de arrastre no se adjuntara.
+    - Se constató que `QWindow::startSystemMove()` de Qt requiere eventos de hardware X11 síncronos que Chromium intercepta internamente, impidiendo que el compositor del SO tome el movimiento fuera del proceso web.
+  - **Franja Superior de Arrastre Dedicada:**
+    - Creado `#desktop-window-drag-strip` en `frontend/index.html` exactamente a lo largo del borde superior de la ventana marcado en rojo por el usuario, visible en modo instalado.
+    - Asignado el `id="main-header"` al encabezado principal.
+  - **Arrastre Físico Continuo en Tiempo Real:**
+    - Implementado seguimiento de eventos `mousedown`, `mousemove` y `mouseup` globales en `frontend/js/desktop.js`.
+    - Transmisión instantánea de desplazamientos relativos `__PYQT_MOVE__:<dx>:<dy>` mediante la consola de `CustomWebEnginePage`.
+    - Manejo en `FramelessMainWindow.move_by(dx, dy)` aplicando `self.move(self.pos() + QPoint(dx, dy))` con soporte para des-maximizar suavemente si la ventana está ampliada.
+  - **Sincronización:**
+    - Compilado y desplegado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
 - **Fase 92 - Simplificación Estricta del Menú de la Barra de Tareas y Bandeja del Sistema:**
   - **Menú Exclusivo de 2 Opciones en Barra de Tareas y Systray:**
     - Se depuró el archivo `.desktop` de la aplicación (`~/.local/share/applications/merkemail.desktop`), eliminando asociaciones de tipo MIME y categorías genéricas que saturaban el menú contextual de GNOME/Dash to Panel con opciones estándar del sistema.

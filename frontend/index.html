@@ -45,15 +45,15 @@
     </script>
 
     <!-- Estilos de la aplicación -->
-    <link rel="stylesheet" href="/static/css/app.css">
+    <link rel="stylesheet" href="/static/css/app.css?v=96">
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 h-screen flex flex-col antialiased selection:bg-indigo-500 selection:text-white overflow-hidden">
 
     <!-- CONTENEDOR DE NOTIFICACIONES STICKY -->
     <div id="sticky-notifications-container" class="fixed top-5 right-5 z-[100] flex flex-col items-end space-y-3 pointer-events-none"></div>
 
-    <!-- FRANJA SUPERIOR DE ARRASTRE DE VENTANA (Área superior para mover ventana en modo instalado) -->
-    <div id="desktop-window-drag-strip" class="w-full h-2.5 bg-transparent select-none cursor-grab active:cursor-grabbing shrink-0 z-50 transition-colors" title="Clic sostenido para mover la ventana"></div>
+    <!-- FRANJA SUPERIOR DE ARRASTRE DE VENTANA (Área superior reducida para mover ventana en modo instalado) -->
+    <div id="desktop-window-drag-strip" class="w-full bg-white dark:bg-slate-900 select-none cursor-grab active:cursor-grabbing shrink-0 z-50 transition-colors" style="height: 3px;" title="Clic sostenido para mover la ventana"></div>
 
     <!-- ================= TOP GLOBAL HEADER (Estilo Gmail) ================= -->
     <header id="main-header" class="h-16 px-2.5 sm:px-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0 z-30 select-none gap-2">
@@ -389,6 +389,24 @@
                         </button>
                     </div>
                 </nav>
+            </div>
+
+            <!-- ================= INDICADOR DE SINCRONIZACIÓN EN BACKGROUND (PIE DEL SIDEBAR) ================= -->
+            <div id="sidebar-sync-progress" class="hidden p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/95 dark:bg-slate-850/95 shrink-0 transition-all select-none" title="Sincronización en segundo plano activa">
+                <div class="flex items-center justify-between gap-1.5 mb-1">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <svg class="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                        </svg>
+                        <span id="sidebar-sync-title" class="sidebar-text text-[11px] font-bold text-slate-800 dark:text-slate-200 truncate">Sincronizando...</span>
+                    </div>
+                    <span id="sidebar-sync-percent" class="sidebar-text text-[10px] font-bold text-indigo-600 dark:text-indigo-400 shrink-0">0%</span>
+                </div>
+                <p id="sidebar-sync-desc" class="sidebar-text text-[10px] text-slate-500 dark:text-slate-400 truncate leading-tight">Iniciando tareas...</p>
+                <div class="sync-progress-track w-full bg-slate-200 dark:bg-slate-700/80 rounded-full h-1 mt-1.5 overflow-hidden">
+                    <div id="sidebar-sync-bar" class="bg-indigo-600 dark:bg-indigo-500 h-1 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
             </div>
         </aside>
 
@@ -2779,13 +2797,13 @@
     <script src="/static/js/avatars.js?v=88"></script>
     <script src="/static/js/composer.js?v=88"></script>
     <script src="/static/js/contacts.js?v=88"></script>
-    <script src="/static/js/email.js?v=91"></script>
+    <script src="/static/js/email.js?v=96"></script>
     <script src="/static/js/calendar.js?v=88"></script>
     <script src="/static/js/gemini.js?v=88"></script>
     <script src="/static/js/antigravity.js?v=88"></script>
     <script src="/static/js/signatures.js?v=88"></script>
     <script src="/static/js/user_profile.js?v=88"></script>
-    <script src="/static/js/desktop.js?v=92"></script>
+    <script src="/static/js/desktop.js?v=95"></script>
     <script src="/static/js/app.js?v=88"></script>
 </body>
 </html>

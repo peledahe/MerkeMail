@@ -41,6 +41,7 @@ const DesktopBridge = {
         const btnInstallPwa = document.getElementById('btn-install-pwa');
         const pwaCardDrawer = document.getElementById('pwa-installation-card');
         const btnPrint = document.getElementById('btn-print-email');
+        const dragStrip = document.getElementById('desktop-window-drag-strip');
 
         if (this.isDesktop) {
             // 1. En aplicación instalada: OCULTAR todas las opciones de instalar app y botón de imprimir
@@ -60,6 +61,12 @@ const DesktopBridge = {
                 controls.classList.remove('hidden');
                 controls.classList.add('flex');
             }
+
+            // 3. MOSTRAR franja superior dedicada de arrastre de ventana
+            if (dragStrip) {
+                dragStrip.classList.remove('hidden');
+                dragStrip.classList.add('block');
+            }
             this.checkWindowState();
         } else {
             // En navegador web (browser normal y modo PWA):
@@ -67,6 +74,10 @@ const DesktopBridge = {
             if (controls) {
                 controls.classList.add('hidden');
                 controls.classList.remove('flex');
+            }
+            if (dragStrip) {
+                dragStrip.classList.add('hidden');
+                dragStrip.classList.remove('block');
             }
             if (pwaCardDrawer) {
                 pwaCardDrawer.classList.remove('hidden');
@@ -80,33 +91,82 @@ const DesktopBridge = {
 
     initWindowDragging() {
         const header = document.getElementById('main-header');
-        if (!header) return;
+        const dragStrip = document.getElementById('desktop-window-drag-strip');
+        if (!header && !dragStrip) return;
 
-        // Clic sostenido en cualquier espacio vacío del header para arrastrar la ventana
-        header.addEventListener('mousedown', (e) => {
-            if (e.button !== 0) return; // Solo botón principal (izquierdo)
+        let isDragging = false;
+        let lastScreenX = 0;
+        let lastScreenY = 0;
 
-            // Si el clic es sobre un elemento interactivo (botones, inputs, avatar, controles), no arrastrar
+        const onMouseDown = (e) => {
+            if (e.button !== 0) return; // Solo botón izquierdo del ratón
+
+            // Si el clic es sobre un elemento interactivo (botones, inputs, avatar, controles, etc.), no arrastrar
             const interactive = e.target.closest('button, input, a, select, textarea, [onclick], #user-header-avatar, #desktop-window-controls, .cursor-pointer');
             if (interactive) return;
 
-            // Iniciar arrastre nativo de ventana del sistema (vía consola instantánea de PyQt6 + bridge + fetch)
+            isDragging = true;
+            lastScreenX = e.screenX;
+            lastScreenY = e.screenY;
+            document.body.style.userSelect = 'none';
+
+            // Disparar arrastre nativo acelerado si el gestor de ventanas del sistema lo soporta
             try {
                 console.log('__PYQT_ACTION__:start_drag');
             } catch (_) {}
-
             if (window.pyqtBridge && window.pyqtBridge.start_drag) {
                 try { window.pyqtBridge.start_drag(); } catch (_) {}
             }
-            fetch('/api/desktop/window/start_drag', { method: 'POST' }).catch(() => {});
-        });
+        };
 
-        // Doble clic en espacio libre del header para alternar maximizado
-        header.addEventListener('dblclick', (e) => {
+        const onMouseMove = (e) => {
+            if (!isDragging) return;
+
+            // Si se soltó el botón del ratón fuera de foco
+            if (e.buttons === 0) {
+                isDragging = false;
+                document.body.style.userSelect = '';
+                return;
+            }
+
+            const dx = e.screenX - lastScreenX;
+            const dy = e.screenY - lastScreenY;
+
+            if (dx === 0 && dy === 0) return;
+
+            lastScreenX = e.screenX;
+            lastScreenY = e.screenY;
+
+            // Transmitir desplazamiento físico continuo e instantáneo a la ventana PyQt6
+            try {
+                console.log(`__PYQT_MOVE__:${dx}:${dy}`);
+            } catch (_) {}
+        };
+
+        const onMouseUp = () => {
+            if (isDragging) {
+                isDragging = false;
+                document.body.style.userSelect = '';
+            }
+        };
+
+        // Escuchar eventos en la franja superior y en el header
+        if (dragStrip) dragStrip.addEventListener('mousedown', onMouseDown);
+        if (header) header.addEventListener('mousedown', onMouseDown);
+
+        window.addEventListener('mousemove', onMouseMove, { passive: true });
+        window.addEventListener('mouseup', onMouseUp);
+        window.addEventListener('blur', onMouseUp);
+
+        // Doble clic en cualquier área libre para alternar maximizado / restaurar
+        const onDblClick = (e) => {
             const interactive = e.target.closest('button, input, a, select, textarea, [onclick], #user-header-avatar, #desktop-window-controls, .cursor-pointer');
             if (interactive) return;
             this.toggleMaximizeWindow();
-        });
+        };
+
+        if (dragStrip) dragStrip.addEventListener('dblclick', onDblClick);
+        if (header) header.addEventListener('dblclick', onDblClick);
     },
 
     isActionPending: false,

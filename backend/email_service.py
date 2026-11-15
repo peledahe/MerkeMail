@@ -116,7 +116,7 @@ class EmailService:
         return results
 
     @classmethod
-    def sync_mailbox(cls, account_id: int, folder: Optional[str] = "INBOX", label_id: Optional[int] = None, max_emails: int = 30) -> Dict[str, Any]:
+    def sync_mailbox(cls, account_id: int, folder: Optional[str] = "INBOX", label_id: Optional[int] = None, max_emails: int = 30, all_pages: bool = False) -> Dict[str, Any]:
         """Sincroniza y descarga correos desde el servidor IMAP o Gmail API a SQLite."""
         account = cls.get_account(account_id)
         if not account:
@@ -125,7 +125,7 @@ class EmailService:
         if account.get("auth_type") == "oauth2":
             from backend.google_oauth import GoogleOAuthService
             try:
-                return GoogleOAuthService.sync_gmail(account_id, folder=folder, label_id=label_id, max_results=max_emails)
+                return GoogleOAuthService.sync_gmail(account_id, folder=folder, label_id=label_id, max_results=max_emails, all_pages=all_pages or (max_emails <= 0))
             except Exception as e:
                 return {"success": False, "error": f"Error en sincronización Gmail API: {str(e)}"}
 
@@ -159,8 +159,11 @@ class EmailService:
                 return {"success": False, "error": "Error al buscar correos en la carpeta"}
 
             mail_ids = search_data[0].split()
-            # Descargar los más recientes primero
-            selected_ids = mail_ids[-max_emails:]
+            # Descargar los más recientes primero o todos si se solicita
+            if (all_pages or max_emails <= 0) and len(mail_ids) > 0:
+                selected_ids = list(mail_ids)
+            else:
+                selected_ids = list(mail_ids[-max_emails:])
             selected_ids.reverse()
 
             synced_count = 0
@@ -442,6 +445,87 @@ class EmailService:
             return {"success": True, "message": "Correo enviado con éxito"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    @classmethod
+    def get_account_folders(cls, account_id: int) -> List[Dict[str, Any]]:
+        """Obtiene la lista completa de carpetas y etiquetas que se deben sincronizar."""
+        account = cls.get_account(account_id)
+        if not account:
+            return []
+
+        folders = []
+        if account.get("auth_type") == "oauth2":
+            # Carpetas estándar de Gmail
+            folders = [
+                {"id": "INBOX", "name": "Bandeja de Entrada", "type": "folder", "key": "INBOX"},
+                {"id": "SENT", "name": "Enviados", "type": "folder", "key": "SENT"},
+                {"id": "CATEGORY_PROMOTIONS", "name": "Promociones", "type": "folder", "key": "CATEGORY_PROMOTIONS"},
+                {"id": "CATEGORY_SOCIAL", "name": "Social", "type": "folder", "key": "CATEGORY_SOCIAL"},
+                {"id": "CATEGORY_UPDATES", "name": "Notificaciones", "type": "folder", "key": "CATEGORY_UPDATES"},
+                {"id": "CATEGORY_FORUMS", "name": "Foros", "type": "folder", "key": "CATEGORY_FORUMS"},
+                {"id": "STARRED", "name": "Destacados", "type": "folder", "key": "STARRED"},
+                {"id": "DRAFT", "name": "Borradores", "type": "folder", "key": "DRAFT"},
+                {"id": "SPAM", "name": "Spam", "type": "folder", "key": "SPAM"},
+                {"id": "TRASH", "name": "Papelera", "type": "folder", "key": "TRASH"},
+            ]
+            try:
+                from backend.google_oauth import GoogleOAuthService
+                GoogleOAuthService.sync_gmail_labels(account_id)
+            except Exception:
+                pass
+
+            conn = get_db()
+            user_lbls = conn.execute("SELECT id, name, remote_id FROM labels WHERE account_id = ? AND remote_id IS NOT NULL", (account_id,)).fetchall()
+            conn.close()
+            for lbl in user_lbls:
+                folders.append({
+                    "id": f"label_{lbl['id']}",
+                    "name": f"Etiqueta: {lbl['name']}",
+                    "type": "label",
+                    "label_id": lbl["id"],
+                    "key": lbl["name"]
+                })
+        else:
+            base_folders = ["INBOX", "Sent", "Drafts", "Trash", "Spam", "Archive"]
+            try:
+                mail = None
+                is_local = "127.0.0.1" in account["imap_host"] or "localhost" in account["imap_host"]
+                if account.get("imap_ssl", 1):
+                    ctx = ssl.create_default_context()
+                    if is_local:
+                        ctx.check_hostname = False
+                        ctx.verify_mode = ssl.CERT_NONE
+                    mail = imaplib.IMAP4_SSL(account["imap_host"], int(account["imap_port"]), ssl_context=ctx)
+                else:
+                    mail = imaplib.IMAP4(account["imap_host"], int(account["imap_port"]))
+                raw_pass = CryptoService.decrypt(account.get("imap_password", "")) or ""
+                mail.login(account["imap_user"].strip(), raw_pass.replace(" ", "").strip())
+                status, folder_data = mail.list()
+                mail.logout()
+                if status == "OK" and folder_data:
+                    found_folders = []
+                    for f_entry in folder_data:
+                        if isinstance(f_entry, bytes):
+                            f_str = f_entry.decode("utf-8", errors="ignore")
+                            parts = f_str.split(' "/" ')
+                            if len(parts) > 1:
+                                f_name = parts[-1].strip().strip('"')
+                                if f_name and f_name not in found_folders:
+                                    found_folders.append(f_name)
+                    if found_folders:
+                        base_folders = found_folders
+            except Exception as e:
+                print(f"Aviso listando carpetas IMAP: {e}")
+
+            for f in base_folders:
+                folders.append({
+                    "id": f,
+                    "name": f,
+                    "type": "folder",
+                    "key": f
+                })
+
+        return folders
 
     @classmethod
     def populate_demo_data_if_empty(cls):

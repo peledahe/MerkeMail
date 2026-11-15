@@ -17,6 +17,7 @@ from backend.google_oauth import GoogleOAuthService
 from backend.contacts_service import ContactsService
 from backend.crypto_service import CryptoService
 import secrets
+import threading
 
 app = FastAPI(title="MerkeMail - Email & Calendar Manager")
 
@@ -497,6 +498,134 @@ def get_avatar_for_email(email: str):
         )
 
     raise HTTPException(status_code=404, detail="Avatar no disponible")
+
+# ================= SINCRONIZACIÓN TOTAL EN BACKGROUND =================
+_full_sync_lock = threading.Lock()
+_full_sync_state = {
+    "is_syncing": False,
+    "account_id": None,
+    "account_name": "",
+    "account_email": "",
+    "current_folder": "",
+    "folder_index": 0,
+    "total_folders": 0,
+    "synced_count": 0,
+    "total_synced": 0,
+    "percent": 0,
+    "message": "",
+    "status": "idle",  # "idle", "running", "completed", "error"
+    "error": None
+}
+
+def _run_account_full_sync(account_id: int):
+    global _full_sync_state
+    try:
+        account = EmailService.get_account(account_id)
+        if not account:
+            with _full_sync_lock:
+                _full_sync_state["is_syncing"] = False
+                _full_sync_state["status"] = "error"
+                _full_sync_state["error"] = "Cuenta no encontrada"
+                _full_sync_state["message"] = "Error: Cuenta no encontrada"
+            return
+
+        with _full_sync_lock:
+            _full_sync_state["is_syncing"] = True
+            _full_sync_state["account_id"] = account["id"]
+            _full_sync_state["account_name"] = account["name"]
+            _full_sync_state["account_email"] = account["email"]
+            _full_sync_state["status"] = "running"
+            _full_sync_state["folder_index"] = 0
+            _full_sync_state["total_synced"] = 0
+            _full_sync_state["synced_count"] = 0
+            _full_sync_state["percent"] = 5
+            _full_sync_state["error"] = None
+            _full_sync_state["message"] = f"Obteniendo carpetas del servidor..."
+
+        # Obtener lista completa de carpetas y etiquetas
+        targets = EmailService.get_account_folders(account_id)
+        if not targets:
+            targets = [{"id": "INBOX", "name": "Bandeja de Entrada", "type": "folder", "key": "INBOX"}]
+
+        total_targets = len(targets)
+        total_synced = 0
+
+        with _full_sync_lock:
+            _full_sync_state["total_folders"] = total_targets
+
+        for idx, target in enumerate(targets):
+            folder_name = target["name"]
+            folder_key = target.get("key") or target.get("id")
+            label_id = target.get("label_id")
+
+            with _full_sync_lock:
+                _full_sync_state["folder_index"] = idx + 1
+                _full_sync_state["current_folder"] = folder_name
+                _full_sync_state["percent"] = int(((idx) / total_targets) * 100)
+                _full_sync_state["message"] = f"Sincronizando {folder_name} ({idx+1}/{total_targets})..."
+
+            try:
+                if target.get("type") == "label" and label_id:
+                    res = EmailService.sync_mailbox(account_id, folder=None, label_id=label_id, max_emails=0, all_pages=True)
+                else:
+                    res = EmailService.sync_mailbox(account_id, folder=folder_key, label_id=None, max_emails=0, all_pages=True)
+
+                if res.get("success"):
+                    count = res.get("synced_count", 0)
+                    total_synced += count
+                    with _full_sync_lock:
+                        _full_sync_state["synced_count"] = count
+                        _full_sync_state["total_synced"] = total_synced
+            except Exception as f_err:
+                print(f"Aviso sincronizando carpeta {folder_name} en background: {f_err}")
+
+            with _full_sync_lock:
+                _full_sync_state["percent"] = int(((idx + 1) / total_targets) * 100)
+
+        with _full_sync_lock:
+            _full_sync_state["is_syncing"] = False
+            _full_sync_state["status"] = "completed"
+            _full_sync_state["percent"] = 100
+            _full_sync_state["message"] = f"Sincronización total completada ({total_synced} correos procesados)"
+
+    except Exception as exc:
+        print(f"Error crítico en sincronización en background: {exc}")
+        with _full_sync_lock:
+            _full_sync_state["is_syncing"] = False
+            _full_sync_state["status"] = "error"
+            _full_sync_state["error"] = str(exc)
+            _full_sync_state["message"] = f"Error en sincronización: {str(exc)}"
+
+@app.get("/api/accounts/sync-status")
+def get_account_sync_status():
+    """Consulta el estado en vivo de la sincronización en background."""
+    with _full_sync_lock:
+        return dict(_full_sync_state)
+
+@app.post("/api/accounts/{account_id}/sync-full")
+def start_account_full_sync(account_id: int):
+    """Inicia la sincronización total de todas las carpetas del servidor en background."""
+    global _full_sync_state
+    with _full_sync_lock:
+        if _full_sync_state.get("is_syncing"):
+            return {
+                "success": False,
+                "error": "Ya hay una sincronización en segundo plano en ejecución",
+                "state": dict(_full_sync_state)
+            }
+
+    account = EmailService.get_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+
+    sync_thread = threading.Thread(target=_run_account_full_sync, args=(account_id,), daemon=True)
+    sync_thread.start()
+
+    return {
+        "success": True,
+        "message": f"Sincronización total iniciada en background para {account['email']}",
+        "account_id": account_id
+    }
 
 @app.get("/api/accounts/{account_id}")
 def get_account_detail(account_id: int):

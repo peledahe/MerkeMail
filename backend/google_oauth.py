@@ -282,8 +282,8 @@ class GoogleOAuthService:
             return []
 
     @classmethod
-    def sync_gmail(cls, account_id: int, folder: Optional[str] = None, label_id: Optional[int] = None, max_results: int = 30) -> Dict[str, Any]:
-        """Sincroniza correos usando la Gmail REST API oficial (OAuth2), admitiendo filtro por carpeta o etiqueta."""
+    def sync_gmail(cls, account_id: int, folder: Optional[str] = None, label_id: Optional[int] = None, max_results: int = 30, all_pages: bool = False, max_pages: int = 100) -> Dict[str, Any]:
+        """Sincroniza correos usando la Gmail REST API oficial (OAuth2), admitiendo filtro por carpeta o etiqueta y paginación completa."""
         creds = cls.get_valid_credentials(account_id)
         service = build("gmail", "v1", credentials=creds)
 
@@ -299,7 +299,8 @@ class GoogleOAuthService:
         remote_to_local_label = {r["remote_id"]: r["id"] for r in lbl_rows}
 
         # Preparar parámetros de consulta para Gmail API
-        list_params = {"userId": "me", "maxResults": max_results}
+        page_size = 250 if all_pages else min(max_results, 500)
+        list_params = {"userId": "me", "maxResults": page_size}
         include_spam_trash = False
 
         google_folder_labels = {
@@ -337,19 +338,43 @@ class GoogleOAuthService:
         if include_spam_trash:
             list_params["includeSpamTrash"] = True
 
-        results = service.users().messages().list(**list_params).execute()
-        messages = results.get("messages", [])
+        messages = []
+        page_token = None
+        pages_count = 0
+
+        while True:
+            cur_params = dict(list_params)
+            if page_token:
+                cur_params["pageToken"] = page_token
+
+            results = service.users().messages().list(**cur_params).execute()
+            batch = results.get("messages", [])
+            if batch:
+                messages.extend(batch)
+
+            pages_count += 1
+            page_token = results.get("nextPageToken")
+
+            if not all_pages or not page_token or pages_count >= max_pages:
+                break
+
         if not messages:
             conn.commit()
             conn.close()
             return {"success": True, "synced_count": 0}
 
         msg_ids = [m["id"] for m in messages]
-        ph = ",".join("?" for _ in msg_ids)
-        existing_rows = conn.execute(
-            f"SELECT id, uid, folder, is_read, is_starred FROM emails WHERE account_id = ? AND uid IN ({ph})",
-            [account_id] + msg_ids
-        ).fetchall()
+        existing_rows = []
+        chunk_size = 500
+        for i in range(0, len(msg_ids), chunk_size):
+            chunk = msg_ids[i:i + chunk_size]
+            ph = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT id, uid, folder, is_read, is_starred FROM emails WHERE account_id = ? AND uid IN ({ph})",
+                [account_id] + chunk
+            ).fetchall()
+            existing_rows.extend(rows)
+
         existing_by_uid = {r["uid"]: dict(r) for r in existing_rows}
 
         new_msg_ids = [mid for mid in msg_ids if mid not in existing_by_uid]

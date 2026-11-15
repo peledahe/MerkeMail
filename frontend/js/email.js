@@ -177,6 +177,17 @@ const EmailManager = {
         this.autoSyncIntervalId = setInterval(() => {
             this.checkAutoSync();
         }, 20000);
+
+        // Comprobar si hay alguna sincronización total activa en segundo plano al iniciar
+        fetch('/api/accounts/sync-status')
+            .then(r => r.json())
+            .then(status => {
+                if (status && status.is_syncing) {
+                    this.showSidebarSyncWidget(status);
+                    this.startSyncStatusPolling();
+                }
+            })
+            .catch(() => {});
     },
 
     async checkAutoSync() {
@@ -734,6 +745,12 @@ const EmailManager = {
                         </div>
                     </div>
                     <div id="account-test-status-${a.id}" class="hidden text-[11px] p-2 rounded-lg"></div>
+                    <div class="pt-2 border-t border-slate-200/70 dark:border-slate-750 flex items-center justify-between gap-2">
+                        <button type="button" onclick="EmailManager.startFullAccountSync(${a.id})" class="flex-1 py-1.5 px-3 bg-indigo-50 hover:bg-indigo-100/90 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200/90 dark:border-indigo-800/70 rounded-lg text-[11px] font-semibold transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-700" title="Sincronizar todos los correos del servidor de todas las carpetas en segundo plano">
+                            <svg class="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                            <span>Sincronización Total (Todas las carpetas)</span>
+                        </button>
+                    </div>
                 </div>
                 `;
             }).join('') || '<p class="text-sm text-slate-500 py-4 text-center">No hay cuentas configuradas</p>';
@@ -933,6 +950,136 @@ const EmailManager = {
             if (window.GeminiAI) GeminiAI.setDisconnectedState();
             UI.showStickyToast('Error de sincronización', e.message, 'error');
         }
+    },
+
+    // ================= SINCRONIZACIÓN TOTAL EN BACKGROUND =================
+    _syncPollTimer: null,
+
+    async startFullAccountSync(accountId) {
+        if (!accountId) {
+            UI.showStickyToast('Atención', 'Selecciona una cuenta válida para sincronizar', 'warning');
+            return;
+        }
+
+        try {
+            // Comprobar si ya hay una sincronización activa
+            const statusRes = await fetch('/api/accounts/sync-status');
+            if (statusRes.ok) {
+                const currentStatus = await statusRes.json();
+                if (currentStatus && currentStatus.is_syncing) {
+                    UI.showStickyToast('Sincronización en curso', 'Ya hay una sincronización en segundo plano ejecutándose', 'info');
+                    this.showSidebarSyncWidget(currentStatus);
+                    this.startSyncStatusPolling();
+                    return;
+                }
+            }
+
+            const res = await fetch(`/api/accounts/${accountId}/sync-full`, { method: 'POST' });
+            const data = await res.json();
+
+            if (!res.ok || !data.success) {
+                UI.showStickyToast('Error', data.error || 'No se pudo iniciar la sincronización total', 'error');
+                return;
+            }
+
+            UI.showStickyToast('Sincronización Iniciada', 'Sincronizando todas las carpetas en segundo plano', 'info', 3500);
+            this.showSidebarSyncWidget({
+                account_id: accountId,
+                current_folder: 'Iniciando...',
+                folder_index: 0,
+                total_folders: 0,
+                percent: 0,
+                message: 'Preparando sincronización...'
+            });
+            this.startSyncStatusPolling();
+
+        } catch (e) {
+            console.error('Error al iniciar sincronización total:', e);
+            UI.showStickyToast('Error', 'Error al conectar con el servidor', 'error');
+        }
+    },
+
+    showSidebarSyncWidget(data) {
+        const widget = document.getElementById('sidebar-sync-progress');
+        if (!widget) return;
+        widget.classList.remove('hidden');
+
+        const titleEl = document.getElementById('sidebar-sync-title');
+        const descEl = document.getElementById('sidebar-sync-desc');
+        const percentEl = document.getElementById('sidebar-sync-percent');
+        const barEl = document.getElementById('sidebar-sync-bar');
+
+        if (titleEl) {
+            titleEl.textContent = data.account_name ? `Sincronizando ${data.account_name}` : 'Sincronización Total';
+        }
+        if (descEl) {
+            if (data.current_folder && data.total_folders) {
+                descEl.textContent = `${data.current_folder} (${data.folder_index}/${data.total_folders})`;
+            } else {
+                descEl.textContent = data.message || 'Procesando correos del servidor...';
+            }
+        }
+        const pct = Math.max(0, Math.min(100, data.percent || 0));
+        if (percentEl) percentEl.textContent = `${pct}%`;
+        if (barEl) barEl.style.width = `${pct}%`;
+    },
+
+    hideSidebarSyncWidget() {
+        const widget = document.getElementById('sidebar-sync-progress');
+        if (!widget) return;
+        widget.classList.add('hidden');
+    },
+
+    startSyncStatusPolling() {
+        if (this._syncPollTimer) clearInterval(this._syncPollTimer);
+
+        this._syncPollTimer = setInterval(async () => {
+            try {
+                const res = await fetch('/api/accounts/sync-status');
+                if (!res.ok) return;
+                const status = await res.json();
+
+                if (!status) return;
+
+                if (status.is_syncing) {
+                    this.showSidebarSyncWidget(status);
+                } else {
+                    clearInterval(this._syncPollTimer);
+                    this._syncPollTimer = null;
+
+                    if (status.status === 'completed') {
+                        const barEl = document.getElementById('sidebar-sync-bar');
+                        const percentEl = document.getElementById('sidebar-sync-percent');
+                        const descEl = document.getElementById('sidebar-sync-desc');
+                        if (barEl) barEl.style.width = '100%';
+                        if (percentEl) percentEl.textContent = '100%';
+                        if (descEl) descEl.textContent = status.message || 'Completado con éxito';
+
+                        UI.showStickyToast('Sincronización Total Completada', status.message || `${status.total_synced || 0} correos procesados en todas las carpetas`, 'success', 5000);
+
+                        await this.loadEmails();
+                        await this.loadLabels();
+                        await this.updateUnreadCounts();
+                        if (window.DesktopBridge && typeof DesktopBridge.updateSystrayUnread === 'function') {
+                            DesktopBridge.updateSystrayUnread();
+                        }
+
+                        setTimeout(() => {
+                            this.hideSidebarSyncWidget();
+                        }, 3000);
+                    } else if (status.status === 'error') {
+                        UI.showStickyToast('Error en Sincronización', status.error || 'Ocurrió un error en el servidor', 'error', 5000);
+                        setTimeout(() => {
+                            this.hideSidebarSyncWidget();
+                        }, 3000);
+                    } else {
+                        this.hideSidebarSyncWidget();
+                    }
+                }
+            } catch (err) {
+                console.warn('Error consultando estado de sincronización:', err);
+            }
+        }, 1200);
     },
 
     toggleMoreFolders() {
@@ -1426,6 +1573,7 @@ const EmailManager = {
             const isUnread = !email.is_read;
             const isStarred = Boolean(email.is_starred);
             const isSelected = this.selectedEmailId === email.id;
+            const accColor = email.account_color || '#3b82f6';
             
             // Formato de hora/fecha estilo Gmail (ej: "2:02 p.m." si es hoy, o "14 nov")
             let dateStr = '';
@@ -1440,7 +1588,7 @@ const EmailManager = {
             }
 
             return `
-                <div onclick="EmailManager.openEmailDetail(${email.id})" id="email-item-${email.id}" class="email-list-item group relative px-3 py-2.5 cursor-pointer transition-all select-none ${isSelected ? 'selected' : ''} ${
+                <div onclick="EmailManager.openEmailDetail(${email.id})" id="email-item-${email.id}" data-account-color="${accColor}" style="--account-accent-color: ${accColor}; ${isSelected ? `border-left-color: ${accColor} !important;` : ''}" class="email-list-item group relative px-3 py-2.5 cursor-pointer transition-all select-none ${isSelected ? 'selected' : ''} ${
                     isUnread 
                         ? 'bg-slate-50/80 dark:bg-slate-850/80 hover:bg-slate-100 dark:hover:bg-slate-800' 
                         : 'bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850/60'
@@ -1533,10 +1681,13 @@ const EmailManager = {
     highlightSelectedItem(emailId) {
         document.querySelectorAll('.email-list-item').forEach(el => {
             el.classList.remove('selected');
+            el.style.removeProperty('border-left-color');
         });
         const current = document.getElementById(`email-item-${emailId}`);
         if (current) {
             current.classList.add('selected');
+            const color = current.getAttribute('data-account-color') || '#4f46e5';
+            current.style.setProperty('border-left-color', color, 'important');
         }
     },
 

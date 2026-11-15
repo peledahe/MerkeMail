@@ -205,14 +205,14 @@ input[type="checkbox"]:indeterminate {
     background-size: 100% 100% !important;
 }
 
-/* Correo seleccionado: franja azul nítida siempre visible en cualquier fila */
+/* Correo seleccionado: orilla con el color de la cuenta del correo */
 .email-list-item.selected {
     background-color: rgba(238, 242, 255, 0.95) !important; /* bg-indigo-50 */
-    border-left-color: #4f46e5 !important; /* border-indigo-600 */
+    border-left-color: var(--account-accent-color, #4f46e5) !important;
 }
 .dark .email-list-item.selected {
     background-color: rgba(30, 27, 75, 0.75) !important; /* dark:bg-indigo-950/70 */
-    border-left-color: #6366f1 !important; /* dark:border-indigo-500 */
+    border-left-color: var(--account-accent-color, #6366f1) !important;
 }
 
 /* ================= SIDEBAR COLAPSABLE & MODO COMPACTO ================= */
@@ -255,6 +255,18 @@ input[type="checkbox"]:indeterminate {
     padding-right: 0 !important;
     padding-left: 0 !important;
     overflow-x: hidden !important;
+}
+
+#sidebar-container.collapsed #sidebar-sync-progress {
+    padding: 0.6rem 0.25rem !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+#sidebar-container.collapsed #sidebar-sync-progress .sync-progress-track {
+    display: none !important;
 }
 
 #sidebar-container.collapsed .folder-nav-btn,
