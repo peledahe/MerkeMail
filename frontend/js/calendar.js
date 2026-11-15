@@ -26,6 +26,7 @@ const CalendarManager = {
     ],
     selectedColor: '',
     attendeesList: [],
+    syncIntervalId: null,
 
     async init() {
         await this.loadCalendars();
@@ -34,31 +35,64 @@ const CalendarManager = {
         await this.loadTasks();
         this.renderColorPalette();
         this.setView(this.currentView, false);
+
+        // Sincronización periódica en segundo plano (cada 60s), rápida e imperceptible sin interrumpir la app
+        if (this.syncIntervalId) clearInterval(this.syncIntervalId);
+        this.syncIntervalId = setInterval(() => {
+            this.syncPeriodically();
+        }, 60000);
+    },
+
+    async syncPeriodically() {
+        // Si el usuario tiene abierta la modal de crear/editar evento o tarea, no refrescar para no interrumpir su edición
+        const eventModal = document.getElementById('new-event-modal');
+        if (eventModal && !eventModal.classList.contains('hidden')) return;
+
+        try {
+            await fetch('/api/calendars/sync', { method: 'POST' }).catch(() => {});
+            await this.loadEvents();
+            await this.loadTasks();
+            
+            const calendarView = document.getElementById('view-calendar');
+            if (calendarView && !calendarView.classList.contains('hidden')) {
+                this.renderCurrentView();
+                this.renderUpcomingList();
+                this.renderTasks();
+            }
+        } catch (e) {
+            // Silencioso para no interrumpir al usuario
+        }
     },
 
     async loadCalendars() {
         try {
             const res = await fetch('/api/calendars');
             this.calendars = await res.json();
-            const listEl = document.getElementById('calendar-sources-list');
             const selectEl = document.getElementById('event-calendar-select');
 
-            if (listEl) {
-                listEl.innerHTML = this.calendars.map(c => {
-                    const color = c.effective_color || c.color || c.account_color || '#4f46e5';
-                    return `
-                        <label class="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer select-none" title="${c.name} ${c.account_name ? '(' + c.account_name + ')' : ''}">
-                            <input type="checkbox" checked class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" onchange="CalendarManager.toggleCalendar(${c.id})">
-                            <span class="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style="background-color: ${color}"></span>
-                            <span class="font-medium">${c.name}</span>
-                        </label>
-                    `;
-                }).join('');
+            if (!this.activeCalendarIds) {
+                this.activeCalendarIds = new Set();
+                try {
+                    const saved = localStorage.getItem('merke_active_calendar_ids');
+                    if (saved) {
+                        const parsed = JSON.parse(saved);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                            parsed.forEach(id => this.activeCalendarIds.add(parseInt(id, 10)));
+                        }
+                    }
+                } catch (e) {}
+
+                // Si no hay preferencias guardadas, activar todos por defecto
+                if (this.activeCalendarIds.size === 0) {
+                    this.calendars.forEach(c => this.activeCalendarIds.add(c.id));
+                }
             }
+
+            this.renderCalendarSourcesList();
 
             if (selectEl) {
                 selectEl.innerHTML = this.calendars.map(c => `
-                    <option value="${c.id}">${c.name} (${c.provider})</option>
+                    <option value="${c.id}">${c.account_name || c.name} (${c.provider})</option>
                 `).join('');
                 if (this.defaultCalendarId) {
                     selectEl.value = this.defaultCalendarId;
@@ -77,6 +111,44 @@ const CalendarManager = {
         }
     },
 
+    renderCalendarSourcesList() {
+        const listEl = document.getElementById('calendar-sources-list');
+        if (!listEl) return;
+
+        listEl.innerHTML = this.calendars.map(c => {
+            const color = c.effective_color || c.color || c.account_color || '#4f46e5';
+            const displayName = c.account_name || c.name;
+            const isChecked = this.activeCalendarIds ? this.activeCalendarIds.has(c.id) : true;
+            return `
+                <label class="flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300 cursor-pointer select-none hover:text-slate-900 dark:hover:text-white transition-all ${isChecked ? 'opacity-100' : 'opacity-40 hover:opacity-75'}" title="${c.name} ${c.account_email ? '(' + c.account_email + ')' : ''}">
+                    <input type="checkbox" ${isChecked ? 'checked' : ''} class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer" onchange="CalendarManager.toggleCalendar(${c.id}, this.checked)">
+                    <span class="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style="background-color: ${color}"></span>
+                    <span class="font-medium">${displayName}</span>
+                </label>
+            `;
+        }).join('');
+    },
+
+    getFilteredEvents() {
+        if (!this.activeCalendarIds) {
+            return this.events;
+        }
+        return this.events.filter(e => {
+            const cid = e.calendar_id ? parseInt(e.calendar_id, 10) : null;
+            return cid ? this.activeCalendarIds.has(cid) : true;
+        });
+    },
+
+    getFilteredTasks() {
+        if (!this.activeCalendarIds) {
+            return this.tasks;
+        }
+        return this.tasks.filter(t => {
+            const cid = t.calendar_id ? parseInt(t.calendar_id, 10) : null;
+            return cid ? this.activeCalendarIds.has(cid) : true;
+        });
+    },
+
     async loadDefaultCalendarConfig() {
         try {
             const res = await fetch('/api/settings');
@@ -93,31 +165,7 @@ const CalendarManager = {
 
     updateSidebarCalendarBadge() {
         const badge = document.getElementById('calendar-sidebar-badge');
-        if (!badge) return;
-
-        if (!this.calendars || this.calendars.length === 0) {
-            badge.classList.add('hidden');
-            return;
-        }
-
-        badge.classList.remove('hidden');
-        const providers = [...new Set(this.calendars.map(c => (c.provider || '').toLowerCase()))];
-        const hasGoogle = providers.includes('google') || providers.includes('gmail');
-        const hasProton = providers.includes('proton');
-
-        if (hasGoogle && hasProton) {
-            badge.textContent = 'G+P';
-            badge.className = 'sidebar-badge text-[9px] px-1.5 py-0.5 rounded font-bold bg-purple-500/20 text-purple-600 dark:text-purple-400 border border-purple-500/30';
-        } else if (hasGoogle) {
-            badge.textContent = 'Google';
-            badge.className = 'sidebar-badge text-[9px] px-1.5 py-0.5 rounded font-bold bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/30';
-        } else if (hasProton) {
-            badge.textContent = 'Proton';
-            badge.className = 'sidebar-badge text-[9px] px-1.5 py-0.5 rounded font-bold bg-purple-500/20 text-purple-600 dark:text-purple-400 border border-purple-500/30';
-        } else {
-            badge.textContent = this.calendars[0]?.name || 'Activo';
-            badge.className = 'sidebar-badge text-[9px] px-1.5 py-0.5 rounded font-bold bg-slate-500/20 text-slate-600 dark:text-slate-400 border border-slate-500/30';
-        }
+        if (badge) badge.remove();
     },
 
     async loadEvents() {
@@ -236,20 +284,28 @@ const CalendarManager = {
         for (let day = 1; day <= daysInMonth; day++) {
             const isToday = today.getDate() === day && today.getMonth() === month && today.getFullYear() === year;
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const currentDayOfWeek = new Date(year, month, day).getDay();
+            const isWeekend = (currentDayOfWeek === 0 || currentDayOfWeek === 6);
             
             // Eventos y tareas de este día con fecha
-            const dayEvents = this.events.filter(e => e.start_time && e.start_time.startsWith(dateStr));
+            const dayEvents = this.getFilteredEvents().filter(e => e.start_time && e.start_time.startsWith(dateStr));
             const maxVisible = 2;
             const visibleEvents = dayEvents.slice(0, maxVisible);
             const remainingCount = dayEvents.length - maxVisible;
 
+            const bgClass = isToday 
+                ? 'bg-indigo-50/30 dark:bg-indigo-950/25 border-indigo-200/80 dark:border-indigo-800/80 ring-1 ring-inset ring-indigo-500/20' 
+                : (isWeekend 
+                    ? 'bg-slate-50/60 dark:bg-slate-900/60 border-slate-100 dark:border-slate-800/70' 
+                    : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800/70');
+
             cellsHtml += `
-                <div class="min-h-[92px] bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 p-1.5 flex flex-col justify-between group hover:border-indigo-400 dark:hover:border-indigo-600 transition-colors">
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-xs font-semibold ${isToday ? 'w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-xs' : 'text-slate-700 dark:text-slate-300'}">
+                <div class="min-h-[105px] sm:min-h-[115px] ${bgClass} border p-2 flex flex-col justify-between group hover:border-indigo-400 dark:hover:border-indigo-500 transition-colors relative">
+                    <div class="flex items-center justify-between mb-1.5">
+                        <span class="${isToday ? 'w-6 h-6 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center shadow-xs ring-2 ring-indigo-500/20' : 'text-xs font-semibold text-slate-700 dark:text-slate-300 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors'}">
                             ${day}
                         </span>
-                        <button onclick="CalendarManager.openNewEventModal('${dateStr}')" class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-opacity p-0.5 cursor-pointer" title="Agregar evento o tarea en este día">
+                        <button onclick="CalendarManager.openNewEventModal('${dateStr}')" class="opacity-0 group-hover:opacity-100 w-5 h-5 rounded-md hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all flex items-center justify-center cursor-pointer" title="Añadir evento o cita en este día">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                         </button>
                     </div>
@@ -258,16 +314,16 @@ const CalendarManager = {
                             const color = CalendarManager.getEventColor(ev);
                             const hasAccountColor = ev.account_color && ev.account_color !== ev.calendar_color;
                             return `
-                                <div onclick="CalendarManager.viewEventDetail(${ev.id})" class="text-[10px] px-1.5 py-0.5 rounded truncate font-medium text-white cursor-pointer hover:opacity-90 shadow-2xs transition-opacity flex items-center gap-1" style="background-color: ${color}" title="${ev.title} (${ev.calendar_name || 'Calendario'}${ev.account_name ? ' &bull; ' + ev.account_name : ''})">
-                                    ${hasAccountColor ? `<span class="w-1.5 h-1.5 rounded-full shrink-0 border border-white/60" style="background-color: ${ev.account_color}" title="Cuenta: ${ev.account_name}"></span>` : ''}
+                                <div onclick="CalendarManager.viewEventDetail(${ev.id})" class="text-[10px] sm:text-[10.5px] px-2 py-0.5 rounded-md truncate font-medium text-white cursor-pointer hover:opacity-90 shadow-2xs hover:shadow-xs hover:scale-[1.01] transition-all flex items-center gap-1.5 border-l-2 border-white/60" style="background-color: ${color}" title="${ev.title} (${ev.account_name || ev.calendar_name || 'Calendario'})">
+                                    ${hasAccountColor ? `<span class="w-1.5 h-1.5 rounded-full shrink-0 border border-white/70 shadow-2xs" style="background-color: ${ev.account_color}" title="Cuenta: ${ev.account_name}"></span>` : ''}
                                     <span class="truncate">${ev.title}</span>
                                 </div>
                             `;
                         }).join('')}
                         ${remainingCount > 0 ? `
-                            <button onclick="CalendarManager.showDayEventsModal('${dateStr}')" class="text-[10px] w-full text-left font-semibold text-indigo-600 dark:text-indigo-400 hover:underline px-1 py-0.5 rounded hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors cursor-pointer flex items-center justify-between" title="Ver todos los ${dayEvents.length} compromisos de este día">
+                            <button onclick="CalendarManager.showDayEventsModal('${dateStr}')" class="text-[10px] w-full text-left font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 px-1.5 py-0.5 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition-colors cursor-pointer flex items-center justify-between" title="Ver todos los ${dayEvents.length} compromisos de este día">
                                 <span>+${remainingCount} más</span>
-                                <span class="text-[9px] opacity-75 font-normal">(${dayEvents.length} total)</span>
+                                <span class="text-[9px] opacity-75 font-normal">(${dayEvents.length})</span>
                             </button>
                         ` : ''}
                     </div>
@@ -276,14 +332,14 @@ const CalendarManager = {
         }
 
         container.innerHTML = `
-            <div class="grid grid-cols-7 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-850 text-center py-2 text-xs font-semibold uppercase text-slate-500 shrink-0">
+            <div class="grid grid-cols-7 border-b border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-850/90 text-center py-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 shrink-0 select-none">
                 <div>Lun</div>
                 <div>Mar</div>
                 <div>Mié</div>
                 <div>Jue</div>
                 <div>Vie</div>
-                <div>Sáb</div>
-                <div>Dom</div>
+                <div class="text-indigo-600 dark:text-indigo-400">Sáb</div>
+                <div class="text-rose-500 dark:text-rose-400">Dom</div>
             </div>
             <div id="calendar-days-grid" class="flex-1 grid grid-cols-7 auto-rows-fr overflow-y-auto">
                 ${cellsHtml}
@@ -326,14 +382,26 @@ const CalendarManager = {
             hours.push(h);
         }
 
-        // Header de 7 días
-        let headerColsHtml = `<div class="w-14 shrink-0 border-r border-slate-200 dark:border-slate-800 text-[10px] text-slate-400 font-semibold flex items-center justify-center">Hora</div>`;
+        // Header de 7 días con espacio generoso y distinción clara
+        let headerColsHtml = `
+            <div class="w-16 sm:w-20 shrink-0 border-r border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center justify-center bg-slate-50 dark:bg-slate-850 select-none">
+                Hora
+            </div>
+        `;
+
         weekDays.forEach((wd, idx) => {
             const isToday = today.getDate() === wd.getDate() && today.getMonth() === wd.getMonth() && today.getFullYear() === wd.getFullYear();
+            const isWeekend = (idx >= 5);
+            const headerColBg = isToday 
+                ? 'bg-indigo-50/60 dark:bg-indigo-950/40' 
+                : (isWeekend ? 'bg-slate-100/40 dark:bg-slate-900/40' : 'bg-slate-50/80 dark:bg-slate-850/80');
+
             headerColsHtml += `
-                <div class="flex-1 text-center py-2 border-r border-slate-200 dark:border-slate-800 last:border-r-0 ${isToday ? 'bg-indigo-50/50 dark:bg-indigo-950/20' : ''}">
-                    <span class="text-[11px] font-semibold text-slate-500 uppercase block">${dayNamesShort[idx]}</span>
-                    <span class="text-xs font-bold inline-flex items-center justify-center ${isToday ? 'w-5 h-5 rounded-full bg-indigo-600 text-white mx-auto shadow-2xs' : 'text-slate-800 dark:text-slate-200'}">
+                <div class="flex-1 text-center py-2.5 sm:py-3 px-1 border-r border-slate-200 dark:border-slate-800 last:border-r-0 flex flex-col items-center justify-center gap-1 ${headerColBg} select-none">
+                    <span class="text-[11px] font-bold uppercase tracking-wider ${isToday ? 'text-indigo-600 dark:text-indigo-400 font-extrabold' : (isWeekend ? 'text-slate-400 dark:text-slate-500' : 'text-slate-500 dark:text-slate-400')} block">
+                        ${dayNamesShort[idx]}
+                    </span>
+                    <span class="text-xs sm:text-sm font-bold inline-flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-xl transition-all ${isToday ? 'bg-indigo-600 text-white shadow-xs ring-2 ring-indigo-500/20' : 'text-slate-800 dark:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-700/60'}">
                         ${wd.getDate()}
                     </span>
                 </div>
@@ -346,37 +414,46 @@ const CalendarManager = {
             const hourStr = `${String(h).padStart(2, '0')}:00`;
             let daySlotsHtml = '';
 
-            weekDays.forEach(wd => {
+            weekDays.forEach((wd, idx) => {
+                const isToday = today.getDate() === wd.getDate() && today.getMonth() === wd.getMonth() && today.getFullYear() === wd.getFullYear();
+                const isWeekend = (idx >= 5);
                 const dateStr = `${wd.getFullYear()}-${String(wd.getMonth() + 1).padStart(2, '0')}-${String(wd.getDate()).padStart(2, '0')}`;
                 
                 // Eventos de este día en este rango de hora
-                const slotEvents = this.events.filter(e => {
+                const slotEvents = this.getFilteredEvents().filter(e => {
                     if (!e.start_time || !e.start_time.startsWith(dateStr)) return false;
                     const evHour = parseInt(e.start_time.substring(11, 13), 10);
                     return evHour === h;
                 });
 
+                const slotBg = isToday 
+                    ? 'bg-indigo-50/10 dark:bg-indigo-950/10' 
+                    : (isWeekend ? 'bg-slate-50/30 dark:bg-slate-950/20' : 'bg-white dark:bg-slate-900');
+
                 daySlotsHtml += `
-                    <div class="flex-1 min-h-[58px] p-1 border-r border-b border-slate-100 dark:border-slate-800/80 last:border-r-0 hover:bg-slate-50/60 dark:hover:bg-slate-850/40 transition-colors group relative cursor-pointer" onclick="CalendarManager.handleSlotClick('${dateStr}', '${hourStr}', event)">
-                        <div class="space-y-1 overflow-y-auto max-h-[52px]">
+                    <div class="flex-1 min-h-[64px] sm:min-h-[70px] p-1.5 border-r border-b border-slate-100 dark:border-slate-800/70 last:border-r-0 ${slotBg} hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors group relative cursor-pointer" onclick="CalendarManager.handleSlotClick('${dateStr}', '${hourStr}', event)">
+                        <div class="space-y-1 overflow-y-auto max-h-[58px]">
                             ${slotEvents.map(ev => {
                                 const color = CalendarManager.getEventColor(ev);
                                 return `
-                                    <div onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id})" class="text-[10px] p-1 rounded-md text-white font-medium shadow-2xs hover:opacity-90 truncate cursor-pointer transition-opacity flex items-center gap-1" style="background-color: ${color}" title="${ev.title} (${ev.calendar_name || ''}${ev.account_name ? ' - ' + ev.account_name : ''})">
-                                        ${ev.account_color && ev.account_color !== ev.calendar_color ? `<span class="w-1.5 h-1.5 rounded-full shrink-0 border border-white/60" style="background-color: ${ev.account_color}"></span>` : ''}
-                                        <span class="font-bold opacity-90">${ev.start_time.substring(11,16)}</span>
-                                        <span class="truncate">${ev.title}</span>
+                                    <div onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id})" class="text-[11px] p-1.5 rounded-lg text-white font-medium shadow-xs hover:shadow-md hover:scale-[1.01] transition-all cursor-pointer flex items-center gap-1.5 border-l-2 border-white/60 min-w-0" style="background-color: ${color}" title="${ev.title} (${ev.account_name || ev.calendar_name || ''})">
+                                        ${ev.account_color && ev.account_color !== ev.calendar_color ? `<span class="w-2 h-2 rounded-full shrink-0 border border-white/80 shadow-2xs" style="background-color: ${ev.account_color}"></span>` : ''}
+                                        <span class="font-bold text-[10px] opacity-95 font-mono shrink-0">${ev.start_time.substring(11,16)}</span>
+                                        <span class="truncate font-semibold leading-tight">${ev.title}</span>
                                     </div>
                                 `;
                             }).join('')}
+                        </div>
+                        <div class="opacity-0 group-hover:opacity-100 text-[10px] text-slate-400 dark:text-slate-500 font-medium transition-opacity flex items-center gap-1 pointer-events-none absolute inset-x-2 bottom-1">
+                            <span class="text-indigo-500 font-bold">+</span> ${hourStr}
                         </div>
                     </div>
                 `;
             });
 
             rowsHtml += `
-                <div class="flex min-w-[600px]">
-                    <div class="w-14 shrink-0 py-2 text-right pr-2 text-[10px] font-mono text-slate-400 border-r border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/30 dark:bg-slate-850/30 select-none">
+                <div class="flex min-w-[700px]">
+                    <div class="w-16 sm:w-20 shrink-0 py-2.5 pr-2.5 sm:pr-3 text-right text-[11px] font-mono font-medium text-slate-400 dark:text-slate-500 border-r border-b border-slate-200/80 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/50 select-none">
                         ${hourStr}
                     </div>
                     ${daySlotsHtml}
@@ -385,7 +462,7 @@ const CalendarManager = {
         });
 
         container.innerHTML = `
-            <div class="flex border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850 min-w-[600px] shrink-0">
+            <div class="flex border-b border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-850 min-w-[700px] shrink-0">
                 ${headerColsHtml}
             </div>
             <div class="flex-1 overflow-y-auto overflow-x-auto">
@@ -414,7 +491,7 @@ const CalendarManager = {
         const isToday = today.getDate() === date && today.getMonth() === month && today.getFullYear() === year;
 
         // Filtrar eventos del día
-        const dayEvents = this.events.filter(e => e.start_time && e.start_time.startsWith(dateStr));
+        const dayEvents = this.getFilteredEvents().filter(e => e.start_time && e.start_time.startsWith(dateStr));
 
         // Generar horas 06:00 a 23:00
         let hoursHtml = '';
@@ -426,17 +503,17 @@ const CalendarManager = {
             });
 
             hoursHtml += `
-                <div class="flex min-h-[64px] border-b border-slate-100 dark:border-slate-800/80 group hover:bg-slate-50/50 dark:hover:bg-slate-850/40 transition-colors cursor-pointer" onclick="CalendarManager.handleSlotClick('${dateStr}', '${hourStr}', event)">
+                <div class="flex min-h-[68px] sm:min-h-[74px] border-b border-slate-100 dark:border-slate-800/80 group hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors cursor-pointer" onclick="CalendarManager.handleSlotClick('${dateStr}', '${hourStr}', event)">
                     <!-- Columna de Hora -->
-                    <div class="w-16 shrink-0 py-2.5 text-right pr-3 text-xs font-mono text-slate-400 select-none border-r border-slate-100 dark:border-slate-800/80 bg-slate-50/30 dark:bg-slate-850/30">
+                    <div class="w-18 sm:w-20 shrink-0 py-3 text-right pr-3 text-xs font-mono font-medium text-slate-400 dark:text-slate-500 select-none border-r border-slate-200/80 dark:border-slate-800/80 bg-slate-50/40 dark:bg-slate-900/40">
                         ${hourStr}
                     </div>
                     <!-- Área de Eventos de la Hora -->
-                    <div class="flex-1 p-2 space-y-1.5 flex flex-wrap gap-2 items-start">
+                    <div class="flex-1 p-2 sm:p-2.5 space-y-1.5 flex flex-wrap gap-2.5 items-start">
                         ${slotEvents.length === 0 ? `
-                            <span class="opacity-0 group-hover:opacity-100 text-[11px] text-slate-400 transition-opacity flex items-center gap-1 mt-1">
+                            <span class="opacity-0 group-hover:opacity-100 text-xs font-medium text-slate-400 dark:text-slate-500 transition-opacity flex items-center gap-1.5 mt-1.5 py-1 px-2.5 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-white/60 dark:bg-slate-850/60 shadow-2xs">
                                 <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                                <span>Hacer clic para agendar a las ${hourStr}</span>
+                                <span>Agendar a las ${hourStr}</span>
                             </span>
                         ` : ''}
                         ${slotEvents.map(ev => {
@@ -444,20 +521,19 @@ const CalendarManager = {
                             const timeEnd = ev.end_time ? ev.end_time.substring(11, 16) : '';
                             const color = CalendarManager.getEventColor(ev);
                             return `
-                                <div onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id})" class="p-2.5 rounded-xl text-white shadow-xs hover:shadow-md transition-all cursor-pointer flex-1 min-w-[240px] max-w-lg border-l-4 border-white/50" style="background-color: ${color}">
-                                    <div class="flex items-center justify-between gap-2 mb-1">
-                                        <div class="flex items-center gap-1.5 min-w-0">
-                                            ${ev.account_color && ev.account_color !== ev.calendar_color ? `<span class="w-2 h-2 rounded-full border border-white/70 shrink-0" style="background-color: ${ev.account_color}" title="Cuenta: ${ev.account_name}"></span>` : ''}
-                                            <span class="text-xs font-bold leading-tight truncate">${ev.title}</span>
+                                <div onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id})" class="p-3 sm:p-3.5 rounded-2xl text-white shadow-xs hover:shadow-md hover:scale-[1.008] transition-all cursor-pointer flex-1 min-w-[260px] max-w-xl border-l-4 border-white/60" style="background-color: ${color}">
+                                    <div class="flex items-center justify-between gap-3 mb-1.5">
+                                        <div class="flex items-center gap-2 min-w-0">
+                                            ${ev.account_color && ev.account_color !== ev.calendar_color ? `<span class="w-2.5 h-2.5 rounded-full border border-white/80 shrink-0 shadow-2xs" style="background-color: ${ev.account_color}" title="Cuenta: ${ev.account_name}"></span>` : ''}
+                                            <span class="text-sm font-bold leading-tight truncate">${ev.title}</span>
                                         </div>
-                                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-black/20 font-mono font-semibold shrink-0">${timeStart}${timeEnd ? ' - ' + timeEnd : ''}</span>
+                                        <span class="text-xs px-2 py-0.5 rounded-lg bg-black/25 font-mono font-bold shrink-0">${timeStart}${timeEnd ? ' - ' + timeEnd : ''}</span>
                                     </div>
-                                    <div class="flex items-center gap-2 text-[11px] opacity-90">
-                                        <span>📅 ${ev.calendar_name || 'Calendario'}</span>
-                                        ${ev.account_name ? `<span>&bull; ${ev.account_name}</span>` : ''}
-                                        ${ev.location ? `<span class="truncate">📍 ${ev.location}</span>` : ''}
+                                    <div class="flex items-center gap-3 text-xs opacity-95 flex-wrap">
+                                        <span class="flex items-center gap-1">📅 ${ev.account_name || ev.calendar_name || 'Calendario'}</span>
+                                        ${ev.location ? `<span class="truncate flex items-center gap-1">📍 ${ev.location}</span>` : ''}
                                     </div>
-                                    ${ev.description ? `<p class="text-[10px] opacity-80 line-clamp-1 mt-1">${ev.description}</p>` : ''}
+                                    ${ev.description ? `<p class="text-[11px] opacity-80 line-clamp-1 mt-1">${ev.description}</p>` : ''}
                                 </div>
                             `;
                         }).join('')}
@@ -467,18 +543,23 @@ const CalendarManager = {
         }
 
         container.innerHTML = `
-            <div class="p-3.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850 flex items-center justify-between shrink-0">
-                <div class="flex items-center gap-2.5">
-                    <span class="text-base font-bold ${isToday ? 'px-2.5 py-0.5 rounded-lg bg-indigo-600 text-white' : 'text-slate-800 dark:text-slate-100'}">
-                        ${dayName} ${date}
-                    </span>
-                    <span class="text-xs text-slate-500 dark:text-slate-400">
-                        ${dayEvents.length} cita${dayEvents.length === 1 ? '' : 's'} programada${dayEvents.length === 1 ? '' : 's'}
-                    </span>
+            <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-850/80 flex items-center justify-between gap-4 flex-wrap shrink-0">
+                <div class="flex items-center gap-3.5">
+                    <div class="w-12 h-12 rounded-2xl ${isToday ? 'bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white shadow-md' : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 shadow-2xs'} flex flex-col items-center justify-center shrink-0">
+                        <span class="text-[10px] uppercase font-bold tracking-wider leading-none opacity-80">${dayName.slice(0, 3)}</span>
+                        <span class="text-lg font-black leading-none mt-0.5">${date}</span>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white capitalize">${dayName}, ${date} de ${monthNames[month]} de ${year}</h2>
+                            ${isToday ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">Hoy</span>' : ''}
+                        </div>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${dayEvents.length} ${dayEvents.length === 1 ? 'evento programado' : 'eventos programados'}</p>
+                    </div>
                 </div>
-                <button onclick="CalendarManager.openNewEventModal('${dateStr}')" class="px-2.5 py-1 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg transition-colors flex items-center gap-1 cursor-pointer">
+                <button onclick="CalendarManager.openNewEventModal('${dateStr}')" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs hover:shadow-md transition-all flex items-center gap-1.5 cursor-pointer">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                    <span>Agendar en este día</span>
+                    <span>Nuevo Evento en este día</span>
                 </button>
             </div>
             <div class="flex-1 overflow-y-auto">
@@ -505,7 +586,7 @@ const CalendarManager = {
         if (titleEl) titleEl.textContent = `Eventos y Tareas`;
         if (subtitleEl) subtitleEl.textContent = formattedDate;
 
-        const dayEvents = this.events.filter(e => e.start_time && e.start_time.startsWith(dateStr));
+        const dayEvents = this.getFilteredEvents().filter(e => e.start_time && e.start_time.startsWith(dateStr));
 
         if (dayEvents.length === 0) {
             listEl.innerHTML = `<p class="text-xs text-slate-400 text-center py-6">No hay eventos ni tareas registradas para este día.</p>`;
@@ -560,13 +641,14 @@ const CalendarManager = {
         const listEl = document.getElementById('upcoming-events-list');
         if (!listEl) return;
 
-        if (this.events.length === 0) {
-            listEl.innerHTML = `<p class="text-xs text-slate-400 text-center py-4">No hay eventos programados</p>`;
+        const filteredEvents = this.getFilteredEvents();
+        if (filteredEvents.length === 0) {
+            listEl.innerHTML = `<p class="text-xs text-slate-400 text-center py-4">No hay eventos para las cuentas seleccionadas</p>`;
             return;
         }
 
-        listEl.innerHTML = this.events.slice(0, 5).map(ev => {
-            const date = new Date(ev.start_time);
+        listEl.innerHTML = filteredEvents.slice(0, 5).map(ev => {
+            const date = new Date(ev.start_time ? ev.start_time.replace(' ', 'T') : '');
             const color = this.getEventColor(ev);
             return `
                 <div onclick="CalendarManager.viewEventDetail(${ev.id})" class="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl flex items-start justify-between gap-2 shadow-2xs hover:border-indigo-400 dark:hover:border-indigo-600 cursor-pointer transition-colors">
@@ -591,8 +673,9 @@ const CalendarManager = {
         const countEl = document.getElementById('calendar-tasks-count');
         if (!listEl) return;
 
+        const filteredTasks = this.getFilteredTasks();
         // Tareas sin fecha fija
-        const undatedTasks = this.tasks.filter(t => !t.start_time || t.start_time.trim() === '');
+        const undatedTasks = filteredTasks.filter(t => !t.start_time || t.start_time.trim() === '');
         const pendingCount = undatedTasks.filter(t => !t.is_completed).length;
 
         if (countEl) countEl.textContent = pendingCount;
@@ -616,7 +699,7 @@ const CalendarManager = {
                         <span class="w-2 h-2 rounded-full shrink-0" style="background-color: ${color}" title="Calendario: ${t.calendar_name || ''}${t.account_name ? ' | Cuenta: ' + t.account_name : ''}"></span>
                         <div class="min-w-0 flex-1 cursor-pointer" onclick="CalendarManager.viewEventDetail(${t.id})">
                             <span class="text-xs block truncate ${isCompleted ? 'line-through text-slate-400 dark:text-slate-500' : 'font-medium text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400'}">${cleanTitle}</span>
-                            <span class="text-[10px] text-slate-400 truncate block">${t.calendar_name || 'Calendario'}${t.account_name ? ' &bull; ' + t.account_name : ''}</span>
+                            <span class="text-[10px] text-slate-400 truncate block">${t.account_name || t.calendar_name || 'Calendario'}</span>
                         </div>
                     </div>
                     <button onclick="CalendarManager.deleteEvent(${t.id})" class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 p-1 transition-opacity shrink-0 cursor-pointer" title="Eliminar tarea">
@@ -682,6 +765,33 @@ const CalendarManager = {
         const endTimeEl = document.getElementById('event-end-time-only');
         if (startTimeEl) startTimeEl.style.display = isAllDay ? 'none' : 'block';
         if (endTimeEl) endTimeEl.style.display = isAllDay ? 'none' : 'block';
+    },
+
+    toggleEventModalAdvanced(forceState = null) {
+        const advancedSec = document.getElementById('event-advanced-section');
+        const textToggle = document.getElementById('text-toggle-event-advanced');
+        const btnToggle = document.getElementById('btn-toggle-event-advanced');
+        if (!advancedSec) return;
+
+        const isCurrentlyHidden = advancedSec.classList.contains('hidden');
+        const shouldShow = (typeof forceState === 'boolean') ? forceState : isCurrentlyHidden;
+
+        if (shouldShow) {
+            advancedSec.classList.remove('hidden');
+            if (textToggle) textToggle.textContent = 'Menos opciones ▴';
+            if (btnToggle) {
+                btnToggle.classList.add('bg-indigo-50', 'dark:bg-indigo-950/50');
+            }
+            setTimeout(() => {
+                advancedSec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 60);
+        } else {
+            advancedSec.classList.add('hidden');
+            if (textToggle) textToggle.textContent = 'Más opciones ▾';
+            if (btnToggle) {
+                btnToggle.classList.remove('bg-indigo-50', 'dark:bg-indigo-950/50');
+            }
+        }
     },
 
     addGoogleMeet() {
@@ -827,8 +937,22 @@ const CalendarManager = {
             if (selectEl && editEvent.calendar_id) {
                 selectEl.value = editEvent.calendar_id;
             }
+
+            // En edición, auto-expandir la sección avanzada si el evento ya contiene datos avanzados
+            const hasAdvancedData = Boolean(
+                (editEvent.location && editEvent.location.trim()) ||
+                (editEvent.attendees && editEvent.attendees.trim()) ||
+                (editEvent.description && editEvent.description.trim()) ||
+                (editEvent.recurrence && editEvent.recurrence !== 'none') ||
+                (editEvent.notification_minutes !== undefined && String(editEvent.notification_minutes) !== '10') ||
+                (editEvent.availability && editEvent.availability !== 'busy') ||
+                (editEvent.visibility && editEvent.visibility !== 'default')
+            );
+            this.toggleEventModalAdvanced(hasAdvancedData);
         } else {
-            // Modo Creación
+            // Modo Creación: iniciar siempre en versión básica compacta
+            this.toggleEventModalAdvanced(false);
+
             if (editIdInput) editIdInput.value = '';
             if (modalTitle) modalTitle.textContent = 'Programar Evento / Cita';
             if (submitBtn) submitBtn.textContent = 'Guardar Cita';
@@ -864,11 +988,6 @@ const CalendarManager = {
             if (selectEl && this.calendars.length > 0) {
                 const targetId = this.defaultCalendarId || this.calendars[0].id;
                 selectEl.value = targetId;
-                const defaultCal = this.calendars.find(c => c.id == targetId);
-                const hintEl = document.getElementById('event-calendar-default-hint');
-                if (hintEl && defaultCal) {
-                    hintEl.textContent = `Predeterminado: ${defaultCal.name}`;
-                }
             }
         }
 
@@ -1299,8 +1418,26 @@ const CalendarManager = {
         UI.openDrawer('drawer-event-detail');
     },
 
-    toggleCalendar(calId) {
-        // Reservado para filtrado reactivo de fuentes de calendario
+    toggleCalendar(calId, isChecked) {
+        calId = parseInt(calId, 10);
+        if (!this.activeCalendarIds) {
+            this.activeCalendarIds = new Set(this.calendars.map(c => c.id));
+        }
+
+        if (isChecked) {
+            this.activeCalendarIds.add(calId);
+        } else {
+            this.activeCalendarIds.delete(calId);
+        }
+
+        try {
+            localStorage.setItem('merke_active_calendar_ids', JSON.stringify([...this.activeCalendarIds]));
+        } catch (e) {}
+
+        this.renderCalendarSourcesList();
+        this.renderCalendar();
+        this.renderTasks();
+        this.renderUpcomingList();
     }
 };
 

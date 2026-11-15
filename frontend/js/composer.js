@@ -533,7 +533,7 @@ const Composer = {
         const tone = toneSelect ? toneSelect.value : 'formal';
 
         if (!promptText) {
-            if (window.UI) UI.showStickyToast('Instrucción requerida', 'Escribe lo que deseas que redacte Gemini', 'warning');
+            if (window.UI) UI.showStickyToast('Instrucción requerida', 'Escribe lo que deseas que redacte Elio (@elio)', 'warning');
             promptInput.focus();
             return;
         }
@@ -1050,7 +1050,7 @@ const InlineReply = {
         const currentDraft = this.getText();
 
         if (window.UI) {
-            UI.showStickyToast('Gemini IA', 'Generando borrador contextualizado con el correo actual...', 'info', 2500);
+            UI.showStickyToast('Elio (@elio)', 'Generando borrador contextualizado con el correo actual...', 'info', 2500);
         }
 
         const btnAI = document.querySelector('button[onclick*="InlineReply.replyWithAI"]');

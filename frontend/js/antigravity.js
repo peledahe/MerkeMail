@@ -97,6 +97,38 @@ const AntigravityCopilot = {
         container.scrollTop = container.scrollHeight;
     },
 
+    getUserAvatarHTML() {
+        let avatarUrl = '';
+        let initial = 'U';
+        let color = '#6366f1';
+        let title = 'Usuario';
+
+        if (window.EmailManager && EmailManager.accounts && EmailManager.accounts.length > 0) {
+            const defaultAcc = EmailManager.accounts.find(a => a.is_default === 1) || EmailManager.accounts[0];
+            if (defaultAcc) {
+                avatarUrl = defaultAcc.avatar_url || (window.AvatarService ? AvatarService.getUrl(defaultAcc.email) : '');
+                initial = (defaultAcc.name || defaultAcc.email || 'U')[0].toUpperCase();
+                color = defaultAcc.color || '#6366f1';
+                title = defaultAcc.name ? `${defaultAcc.name} (${defaultAcc.email})` : defaultAcc.email;
+            }
+        }
+
+        if (avatarUrl) {
+            return `
+                <div class="w-6 h-6 rounded-full shrink-0 overflow-hidden ring-1 ring-indigo-400/40 shadow-xs relative self-start" title="${EmailManager.escapeHtml(title)}">
+                    <img src="${avatarUrl}" alt="${initial}" class="w-full h-full object-cover rounded-full" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
+                    <span style="display:none; background-color: ${color};" class="w-full h-full rounded-full items-center justify-center font-bold text-white text-[10px]">${initial}</span>
+                </div>
+            `;
+        } else {
+            return `
+                <div class="w-6 h-6 rounded-full shrink-0 flex items-center justify-center font-bold text-white text-[10px] shadow-xs ring-1 ring-white/20 self-start" style="background-color: ${color}" title="${EmailManager.escapeHtml(title)}">
+                    ${initial}
+                </div>
+            `;
+        }
+    },
+
     appendMessage(role, text) {
         const container = document.getElementById('antigravity-messages-container');
         if (!container) return;
@@ -109,6 +141,7 @@ const AntigravityCopilot = {
                 <div class="p-3 bg-indigo-600 text-white rounded-2xl rounded-tr-xs text-xs max-w-[85%] leading-relaxed shadow-sm break-words whitespace-pre-wrap overflow-hidden">
                     ${EmailManager.escapeHtml(text)}
                 </div>
+                ${this.getUserAvatarHTML()}
             `;
         } else {
             msgEl.innerHTML = `

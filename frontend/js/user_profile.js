@@ -111,7 +111,7 @@ const UserProfileAI = {
         if (btnIcon) btnIcon.classList.add('animate-spin');
 
         if (window.UI) {
-            UI.showStickyToast('Analizando Perfil', 'Gemini está examinando tus correos enviados, firmas y contactos...', 'info', 4000);
+            UI.showStickyToast('Analizando Perfil', 'Elio (@elio) está examinando tus correos enviados, firmas y contactos...', 'info', 4000);
         }
 
         try {

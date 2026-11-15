@@ -2,6 +2,82 @@
 
 ## Historial de Hitos Completados
 
+- [x] **Fase 92: Simplificación Estricta del Menú de la Barra de Tareas y Bandeja del Sistema:**
+  - Reducción del menú contextual tanto en la barra de tareas (dock/panel) como en el System Tray a únicamente dos opciones: *"Mostrar la aplicación"* y *"Cerrar"*.
+  - Limpieza de metadatos superfluos en el archivo `.desktop` y actualización de la base de datos de escritorio de Ubuntu.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 91: Enlaces de Correo Externos por Entorno y Control Unívoco de Maximizar/Restaurar:**
+  - Enlaces de correos abiertos en el navegador por defecto del SO en modo instalado y PWA (`QDesktopServices.openUrl` + `/api/desktop/open-url`), y en pestaña nueva en modo web navegador.
+  - Corrección del botón Ampliar/Restaurar: eliminación del doble despacho concurrente, implementando acciones explícitas `maximize` o `restore` unívocas según el estado actual de la ventana con bloqueo anti-rebote.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 90: Corrección Integral del System Tray (Transparencia Alfa y Conteo Real de No Leídos):**
+  - Fondo 100% transparente en el icono del System Tray tanto en estado atenuado como a color, eliminando el fondo negro generado por la conversión sin canal alfa.
+  - Corrección de la consulta SQL SQLite a la tabla `emails` para sincronizar con el Inbox y categorías reales (25 no leídos), activando el icono a color con el badge circular rojo.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 89: Arrastre Fluido de Ventana por Clic Sostenido, Controles Nativos Directos y Menú de Tablero Exclusivo:**
+  - Arrastre acelerado por hardware con `QWindow::startSystemMove()` al hacer clic sostenido en cualquier espacio libre del header superior.
+  - Canal de comunicación directo e instantáneo JS -> PyQt6 (`CustomWebEnginePage` + socket IPC + bridge) con latencia cero para las acciones de ventana.
+  - Corrección de botones de control (`_`, `□`, `✕`): minimizar, maximizar/restaurar y cerrar funcionando de forma instantánea y robusta.
+  - Sincronización automática de estado maximizado/restaurado entre Qt y la interfaz web.
+  - Menú contextual del tablero / dock de Ubuntu configurado para mostrar exclusivamente *"Mostrar / Ocultar MerkeMail"* y *"Cerrar MerkeMail"*, alineado con el System Tray.
+  - Limpieza de procesos huérfanos y despliegue sincronizado con `install_desktop.sh`.
+
+- [x] **Fase 88: Instancia Única, Ocultamiento del Dock al Minimizar en Systray y Controles de Ventana:**
+  - Instancia única nativa (`QLocalSocket` / `QLocalServer`), enfocando la ventana activa si se pulsa de nuevo en el menú de aplicaciones.
+  - Al minimizar o cerrar con System Tray activo, la ventana se oculta (`hide()`), retirando el icono del tablero/dock de Ubuntu.
+  - Menú de bandeja simplificado estrictamente a "Mostrar/Ocultar" y "Cerrar".
+  - Controles de ventana nativos integrados junto al avatar de la cuenta en el header (minimizar, ampliar/restaurar, cerrar).
+  - Ocultado el botón de imprimir exclusivamente en modo instalado (visible en modo PWA y browser).
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 87: Sincronización Silenciosa Imperceptible e Indicativo Inteligente en Systray:**
+  - Sincronización asíncrona no bloqueante de correo, tareas, eventos y contactos en segundo plano sin interrumpir la experiencia de usuario ni congelar la pantalla.
+  - Indicativo dinámico en el System Tray:
+    - Sin correos sin leer: logo tenue/gris (`opacity 0.55`) y tooltip *"Todo al día"*.
+    - Con correos sin leer: logo a color con badge circular rojo (`#ef4444`) en la esquina superior derecha y conteo de no leídos.
+  - Verificada la total independencia del modo desarrollo en la aplicación instalada (`~/.local/share/merkemail`).
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 86: Tooltips Globales con Bordes Redondeados Suaves para todos los Botones:**
+  - Sistema global de tooltips flotantes (`#app-global-tooltip` & `UI.initAppTooltips`).
+  - Suprime el tooltip rectangular tosco nativo del navegador mediante captura dinámica de `title` a `data-app-tooltip`.
+  - Bordes redondeados suaves (`rounded-xl` / `10px`), fondo oscuro con blur y sombreado premium.
+  - Posicionamiento reactivo arriba/abajo centrado con prevención de desbordamiento en pantalla.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 85: Formulario de Evento/Cita Básico vs Ampliado y Optimización de Espacios:**
+  - Versión Básica compacta con campos esenciales: Tipo (Evento/Tarea), Título, Horario/Fecha (todo el día), Google Meet, Calendario Destino y Selector de Color.
+  - Eliminado el indicador de texto redundante sobre "Calendario Destino" para un encabezado limpio y alineado.
+  - Versión Ampliada colapsable (`Más opciones ▾` / `Menos opciones ▴`): Repetición/Recurrencia, Ubicación, Invitados, Notificaciones, Disponibilidad, Visibilidad y Notas.
+  - Apertura inteligente: en creación abre versión básica sin scroll; en edición con datos avanzados se auto-expande.
+  - Corregida la interacción del botón "Más opciones" con auto-scroll suave hacia los campos avanzados y versionado de scripts (`?v=87`) contra caché de navegador.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 84: Filtrado Dinámico y Reactivo por Cuenta en Calendario, Eventos y Tareas:**
+  - Filtrado integral reactivo al activar o desactivar cualquiera de las cuentas en la cabecera.
+  - Oculta o muestra dinámicamente: cuadrícula del calendario (mes, semana, día), lista de próximos eventos y panel de tareas pendientes.
+  - Atenuación visual del indicador de cuenta al estar inactivo (`opacity-40`).
+  - Persistencia de selección de fuentes activas en `localStorage`.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 83: Rediseño Integral de Vistas de Calendario (Mes, Semana, Día) y Limpieza de Sidebar:**
+  - Eliminado el indicativo `G+P` del botón de Calendario en la barra lateral izquierda.
+  - Vista Semanal: Cabecera con espaciado vertical holgado, números en chips redondeados, columna de horas ampliada con alineación de líneas, celdas de 64-70px y tarjetas de eventos con píldora horaria y título nítido.
+  - Vista Mensual: Mayor altura mínima por celda (105-115px), realce del día de hoy con aro índigo, y distinción cromática para fines de semana en modos claro y oscuro.
+  - Vista Diaria: Banner de cabecera con tarjeta de fecha, desglose horario espacioso y tarjetas de citas completas.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 82: Modales con Scrollbar al Extremo Derecho y Optimización de Espacio en Calendario:**
+  - Filtros de fuentes de calendario compactados en cabecera: muestran solo el nombre de la cuenta y el círculo de color, ahorrando valioso espacio horizontal.
+  - Alineación del scrollbar al borde exterior derecho en `#new-event-modal` y `#modal-day-events`.
+  - Reubicación de padding horizontal y vertical dentro del contenedor scrollable, eliminando el espacio en blanco de 24px entre el scrollbar y el marco de la modal.
+  - Fijación de cabecera y barra de acciones inferior (botones Cancelar / Guardar Cita) en la base de la modal para acceso inmediato sin scroll obligado.
+  - Unificación de la identidad de marca a **Elio (@elio)** e inclusión del avatar del usuario en los globos de chat.
+  - Sincronización exitosa con `install_desktop.sh` y verificación de sintaxis JS limpia.
+
 - [x] **Fase 81: Modal de Información Completa de Contactos, Edición, Eliminación y Sincronización Protegida:**
   - Modal enriquecida `modal-contact-detail` accesible al hacer clic en cualquier contacto de la libreta o en su botón de detalle `[ 👁️ ]`.
   - Muestra todos los datos disponibles: nombre, email, teléfono, empresa/organización, cargo/puesto, dirección, notas, cuenta de origen, fecha del último contacto e intercambios totales.
@@ -419,6 +495,36 @@
     5. **Asignar Etiquetas (🏷️):** Menú flotante interactivo con checkboxes de etiquetas pertenecientes a la cuenta de origen del correo (accesible tanto desde el botón `+ Etiqueta` a la izquierda como desde el icono `🏷️` en la barra derecha con autocierre al hacer clic fuera).
     6. **Destacar (⭐):** Alternancia de estado favorito.
     7. Acciones complementarias preservadas: Responder, Reenviar, Responder con IA, Agendar en Calendario e Imprimir.
+
+- [x] **Fase 66: Depuración y Limpieza del Header Superior:**
+  - **Eliminación de Botones Duplicados:** Retirados los botones de Libreta de Contactos (`[ 👥 ]`) y Perfil del Usuario (`[ 👤 ]`) del header superior derecho.
+  - **Centralización en Barra Lateral:** Las funcionalidades se mantienen de forma consistente e intuitiva desde el menú lateral izquierdo (`#nav-item-contacts` y `#nav-item-user-profile`).
+  - **Sincronización:** Actualizado el entorno de escritorio instalado mediante `install_desktop.sh`.
+
+- [x] **Fase 67: Perfeccionamiento de Impresión y Vista Previa (Eliminación de Huecos en Blanco):**
+  - **Encabezado Ultra-Compacto:** Título del correo en negrita reducido a `13.5px`, metadatos (De, Para, Fecha) en rejilla flexible horizontal de `10.5px`, ahorrando más de 100px de altura vertical respecto al diseño original.
+  - **Márgenes y Densidad:** Márgenes de página ajustados a `0.6cm 0.8cm`.
+  - **Desempaquetado de Contenedores Responsivos:** Corrección de `display: table-cell` en frameworks de correo como Klaviyo (`.kl-row`, `.kl-column`) y MJML para que se comporten como bloques naturales en impresión y no bloqueen la fragmentación de página ni empujen secciones enteras a páginas posteriores.
+  - **Precarga Asíncrona de Imágenes en Iframe:** Se incorporó detección de carga completa de imágenes remotas en el iframe de impresión antes de invocar `print()`.
+
+- [x] **Fase 68: Compactación de Invocador de Elio en Barra de Búsqueda:**
+  - **Botón Inteligente `@elio`:** Se sustituyó el texto largo ("Preguntar a Elio ↵") por el avatar de Elio junto a un indicador compacto `( ? )` alineado en una sola fila (`whitespace-nowrap`).
+  - **Optimización de Espacio:** Se evita el corte en dos renglones que deformaba la barra de búsqueda y se maximiza el área libre para escribir.
+  - **Sincronización:** Desplegado en la aplicación instalada mediante `install_desktop.sh`.
+
+- [x] **Fase 69: Unificación de Identidad de Marca a Elio (@elio):**
+  - **Reemplazo Integral en UI:** Sustituido "Gemini" / "Gemini AI" por **Elio (@elio)** en redactor asistido, respuestas inteligentes, resumen ejecutivo TL;DR, análisis de perfil de usuario, depuración por prompt y notificaciones sticky del sistema.
+  - **Preservación en Configuración:** Mantenida la referencia a Google Gemini exclusivamente en la ventana modal de Ajustes donde se especifica el proveedor de IA y su respectiva API Key.
+
+- [x] **Fase 70: Avatar de Usuario Predeterminado en Chat de Elio:**
+  - **Identidad en Mensajes de Chat:** Cada mensaje enviado por el usuario en las conversaciones con Elio ahora incluye el avatar de la cuenta de correo predeterminada (foto de perfil o círculo con inicial y color distintivo) al costado derecho de la burbuja.
+  - **Coherencia Visual:** Dimensiones equilibradas (`w-6 h-6`) equivalentes al icono de Elio en el lado izquierdo.
+  - **Sincronización:** Desplegado en la app instalada vía `install_desktop.sh`.
+
+
+
+
+
 
 
 

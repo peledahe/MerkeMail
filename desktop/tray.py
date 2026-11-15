@@ -128,6 +128,53 @@ def quit_app(icon=None, item=None):
             uvicorn_process.kill()
     sys.exit(0)
 
+def get_unread_count() -> int:
+    try:
+        import sqlite3
+        db_path = APP_DIR / "data" / "merkemail.db"
+        if not db_path.exists():
+            return 0
+        conn = sqlite3.connect(str(db_path), timeout=2.0)
+        cursor = conn.cursor()
+        row = cursor.execute(
+            "SELECT COUNT(*) FROM emails WHERE is_read = 0 AND folder IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS')"
+        ).fetchone()
+        count = int(row[0]) if row and row[0] is not None else 0
+        if count == 0:
+            alt_row = cursor.execute(
+                "SELECT COUNT(*) FROM emails WHERE is_read = 0 AND folder NOT IN ('TRASH', 'trash', 'SPAM', 'spam', 'SENT', 'sent')"
+            ).fetchone()
+            count = int(alt_row[0]) if alt_row and alt_row[0] is not None else 0
+        conn.close()
+        return count
+    except Exception:
+        return 0
+
+def create_pil_tray_icon(unread_count: int) -> Image.Image:
+    tray_img_path = APP_DIR / "img" / "tray-icon.png"
+    if not tray_img_path.exists():
+        tray_img_path = ICON_PATH
+
+    try:
+        base_img = Image.open(str(tray_img_path)).convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
+    except Exception:
+        base_img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+
+    if unread_count == 0:
+        # Estado leído: escala de grises conservando la transparencia alfa
+        r, g, b, a = base_img.split()
+        gray = base_img.convert("L")
+        a_attenuated = a.point(lambda p: int(p * 0.6))
+        return Image.merge("RGBA", (gray, gray, gray, a_attenuated))
+    else:
+        # Estado no leídos: color con indicador circular rojo en la esquina superior derecha
+        from PIL import ImageDraw
+        img = base_img.copy()
+        draw = ImageDraw.Draw(img)
+        # Círculo rojo con borde blanco
+        draw.ellipse([46, 4, 60, 18], fill=(239, 68, 68, 255), outline=(255, 255, 255, 255), width=2)
+        return img
+
 def setup_tray():
     global tray_icon
     try:
@@ -136,22 +183,41 @@ def setup_tray():
         print("pystray no disponible, ejecutando sin system tray")
         return None
 
-    try:
-        pil_img = Image.open(str(ICON_PATH)).resize((64, 64), Image.Resampling.LANCZOS)
-    except Exception as e:
-        print(f"Error cargando icono: {e}")
-        pil_img = Image.new("RGBA", (64, 64), (79, 70, 229, 255))
+    initial_unread = get_unread_count()
+    pil_img = create_pil_tray_icon(initial_unread)
+    initial_title = f"MerkeMail - {initial_unread} sin leer" if initial_unread > 0 else "MerkeMail - Todo al día (0 sin leer)"
+
+    def trigger_tray_sync():
+        def _bg():
+            sync_now()
+            time.sleep(1.0)
+            update_tray_loop_once()
+        threading.Thread(target=_bg, daemon=True).start()
 
     menu = pystray.Menu(
-        pystray.MenuItem("📧 Abrir MerkeMail", lambda icon, item: open_window(), default=True),
-        pystray.MenuItem("✍️ Redactar Correo", lambda icon, item: open_window("#compose")),
-        pystray.MenuItem("🔄 Sincronizar Bandeja", lambda icon, item: threading.Thread(target=sync_now, daemon=True).start()),
-        pystray.MenuItem("⚙️ Ajustes", lambda icon, item: open_window("#settings")),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("🚪 Salir de MerkeMail", lambda icon, item: quit_app(icon, item))
+        pystray.MenuItem("Mostrar la aplicación", lambda icon, item: open_window(), default=True),
+        pystray.MenuItem("Cerrar", lambda icon, item: quit_app(icon, item))
     )
 
-    tray_icon = pystray.Icon("MerkeMail", pil_img, "MerkeMail - Correo Inteligente", menu)
+    tray_icon = pystray.Icon("MerkeMail", pil_img, initial_title, menu)
+
+    def update_tray_loop_once():
+        if not tray_icon:
+            return
+        unread = get_unread_count()
+        tray_icon.icon = create_pil_tray_icon(unread)
+        tray_icon.title = f"MerkeMail - {unread} correo{'s' if unread != 1 else ''} sin leer" if unread > 0 else "MerkeMail - Todo al día (0 sin leer)"
+
+    def tray_updater():
+        while True:
+            time.sleep(10)
+            try:
+                update_tray_loop_once()
+            except Exception:
+                pass
+
+    threading.Thread(target=tray_updater, daemon=True).start()
+
     return tray_icon
 
 def is_tray_enabled() -> bool:

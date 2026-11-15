@@ -2,6 +2,164 @@
 
 ## Estado de Desarrollo Actual
 
+- **Fase 92 - Simplificación Estricta del Menú de la Barra de Tareas y Bandeja del Sistema:**
+  - **Menú Exclusivo de 2 Opciones en Barra de Tareas y Systray:**
+    - Se depuró el archivo `.desktop` de la aplicación (`~/.local/share/applications/merkemail.desktop`), eliminando asociaciones de tipo MIME y categorías genéricas que saturaban el menú contextual de GNOME/Dash to Panel con opciones estándar del sistema.
+    - Se configuraron estrictamente las dos acciones requeridas por el usuario:
+      1. *"Mostrar la aplicación"* (ejecuta `/desktop/launcher.sh --show`)
+      2. *"Cerrar"* (ejecuta `/desktop/launcher.sh --quit`)
+    - Se sincronizó el menú contextual del System Tray en `desktop/app_window.py` y `desktop/tray.py` para contener exactamente las mismas dos opciones (sin separadores ni nombres extensos).
+  - **Sincronización:**
+    - Instalado y actualizado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh` con actualización de la base de datos de escritorio del sistema.
+
+- **Fase 91 - Enlaces de Correo Externos por Entorno y Control Unívoco de Maximizar/Restaurar:**
+  - **Apertura de Enlaces de Correo según Entorno:**
+    - **Modo Instalado y PWA:** Los enlaces de correos (tanto en iframe HTML como en texto plano y cuerpo general) se interceptan y abren en el navegador web predeterminado del sistema operativo (Google Chrome, Firefox, etc.) mediante canal nativo `QDesktopServices.openUrl()`, endpoint `@app.post("/api/desktop/open-url")` y `webbrowser.open()`. Además, `CustomWebEnginePage` intercepta `acceptNavigationRequest` y `createWindow` para asegurar que ningún enlace externo navegue dentro de la ventana de la aplicación.
+    - **Modo Web Navegador:** Los enlaces se abren limpiamente en una pestaña nueva del propio navegador (`window.open(url, '_blank', 'noopener,noreferrer')`).
+  - **Botón de Ampliar / Restaurar (Ejecución Unívoca):**
+    - Se corrigió la causa raíz del efecto rebote (el botón ejecutaba simultáneamente la llamada directa por consola de Qt y a los 10ms un `fetch` HTTP por socket IPC, alternando dos veces consecutivas).
+    - Ahora determina una única acción explícita basada en el estado actual: si está maximizada ejecuta estrictamente `restore` (restaurar a tamaño normal); si no está maximizada ejecuta estrictamente `maximize` (ampliar).
+    - Despacho exclusivo por el canal directo de PyQt6 (sin disparar `fetch` duplicado) y protección con bloqueo `isActionPending` de 350ms para evitar rebotes de eventos de clic.
+  - **Sincronización:**
+    - Desplegado y verificado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+- **Fase 90 - Corrección Integral del System Tray (Transparencia Alfa y Conteo Real de No Leídos):**
+  - **Fondo 100% Transparente en Systray:**
+    - Generado `img/tray-icon.png` nativo desde el SVG vectorial con canal alfa transparente.
+    - Se eliminó la conversión a `Format_Grayscale8` (que destruía el canal alfa sustituyéndolo por negro sólido).
+    - La conversión a escala de grises ahora manipula los canales de color preservando el canal alfa original (`Format_ARGB32` con opacidad suave del 60%).
+  - **Detección Correcta de Correos Sin Leer:**
+    - Corregida la consulta SQL en SQLite que fallaba al consultar columnas inexistentes (`is_trash`/`is_spam`). Ahora filtra correctamente por las categorías activas del Inbox (`folder IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS')`), reflejando con exactitud los 25 correos sin leer mostrados en la interfaz.
+    - El icono del systray se renderiza en su color cian/azul vibrante con el punto circular rojo (`#ef4444`) en la esquina superior derecha y el tooltip *"MerkeMail - 25 correos sin leer"*.
+  - **Sincronización:**
+    - Actualizado y verificado en la app instalada `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+- **Fase 89 - Arrastre Fluido de Ventana por Clic Sostenido, Controles Nativos Directos y Menú de Tablero Exclusivo:**
+  - **Arrastre de Ventana por Clic Sostenido en Header (Zona 1):**
+    - Implementado arrastre nativo de ventana acelerado por hardware a través de `QWindow::startSystemMove()`.
+    - Comunicación instantánea cliente -> PyQt6 mediante canal de eventos de consola interceptados en `CustomWebEnginePage` (`__PYQT_ACTION__:start_drag`), con respaldo por bridge Qt y llamada HTTP IPC.
+    - Detección precisa en JavaScript del espacio libre del `#main-header`: filtra elementos interactivos (`button, input, a, select, textarea, [onclick], #user-header-avatar, #desktop-window-controls, .cursor-pointer`), permitiendo arrastrar cómodamente desde cualquier espacio vacío o el título.
+    - Soporte inteligente para ventana maximizada: si el usuario arrastra la barra mientras la ventana está maximizada, se des-maximiza automáticamente (`showNormal()`) para permitir el movimiento libre entre monitores y escritorios.
+  - **Botones de Control de Ventana 100% Funcionales (Zona 2):**
+    - Canal de despacho directo en `CustomWebEnginePage` en el hilo principal de Qt para `minimize`, `toggle_maximize` y `close`.
+    - Respaldo mediante servidor de sockets UNIX IPC (`/tmp/merkemail_window_ipc.sock`) conectado a los endpoints FastAPI `/api/desktop/window/{action}`.
+    - Sincronización bidireccional automática del estado de maximizado mediante `changeEvent(WindowStateChange)` en Qt llamando a `DesktopBridge.onNativeWindowStateChanged()`, alternando los iconos de maximizar y restaurar en tiempo real.
+    - Prevención de procesos huérfanos: detección y reinicio de Uvicorn si el backend del puerto 6524 está obsoleto al lanzar la aplicación.
+  - **Menú de la Aplicación en el Tablero / Dock:**
+    - Configurado el archivo de escritorio `.desktop` (`~/.local/share/applications/merkemail.desktop`) con acciones dedicadas `Actions=Toggle;Quit;`:
+      1. *"Mostrar / Ocultar MerkeMail"* (`--toggle`)
+      2. *"Cerrar MerkeMail"* (`--quit`)
+    - Garantiza que al hacer clic derecho en el icono del tablero de Ubuntu solo aparezcan las opciones idénticas a las del System Tray.
+  - **Sincronización:**
+    - Despliegue completo y exitoso en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+- **Fase 88 - Instancia Única, Ocultamiento del Dock al Minimizar en Systray y Controles de Ventana:**
+  - **Instancia Única Garantizada (Single Instance):**
+    - Implementado mecanismo nativo con `QLocalSocket` y `QLocalServer` en `desktop/app_window.py`. Si el usuario hace clic nuevamente en el lanzador de Ubuntu, se enfoca y restaura la ventana existente (`window.show_window()`), finalizando de inmediato el segundo proceso (`sys.exit(0)`).
+  - **Ocultamiento del Tablero / Dock:**
+    - Al estar el System Tray activo, la acción de minimizar o cerrar oculta la ventana (`window.hide()`), retirando completamente el icono del tablero/dock de GNOME/Ubuntu. Al pulsar en el icono del systray, se restaura a primer plano.
+  - **Menú Simplificado en Bandeja del Sistema:**
+    - Se redujo el menú contextual de la bandeja y del tablero a únicamente dos opciones:
+      1. *"Mostrar MerkeMail"* / *"Ocultar MerkeMail"* (dinámico según la visibilidad de la ventana).
+      2. *"Cerrar MerkeMail"*.
+  - **Controles de Ventana de Escritorio Integrados en Header:**
+    - Añadidos botones compactos de control nativo (`#desktop-window-controls`) a la derecha del avatar de la cuenta con separación visual sutil:
+      - Minimizar (`_`): oculta al systray sin dejar rastro en el tablero si está activo, o minimiza.
+      - Ampliar / Restaurar (`□`): alterna el estado maximizado con actualización de iconos y soporte de doble clic en cabecera.
+      - Cerrar (`✕`): oculta al systray o finaliza la app según configuración.
+    - Se muestran exclusivamente en modo instalado (`desktop`), ocultándose en modo web y PWA.
+  - **Ocultamiento del Botón de Imprimir en Modo Instalado:**
+    - El botón de impresión en el visor de correo (`#btn-print-email`) se oculta automáticamente en la aplicación instalada de escritorio, manteniéndose visible en modo browser y modo PWA.
+  - **Sincronización:**
+    - Sincronizado e instalado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
+- **Fase 87 - Sincronización Silenciosa Imperceptible e Indicativo Inteligente en Systray:**
+  - **Sincronización en Segundo Plano Sin Interrupciones:**
+    - Correos: `checkAutoSync()` sincroniza de forma asíncrona por intervalos según cuenta, sin borrar la lista ni mostrar bloqueos (`showLoading = false`), refrescando discretamente contadores y nuevos mensajes sin alterar el scroll ni la lectura activa.
+    - Calendarios y Tareas: Implementado `CalendarManager.syncPeriodically()` cada 60s con endpoint `@app.post("/api/calendars/sync")`. Se pausa automáticamente si el usuario tiene la modal de edición o creación abierta para no interrumpir el flujo.
+    - Contactos: `ContactsService.sync_contacts()` se ejecuta en segundo plano (`syncPeriodically()`) manteniendo la libreta actualizada sin alertas invasivas.
+  - **Indicativo Dinámico de Correos Sin Leer en el System Tray:**
+    - **Todo Leído (`unread_count == 0`):** El logo del system tray se atenúa en escala de grises suave (`opacity: 0.55`) y muestra tooltip informativo *"MerkeMail - Todo al día (0 sin leer)"*.
+    - **Con No Leídos (`unread_count > 0`):** El logo se activa a todo color y dibuja un indicador circular rojo (`#ef4444`) con fino borde blanco de 2px en la esquina superior derecha, con tooltip *"MerkeMail - N correos sin leer"*.
+    - Implementado con `QPainter` en `desktop/app_window.py` (PyQt6) y con `PIL` en `desktop/tray.py` (fallback pystray), actualizándose de forma ligera y continua cada 10s consultando directamente la base de datos local SQLite.
+  - **Independencia Total y Sincronización:**
+    - Verificada la autonomía absoluta de la app instalada en `~/.local/share/merkemail` (puerto 6524).
+    - Despliegue sincronizado con `./scripts/install_desktop.sh`.
+
+- **Fase 86 - Tooltips Globales con Bordes Redondeados Suaves para todos los Botones:**
+  - **Componente Global de Tooltips (`#app-global-tooltip` & `UI.initAppTooltips`):**
+    - Implementado un sistema universal de tooltips flotantes para toda la aplicación que reemplaza el tooltip tosco y angular por defecto del sistema operativo/navegador.
+    - Suprime y absorbe dinámicamente el atributo `title` de botones y enlaces a `data-app-tooltip`, evitando que el navegador renderice recuadros cuadrados nativos.
+    - **Diseño visual pulido:** Bordes redondeados suaves (`rounded-xl` / `10px`), fondo oscuro traslúcido (`bg-slate-900/94` y `bg-slate-800/96`), borde sutil (`border-slate-700/50`), sombreado multicapa y desenfoque de fondo (`backdrop-blur-md`).
+    - **Posicionamiento inteligente:** Cálculo dinámico de posición horizontal y vertical centrado sobre el botón o debajo de él según el espacio disponible en pantalla, con límites de seguridad para no desbordar la ventana.
+    - Cierre instantáneo ante clics, pulsaciones de teclado o desplazamiento, y retardo cómodo de 180ms al pasar el ratón.
+
+- **Fase 85 - Formulario de Evento/Cita Básico vs Ampliado y Optimización de Espacios:**
+  - **Estructura Compacta Estándar (Versión Básica):**
+    - Rediseño de `#new-event-modal` enfocado en lo esencial: Tipo (Evento/Cita vs Tarea), Título, Horario y Fecha (con toggle "Todo el día"), Videollamada Google Meet rápida, Calendario Destino y Selector de Color.
+    - Paddings y espaciados optimizados (`p-2.5` - `p-3`, `max-w-lg`) para permitir completar citas rápidamente sin scroll forzado en pantallas estándar.
+    - **Eliminación de Texto Redundante:** Removido el indicador superfluo `Predeterminado: Google Calendar (correo...)` que se montaba sobre la etiqueta "Calendario Destino", dejando el selector limpio y perfectamente alineado.
+  - **Sección Ampliada Colapsable (`#event-advanced-section`):**
+    - Botón interactivo `Más opciones ▾` / `Menos opciones ▴` en el pie del modal con auto-scroll suave hacia los campos adicionales.
+    - Manejo robusto de estado con verificación de tipo booleano para prevenir interferencias con eventos `MouseEvent`.
+    - Versionado anti-caché en scripts (`?v=87`) para asegurar la actualización inmediata en el cliente.
+    - Agrupa de forma ordenada: Repetición/Recurrencia, Ubicación Física o Sala, Invitados/Asistentes con chips, Notificación/Recordatorio, Disponibilidad, Visibilidad y Notas/Descripción.
+    - **Inteligencia en Edición:** Al abrir para editar un evento existente con campos avanzados (ubicación, invitados, notas, recurrencia), el modal se auto-expande para no ocultar datos existentes.
+  - **Verificación de Independencia del Entorno de Escritorio:**
+    - Verificado que la aplicación instalada en `~/.local/share/merkemail` cuenta con su propio entorno virtual (`.venv`), base de datos SQLite y puerto exclusivo (`6524`).
+    - Al cerrar el servidor de desarrollo (`127.0.0.1:8000`), el cliente de escritorio opera de forma autónoma gestionando su propio ciclo de vida y backend sin dependencias del modo desarrollo.
+    - Sincronización exitosa con `./scripts/install_desktop.sh`.
+
+- **Fase 84 - Filtrado Dinámico y Reactivo por Cuenta en Calendario, Eventos y Tareas:**
+  - **Control de Visibilidad Reactivo (`CalendarManager.toggleCalendar`):**
+    - Se implementó la lógica de activación/desactivación reactiva de cuentas y calendarios (`activeCalendarIds: Set<number>`).
+    - Al marcar o desmarcar una cuenta en la cabecera del calendario, se actualizan al instante:
+      1. La vista activa del calendario (Mes, Semana o Día).
+      2. La lista de próximos eventos (`#upcoming-events-list`).
+      3. La lista lateral de tareas sin fecha (`#calendar-tasks-list`) y su contador de pendientes (`#calendar-tasks-count`).
+      4. El modal de desbordamiento diario (`#modal-day-events`).
+    - Las etiquetas de cuentas no seleccionadas se atenúan visualmente (`opacity-40`) manteniendo interacción clara.
+    - Persistencia de selección en `localStorage` (`merke_active_calendar_ids`) para conservar el filtro entre recargas o cambios de sección.
+  - **Sincronización:**
+    - Sincronizado el entorno de escritorio independiente con `./scripts/install_desktop.sh`.
+    - Verificación sintáctica limpia con `node -c frontend/js/*.js`.
+
+- **Fase 83 - Rediseño Integral de Vistas de Calendario (Mes, Semana, Día) y Limpieza de Sidebar:**
+  - **Eliminación del Badge de Calendario en Sidebar:**
+    - Removido el indicativo `G+P` del elemento de navegación lateral "Calendario" para una estética limpia y uniforme en el menú.
+  - **Rediseño de Vista Semanal (`renderWeekView`):**
+    - Corregida la compresión vertical de la cabecera: separación vertical de nombre del día y número de fecha con contenedor espacioso (`py-3`), chips redondeados (`w-7 h-7 sm:w-8 sm:h-8 rounded-xl`) y distintivo con aura índigo para el día actual.
+    - Columna horaria ampliada (`w-16 sm:w-20`) con tipografía monospace nítida y alineación vertical precisa con las líneas divisorias.
+    - Celdas horarias ampliadas (`min-h-[64px] sm:min-h-[70px]`) con diferenciación sutil para fines de semana, horas laborables y hover intuitivo.
+    - Tarjetas de eventos enriquecidas con píldoras de hora, títulos legibles, bordes de acento e indicativo de color de la cuenta asociada.
+  - **Rediseño de Vista Mensual (`renderMonthView`):**
+    - Celdas con altura incrementada (`min-h-[105px] sm:min-h-[115px]`), bordes limpios y distinción cromática entre días laborales y fines de semana tanto en modo claro como en modo oscuro.
+    - Días del día actual destacados con badge circular índigo y sombreado suave.
+    - Píldoras de eventos con tipografía mejorada y botón `+N más` integrado.
+  - **Rediseño de Vista Diaria (`renderDayView`):**
+    - Cabecera en formato tarjeta con badge de fecha prominente, día de la semana y contador de compromisos.
+    - Tarjetas de eventos detalladas con rango de horas (`00:00 - 00:00`), calendario, cuenta y ubicación física.
+  - **Sincronización:**
+    - Sincronizado el paquete de escritorio con `./scripts/install_desktop.sh`.
+    - Verificación sintáctica limpia con `node -c frontend/js/*.js`.
+
+- **Fase 82 - Modales con Scrollbar al Extremo Derecho y Optimización de Espacio en Calendario:**
+  - **Filtros de Calendario Compactos (`#calendar-sources-list`):**
+    - Se simplificó la etiqueta de cada fuente de calendario para mostrar únicamente el nombre de la cuenta y el indicativo de color (`c.account_name || c.name`), eliminando textos extensos redundantes ("Google Calendar (correo@...)").
+    - Se conservó la información completa en el atributo `title` para consulta al pasar el cursor (tooltip).
+    - Se compactó igualmente el subtítulo de cuenta en la lista de tareas pendientes.
+  - **Alineación del Scrollbar en Modales (`#new-event-modal` y `#modal-day-events`):**
+    - Se eliminó el padding global en el contenedor principal (`modal-content`), asignando `overflow-hidden` a la tarjeta para que el contenedor scrollable interno abarque el 100% del ancho.
+    - La barra de scroll vertical se ubica ahora pegada al extremo derecho de la ventana modal, eliminando el espacio en blanco de 24px que quedaba entre el scrollbar y el borde.
+    - El padding horizontal (`px-5 sm:px-6`) y vertical se reubicó en el contenedor scrollable interno, manteniendo los márgenes confortables de los inputs y campos sin que estos colisionen con el scrollbar.
+    - Cabecera y barra de acciones inferior (botones Cancelar / Guardar Cita) fijadas de forma limpia con bordes separadores sutiles, permitiendo acceder a los botones de acción sin necesidad de desplazarse hasta el final.
+  - **Identidad de Asistente Unificada y Avatar de Usuario en Chat:**
+    - Reemplazo y unificación completa de la marca a **Elio (@elio)** en la interfaz de MerkeMail (respetando al proveedor técnico de IA Gemini en la configuración de backend/API).
+    - Inclusión dinámica del avatar del usuario (foto o inicial con degradado) en los mensajes salientes de la conversación de chat con Elio.
+  - **Sincronización:**
+    - Sincronizado el paquete de escritorio mediante `./scripts/install_desktop.sh`.
+    - Verificación sintáctica limpia con `node -c frontend/js/*.js`.
+
 - **Fase 81 - Modal de Información Completa de Contactos, Edición, Eliminación y Sincronización Protegida:**
   - **Modal Completa de Contacto (`modal-contact-detail`):**
     - Al hacer clic en cualquier contacto de la lista o en el botón de ver detalle `[ 👁️ ]`, se despliega una modal enriquecida con avatar en degradado, nombre, correo, teléfono (con copiado en un clic), empresa/organización, cargo/puesto, dirección, notas, cuenta asociada y métricas de intercambios/última fecha.
@@ -668,3 +826,26 @@
 
 ## Última Actualización: Licencia BSL 1.1
 - Se configuró la Business Source License 1.1 (BSL 1.1) en el archivo LICENSE y README.md.
+
+## Última Actualización: Simplificación del Header Superior
+- Removidos los botones redundantes del header superior derecho:
+  1. Libreta de Contactos (`ContactsManager.openDrawer()`)
+  2. Perfil de Usuario (`UserProfileAI.openDrawer()`)
+- Ambas opciones se mantienen accesibles desde el menú lateral izquierdo (sidebar): "Contactos" y "Perfil del Usuario".
+- Sincronizados cambios con la app instalada en el sistema mediante `./scripts/install_desktop.sh`.
+
+## Última Actualización: Optimización Integral de Vista Previa e Impresión de Correos
+- Encabezado ultra-compacto: título en negrita reducido a `13.5px` y metadatos (De, Para, Fecha) organizados en línea horizontal flexible (`10.5px`) con borde divisorio sutil de 1px.
+- La cabecera completa ahora ocupa menos de 30px verticales en lugar de los 140px anteriores, permitiendo que el contenido del correo inicie de inmediato.
+- Márgenes de página optimizados a `0.6cm 0.8cm`.
+- Desempaquetado para impresión de contenedores y columnas responsivas (Klaviyo `.kl-row`, `.kl-column`, `.colstack`, MJML `.mj-column-per-100` y estilos `display: table-cell`), forzándolos a `display: block !important; width: 100% !important;` en modo impresión para evitar que bloqueen el salto de página y dejen cajas grises o huecos en blanco vacíos en la primera página.
+
+## Última Actualización: Optimización de Botón Invocador de Elio en Buscador
+- Se rediseñó el chip de acción rápida al escribir `@elio` en la barra de búsqueda principal.
+- Ahora muestra el avatar de Elio acompañado de `( ? )` en una sola línea compacta (`whitespace-nowrap flex items-center`).
+- Se eliminó el salto de línea y el texto largo previo ("Preguntar a Elio ↵"), evitando que ocupe espacio excesivo en el campo de búsqueda.
+
+## Última Actualización: Avatar de Cuenta Predeterminada en Mensajes de Chat
+- En el panel de chat con Elio (`AntigravityCopilot`), los mensajes enviados por el usuario ahora muestran el avatar de su cuenta predeterminada a la derecha de la burbuja (con fallback automático a inicial y color de la cuenta).
+- El avatar del usuario mantiene la misma proporción y alineación (`w-6 h-6 rounded-full`) que el avatar de Elio en las respuestas.
+- Sincronizado con la aplicación de escritorio (`./scripts/install_desktop.sh`).

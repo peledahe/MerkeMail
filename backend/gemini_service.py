@@ -24,7 +24,7 @@ class GeminiService:
         if not api_key:
             gemini_enabled = get_setting("gemini_enabled", "true").strip().lower() in ("true", "1", "yes")
             if not gemini_enabled:
-                raise ValueError("El servicio de IA con Gemini está desactivado en los Ajustes.")
+                raise ValueError("El servicio de IA de Elio (@elio) está desactivado en los Ajustes.")
         key = api_key or get_setting("gemini_api_key") or os.getenv("GEMINI_API_KEY")
         if not key:
             raise ValueError("No se ha configurado la API Key de Gemini. Ingrésala en Ajustes.")

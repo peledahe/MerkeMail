@@ -105,7 +105,10 @@ function setupEventListeners() {
             // Limpiar buscador y estado visual
             input.value = '';
             if (clearSearchBtn) clearSearchBtn.classList.add('hidden');
-            if (btnSubmitToElio) btnSubmitToElio.classList.add('hidden');
+            if (btnSubmitToElio) {
+                btnSubmitToElio.classList.add('hidden');
+                btnSubmitToElio.classList.remove('flex');
+            }
 
             // Si la bandeja estaba filtrada por búsqueda anterior, restaurarla inmediatamente
             if (window.EmailManager && EmailManager.searchQuery) {
@@ -157,7 +160,10 @@ function setupEventListeners() {
             // Si el texto incluye @elio, es una entrada para el asistente Elio (NO una búsqueda de correos)
             if (lowerVal.includes('@elio')) {
                 clearTimeout(debounceTimer);
-                if (btnSubmitToElio) btnSubmitToElio.classList.remove('hidden');
+                if (btnSubmitToElio) {
+                    btnSubmitToElio.classList.remove('hidden');
+                    btnSubmitToElio.classList.add('flex');
+                }
 
                 // Si por tipeo rápido previo se había seteado una búsqueda, restaurar la bandeja
                 if (window.EmailManager && EmailManager.searchQuery) {
@@ -168,7 +174,10 @@ function setupEventListeners() {
                 }
                 return;
             } else {
-                if (btnSubmitToElio) btnSubmitToElio.classList.add('hidden');
+                if (btnSubmitToElio) {
+                    btnSubmitToElio.classList.add('hidden');
+                    btnSubmitToElio.classList.remove('flex');
+                }
             }
 
             // Si empieza con @ pero aún no completa @elio, no filtrar la bandeja todavía

@@ -512,6 +512,7 @@ const EmailManager = {
         }
         if (elioBtn) {
             elioBtn.classList.add('hidden');
+            elioBtn.classList.remove('flex');
         }
         this.searchQuery = '';
         if (this.advancedFilters && this.advancedFilters.keyword) {
@@ -548,7 +549,10 @@ const EmailManager = {
         const elioBtn = document.getElementById('btn-submit-to-elio');
         if (mainInput) mainInput.value = '';
         if (clearBtn) clearBtn.classList.add('hidden');
-        if (elioBtn) elioBtn.classList.add('hidden');
+        if (elioBtn) {
+            elioBtn.classList.add('hidden');
+            elioBtn.classList.remove('flex');
+        }
         this.resetAdvancedSearchForm();
         this.updateActiveFiltersBanner();
     },
@@ -1750,18 +1754,18 @@ const EmailManager = {
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6"/></svg>
                             </button>
 
-                            <!-- 9. Responder con IA (Gemini) -->
-                            <button id="btn-top-reply-ai" onclick="EmailManager.replyWithAI(${email.id})" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-purple-600 dark:text-purple-300 hover:text-white bg-purple-50 dark:bg-purple-950/40 hover:bg-gradient-to-r hover:from-indigo-600 hover:to-pink-600 rounded-lg border border-purple-200 dark:border-purple-800/60 transition-all shadow-2xs group btn-reply-ai-feature cursor-pointer" title="Responder con IA (Gemini)">
+                            <!-- 9. Responder con IA (Elio) -->
+                            <button id="btn-top-reply-ai" onclick="EmailManager.replyWithAI(${email.id})" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-purple-600 dark:text-purple-300 hover:text-white bg-purple-50 dark:bg-purple-950/40 hover:bg-gradient-to-r hover:from-indigo-600 hover:to-pink-600 rounded-lg border border-purple-200 dark:border-purple-800/60 transition-all shadow-2xs group btn-reply-ai-feature cursor-pointer" title="Responder con Elio (@elio)">
                                 <svg class="w-4 h-4 text-purple-600 dark:text-purple-400 group-hover:text-amber-300 animate-spin-slow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                             </button>
 
                             <!-- 10. Agendar Cita IA -->
-                            <button id="btn-top-schedule-ai" onclick="EmailManager.scheduleFromEmail(${email.id})" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded-lg border border-emerald-200 dark:border-emerald-800/60 transition-colors shadow-2xs btn-schedule-ai-feature cursor-pointer" title="Agendar en Calendario con IA">
+                            <button id="btn-top-schedule-ai" onclick="EmailManager.scheduleFromEmail(${email.id})" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded-lg border border-emerald-200 dark:border-emerald-800/60 transition-colors shadow-2xs btn-schedule-ai-feature cursor-pointer" title="Agendar en Calendario con Elio (@elio)">
                                 <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                             </button>
 
-                            <!-- 11. Imprimir -->
-                            <button onclick="EmailManager.printCurrentEmail()" class="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Imprimir correo">
+                            <!-- 11. Imprimir (solo visible en modo browser y PWA, oculto en modo instalado/desktop) -->
+                            <button id="btn-print-email" onclick="EmailManager.printCurrentEmail()" class="${(window.DesktopBridge && window.DesktopBridge.isDesktop) ? 'hidden' : ''} p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Imprimir correo">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
                             </button>
                         </div>
@@ -1803,11 +1807,11 @@ const EmailManager = {
                         </div>
                     </div>
 
-                    <!-- Resumen Ejecutivo Gemini (TL;DR) -->
+                    <!-- Resumen Ejecutivo Elio (@elio) (TL;DR) -->
                     <div id="ai-summary-box-${email.id}" class="${email.ai_summary ? '' : 'hidden'} mx-4 md:mx-8 mt-4 p-3.5 rounded-xl bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/50 min-w-0">
                         <div class="flex items-center gap-2 mb-1.5 min-w-0">
                             <svg class="w-4 h-4 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                            <span class="text-xs font-bold text-indigo-700 dark:text-indigo-300">Resumen Inteligente Gemini</span>
+                            <span class="text-xs font-bold text-indigo-700 dark:text-indigo-300">Resumen Inteligente Elio (@elio)</span>
                             ${email.ai_urgency ? `<span class="ml-auto text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full shrink-0 ${email.ai_urgency === 'alta' ? 'bg-rose-500/20 text-rose-400' : 'bg-amber-500/20 text-amber-400'}">Urgencia: ${email.ai_urgency}</span>` : ''}
                         </div>
                         <p class="text-xs text-slate-700 dark:text-slate-300 leading-relaxed break-words" id="ai-summary-text-${email.id}">
@@ -2047,8 +2051,8 @@ const EmailManager = {
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
                                     </button>
 
-                                    <!-- Botón Responder con IA (Gemini) -->
-                                    <button type="button" id="btn-inline-reply-ai" onclick="InlineReply.replyWithAI(${email.id})" class="${(window.GeminiAI && GeminiAI.isAiActive) ? 'flex' : 'hidden'} items-center gap-1.5 px-3 py-2 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800/60 text-purple-700 dark:text-purple-300 font-semibold text-xs rounded-xl transition-all cursor-pointer btn-reply-ai-feature" title="Generar borrador inteligente con IA">
+                                    <!-- Botón Responder con IA (Elio) -->
+                                    <button type="button" id="btn-inline-reply-ai" onclick="InlineReply.replyWithAI(${email.id})" class="${(window.GeminiAI && GeminiAI.isAiActive) ? 'flex' : 'hidden'} items-center gap-1.5 px-3 py-2 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800/60 text-purple-700 dark:text-purple-300 font-semibold text-xs rounded-xl transition-all cursor-pointer btn-reply-ai-feature" title="Generar borrador inteligente con Elio (@elio)">
                                         <svg class="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                                         <span>+ Responder con IA</span>
                                     </button>
@@ -2221,6 +2225,24 @@ const EmailManager = {
         setTimeout(checkPlacement, 80);
 
         const detailContainer = document.getElementById('email-detail-container');
+        if (detailContainer && !detailContainer._emailLinkHandlerAttached) {
+            detailContainer._emailLinkHandlerAttached = true;
+            detailContainer.addEventListener('click', (e) => {
+                const link = e.target.closest('a');
+                if (!link || !link.href) return;
+                // Excluir acciones internas de descarga de adjuntos o botones interactivos
+                if (link.hasAttribute('download') || link.hasAttribute('onclick')) return;
+                const href = link.href;
+                if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('mailto:')) {
+                    if (!href.includes('/api/attachments/')) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        EmailManager.openEmailLink(href);
+                    }
+                }
+            });
+        }
+
         if (window.ResizeObserver && detailContainer) {
             if (this._detailResizeObserver) {
                 this._detailResizeObserver.disconnect();
@@ -2339,6 +2361,23 @@ const EmailManager = {
             doc.write(frameDoc);
             doc.close();
 
+            // Interceptar todos los clics en enlaces del correo para abrirlos según el entorno
+            // (Navegador predeterminado en modo instalado y PWA; pestaña nueva en modo web navegador)
+            doc.addEventListener('click', (e) => {
+                const link = e.target.closest('a');
+                if (!link || !link.href) return;
+                const href = link.href;
+
+                // Permitir enlaces ancla internos (#...)
+                if (href.startsWith('#') || href.startsWith(window.location.origin + '/#') || href.startsWith(window.location.href + '#')) {
+                    return;
+                }
+
+                e.preventDefault();
+                e.stopPropagation();
+                EmailManager.openEmailLink(href);
+            }, true);
+
             const adjustHeight = () => {
                 try {
                     const wrapper = doc.getElementById('merke-email-content');
@@ -2422,6 +2461,39 @@ const EmailManager = {
         } catch (e) {
             console.error("Error montando iframe aislado de correo:", e);
         }
+    },
+
+    openEmailLink(url) {
+        if (!url) return;
+        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop) || (window.location.port === '6524');
+        const isPwa = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+        if (isDesktop) {
+            // 1. Modo Instalado de Escritorio: abrir directamente en el navegador por defecto del sistema
+            if (window.DesktopBridge && window.DesktopBridge.openExternalUrl) {
+                window.DesktopBridge.openExternalUrl(url);
+                return;
+            }
+        }
+
+        if (isPwa) {
+            // 2. Modo PWA: abrir en el navegador predeterminado del sistema operativo
+            fetch('/api/desktop/open-url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            }).then(r => r.json()).then(data => {
+                if (!data.success) {
+                    window.open(url, '_blank', 'noopener,noreferrer');
+                }
+            }).catch(() => {
+                window.open(url, '_blank', 'noopener,noreferrer');
+            });
+            return;
+        }
+
+        // 3. Modo Web (Navegador): abrir en pestaña nueva
+        window.open(url, '_blank', 'noopener,noreferrer');
     },
 
     cancelReadTimer() {
@@ -2804,7 +2876,7 @@ const EmailManager = {
             return InlineReply.replyWithAI(emailId);
         }
 
-        UI.showStickyToast('Gemini IA', 'Generando borrador de respuesta inteligente...', 'info', 2500);
+        UI.showStickyToast('Elio (@elio)', 'Generando borrador de respuesta inteligente...', 'info', 2500);
         try {
             const res = await fetch(`/api/gemini/smart-reply/${emailId}`);
             const data = await res.json();
@@ -2824,9 +2896,9 @@ const EmailManager = {
                     const bodyInput = document.getElementById('compose-body');
                     if (bodyInput) bodyInput.value = data.draft_reply + '\n\n' + bodyInput.value;
                 }
-                UI.showStickyToast('Borrador Listo', 'Gemini redactó una propuesta de respuesta', 'success');
+                UI.showStickyToast('Borrador Listo', 'Elio (@elio) redactó una propuesta de respuesta', 'success');
             } else {
-                UI.showStickyToast('Redactor Listo', 'Escribe tu respuesta asistido por Gemini', 'info');
+                UI.showStickyToast('Redactor Listo', 'Escribe tu respuesta asistido por Elio (@elio)', 'info');
             }
         } catch (e) {
             console.error(e);
@@ -3374,7 +3446,7 @@ const EmailManager = {
     <title>${this.escapeHtml(email.subject || 'Correo')}</title>
     <style>
         @page {
-            margin: 1.8cm 1.5cm;
+            margin: 0.6cm 0.8cm;
             size: auto;
         }
         *, *:before, *:after {
@@ -3388,59 +3460,85 @@ const EmailManager = {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
-            font-size: 13px;
-            line-height: 1.5;
+            font-size: 12px;
+            line-height: 1.4;
         }
         .print-header {
-            border-bottom: 2px solid #cbd5e1;
-            padding-bottom: 14px;
-            margin-bottom: 22px;
+            border-bottom: 1px solid #cbd5e1;
+            padding-bottom: 4px;
+            margin-bottom: 8px;
         }
         .print-subject {
-            font-size: 20px;
+            font-size: 13.5px;
             font-weight: 700;
             color: #0f172a;
-            margin: 0 0 12px 0;
+            margin: 0 0 3px 0;
+            line-height: 1.25;
+            word-break: break-word;
+        }
+        .print-meta-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2px 14px;
+            font-size: 10.5px;
+            color: #475569;
             line-height: 1.3;
         }
-        .print-meta-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 12px;
-            color: #334155;
-        }
-        .print-meta-table td {
-            padding: 3px 0;
-            vertical-align: top;
-        }
-        .print-meta-label {
-            width: 70px;
-            font-weight: 600;
-            color: #64748b;
-        }
-        .print-meta-value {
+        .print-meta-item strong {
             color: #0f172a;
         }
         .print-body {
-            font-size: 14px;
-            line-height: 1.6;
+            font-size: 13px;
+            line-height: 1.45;
             color: #1e293b;
+            width: 100% !important;
+            max-width: 100% !important;
         }
         .print-body img {
             max-width: 100% !important;
             height: auto !important;
+            max-height: 25cm !important;
+            object-fit: contain;
         }
         .print-body table {
             max-width: 100% !important;
+            break-inside: auto;
+            page-break-inside: auto;
+        }
+        .print-body figure {
+            break-inside: auto;
+            page-break-inside: auto;
+        }
+        .print-body h1, .print-body h2, .print-body h3, .print-body h4 {
+            break-after: avoid;
+            page-break-after: avoid;
+        }
+        /* Permitir flujo continuo y evitar que contenedores responsivos (Klaviyo, MJML, etc.) bloqueen saltos de página */
+        .print-body .kl-row,
+        .print-body .kl-column,
+        .print-body .colstack,
+        .print-body [style*="display:table"],
+        .print-body [style*="display: table"],
+        .print-body [style*="display:table-cell"],
+        .print-body [style*="display: table-cell"],
+        .print-body [style*="inline-block"][style*="width: 100%"],
+        .print-body [style*="inline-block"][style*="width:100%"],
+        .print-body .mj-column-per-100 {
+            display: block !important;
+            width: 100% !important;
+            break-inside: auto !important;
+            page-break-inside: auto !important;
         }
         .print-footer {
-            margin-top: 36px;
-            padding-top: 10px;
+            margin-top: 12px;
+            padding-top: 6px;
             border-top: 1px solid #e2e8f0;
-            font-size: 10px;
+            font-size: 9.5px;
             color: #94a3b8;
             display: flex;
             justify-content: space-between;
+            break-inside: avoid;
+            page-break-inside: avoid;
         }
         @media print {
             body {
@@ -3450,26 +3548,20 @@ const EmailManager = {
                 color: #2563eb !important;
                 text-decoration: underline;
             }
+            .no-print, [aria-hidden="true"] {
+                display: none !important;
+            }
         }
     </style>
 </head>
 <body>
     <div class="print-header">
-        <h1 class="print-subject">${this.escapeHtml(email.subject || '(Sin Asunto)')}</h1>
-        <table class="print-meta-table">
-            <tr>
-                <td class="print-meta-label">De:</td>
-                <td class="print-meta-value"><strong>${this.escapeHtml(email.sender)}</strong></td>
-            </tr>
-            <tr>
-                <td class="print-meta-label">Para:</td>
-                <td class="print-meta-value">${this.escapeHtml(email.recipient || '')}</td>
-            </tr>
-            <tr>
-                <td class="print-meta-label">Fecha:</td>
-                <td class="print-meta-value">${dateFormatted}</td>
-            </tr>
-        </table>
+        <div class="print-subject">${this.escapeHtml(email.subject || '(Sin Asunto)')}</div>
+        <div class="print-meta-grid">
+            <div class="print-meta-item"><strong>De:</strong> ${this.escapeHtml(email.sender)}</div>
+            <div class="print-meta-item"><strong>Para:</strong> ${this.escapeHtml(email.recipient || '')}</div>
+            <div class="print-meta-item"><strong>Fecha:</strong> ${dateFormatted}</div>
+        </div>
     </div>
 
     <div class="print-body">
@@ -3499,14 +3591,40 @@ const EmailManager = {
         frameDoc.write(printDoc);
         frameDoc.close();
 
-        // Esperar a que cargue y lanzar la impresión
-        setTimeout(() => {
-            iframe.contentWindow.focus();
-            iframe.contentWindow.print();
+        // Control de impresión asegurando que las imágenes remotas terminen de renderizar sus dimensiones
+        let printed = false;
+        const doPrint = () => {
+            if (printed) return;
+            printed = true;
+            try {
+                iframe.contentWindow.focus();
+                iframe.contentWindow.print();
+            } catch (e) {
+                console.warn('Error al invocar impresión:', e);
+            }
             setTimeout(() => {
                 iframe.remove();
-            }, 2500);
-        }, 350);
+            }, 3000);
+        };
+
+        const imgs = Array.from(frameDoc.images || []);
+        const pendingImgs = imgs.filter(img => !img.complete);
+
+        if (pendingImgs.length === 0) {
+            setTimeout(doPrint, 200);
+        } else {
+            let remaining = pendingImgs.length;
+            const onImgDone = () => {
+                remaining--;
+                if (remaining <= 0) doPrint();
+            };
+            pendingImgs.forEach(img => {
+                img.addEventListener('load', onImgDone, { once: true });
+                img.addEventListener('error', onImgDone, { once: true });
+            });
+            // Timeout de seguridad máximo de 800ms para no demorar al usuario si alguna imagen falla o tarda
+            setTimeout(doPrint, 800);
+        }
     },
 
     cleanSnippet(raw) {

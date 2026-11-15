@@ -23,7 +23,7 @@ const GeminiAI = {
         if (statusDot) {
             if (isAiActive) {
                 statusDot.className = 'w-2 h-2 rounded-full bg-emerald-500 absolute top-1 right-1 ring-2 ring-white dark:ring-slate-900';
-                statusDot.title = 'Servicio de IA Gemini activo';
+                statusDot.title = 'Servicio de IA activo - Elio (@elio)';
             } else {
                 statusDot.className = 'w-2 h-2 rounded-full bg-rose-500 absolute top-1 right-1 ring-2 ring-white dark:ring-slate-900';
                 statusDot.title = !this.hasGeminiKey ? 'API Key de Gemini no configurada' : (!this.geminiEnabled ? 'Servicio de IA desactivado' : 'Sin conexión con la IA');
@@ -467,12 +467,12 @@ const GeminiAI = {
 
         UI.closeDrawer('drawer-ai-prompt');
         composeModal.classList.remove('hidden');
-        UI.showStickyToast('Borrador Aplicado', 'El contenido de Gemini se cargó en el editor', 'info');
+        UI.showStickyToast('Borrador Aplicado', 'El contenido de Elio (@elio) se cargó en el editor', 'info');
     },
 
     // Resumir Correo Individual
     async summarizeCurrentEmail(emailId) {
-        UI.showStickyToast('Analizando', 'Gemini está generando el resumen ejecutivo...', 'info', 2000);
+        UI.showStickyToast('Analizando', 'Elio (@elio) está generando el resumen ejecutivo...', 'info', 2000);
         try {
             const res = await fetch(`/api/ai/summarize/${emailId}`, { method: 'POST' });
             const data = await res.json();
@@ -483,7 +483,7 @@ const GeminiAI = {
                     text.textContent = data.data.summary;
                     box.classList.remove('hidden');
                 }
-                UI.showStickyToast('Resumen Listo', 'Resumen ejecutivo de Gemini completado', 'success');
+                UI.showStickyToast('Resumen Listo', 'Resumen ejecutivo de Elio (@elio) completado', 'success');
             }
         } catch (e) {
             UI.showStickyToast('Error', e.message, 'error');

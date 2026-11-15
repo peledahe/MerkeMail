@@ -329,17 +329,23 @@ def get_available_models(data: Dict[str, str] = Body(...)):
 # --- ENDPOINTS DE APLICACIÓN DE ESCRITORIO (LINUX / UBUNTU) ---
 _desktop_window_callbacks = {
     "minimize": None,
+    "maximize": None,
+    "restore": None,
     "toggle_maximize": None,
     "close": None,
+    "show": None,
     "is_maximized": lambda: False
 }
 
-def register_desktop_window_callbacks(minimize=None, toggle_maximize=None, close=None, is_maximized=None):
+def register_desktop_window_callbacks(minimize=None, maximize=None, restore=None, toggle_maximize=None, close=None, is_maximized=None, show=None):
     global _desktop_window_callbacks
     if minimize: _desktop_window_callbacks["minimize"] = minimize
+    if maximize: _desktop_window_callbacks["maximize"] = maximize
+    if restore: _desktop_window_callbacks["restore"] = restore
     if toggle_maximize: _desktop_window_callbacks["toggle_maximize"] = toggle_maximize
     if close: _desktop_window_callbacks["close"] = close
     if is_maximized: _desktop_window_callbacks["is_maximized"] = is_maximized
+    if show: _desktop_window_callbacks["show"] = show
 
 @app.post("/api/desktop/window/{action}")
 def window_action(action: str):
@@ -350,7 +356,31 @@ def window_action(action: str):
             return {"success": True, "action": action, "result": res}
         except Exception as e:
             return {"success": False, "error": str(e)}
-    return {"success": False, "error": f"Controlador de ventana no registrado para '{action}'"}
+
+    # Si corre en subproceso Uvicorn separado, comunicar vía socket IPC con la ventana nativa
+    try:
+        import socket
+        ipc_path = "/tmp/merkemail_window_ipc.sock"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(2.0)
+            client.connect(ipc_path)
+            client.sendall(f"{action}\n".encode("utf-8"))
+            resp = client.recv(1024).decode("utf-8").strip()
+            return {"success": True, "action": action, "result": resp}
+    except Exception as e:
+        return {"success": False, "error": f"Controlador de ventana no alcanzable: {e}"}
+
+@app.post("/api/desktop/open-url")
+def desktop_open_url(data: dict = Body(...)):
+    url = data.get("url", "").strip()
+    if url and (url.startswith("http://") or url.startswith("https://") or url.startswith("mailto:")):
+        import webbrowser
+        try:
+            webbrowser.open(url)
+            return {"success": True, "opened": url}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    return {"success": False, "error": "URL no válida"}
 
 @app.get("/api/desktop/window/state")
 def window_state():
@@ -361,8 +391,23 @@ def window_state():
             is_max = cb()
         except Exception:
             pass
-    has_handler = bool(_desktop_window_callbacks.get("close"))
-    return {"is_maximized": bool(is_max), "has_handler": has_handler}
+        return {"is_maximized": bool(is_max), "has_handler": True}
+
+    # Intentar consultar vía socket IPC
+    try:
+        import socket
+        ipc_path = "/tmp/merkemail_window_ipc.sock"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(1.0)
+            client.connect(ipc_path)
+            client.sendall(b"is_maximized\n")
+            resp = client.recv(1024).decode("utf-8").strip()
+            is_max = (resp == "true" or resp == "1")
+            return {"is_maximized": is_max, "has_handler": True}
+    except Exception:
+        pass
+
+    return {"is_maximized": False, "has_handler": False}
 
 @app.get("/api/desktop/settings")
 def get_desktop_settings():
@@ -1609,6 +1654,14 @@ def cleanup_preview(req: AICleanupRequest):
 @app.get("/api/calendars")
 def get_calendars():
     return CalendarService.get_calendars()
+
+@app.post("/api/calendars/sync")
+def sync_calendars():
+    try:
+        CalendarService.sync_account_calendars()
+        return {"success": True, "message": "Calendarios sincronizados"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 @app.get("/api/events")
 def get_events(start_date: Optional[str] = None, end_date: Optional[str] = None):

@@ -83,22 +83,19 @@ Type=Application
 Name=MerkeMail
 GenericName=Cliente de Correo
 Comment=Cliente de Correo Inteligente con IA Gemini
-Exec=$INSTALL_DIR/desktop/launcher.sh %u
+Exec=$INSTALL_DIR/desktop/launcher.sh
 Icon=merkemail
 Terminal=false
-Categories=Network;Email;Office;
-Keywords=email;mail;correo;gmail;merke;
 StartupWMClass=merkemail
-MimeType=x-scheme-handler/mailto;
-Actions=Compose;Settings;
+Actions=Show;Quit;
 
-[Desktop Action Compose]
-Name=Redactar Correo
-Exec=$INSTALL_DIR/desktop/launcher.sh --compose
+[Desktop Action Show]
+Name=Mostrar la aplicación
+Exec=$INSTALL_DIR/desktop/launcher.sh --show
 
-[Desktop Action Settings]
-Name=Ajustes
-Exec=$INSTALL_DIR/desktop/launcher.sh --settings
+[Desktop Action Quit]
+Name=Cerrar
+Exec=$INSTALL_DIR/desktop/launcher.sh --quit
 EOF
 
 chmod +x "$HOME/.local/share/applications/merkemail.desktop"

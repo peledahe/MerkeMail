@@ -306,10 +306,50 @@ input[type="checkbox"]:indeterminate {
     pointer-events: none;
     z-index: 100;
     white-space: nowrap;
+    border-radius: 12px !important; /* Bordes redondeados suaves */
     box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.2);
 }
 #sidebar-hover-bar.active {
     display: flex !important;
+}
+
+/* Tooltips globales elegantes con bordes redondeados suaves para botones */
+.app-global-tooltip {
+    position: fixed;
+    z-index: 99999;
+    pointer-events: none;
+    display: none;
+    opacity: 0;
+    transform: translateY(3px) scale(0.97);
+    transition: opacity 0.14s cubic-bezier(0.16, 1, 0.3, 1), transform 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.25;
+    color: #f8fafc;
+    background: rgba(15, 23, 42, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px !important; /* Bordes redondeados suaves */
+    box-shadow: 0 10px 25px -4px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    white-space: nowrap;
+    max-width: 280px;
+    text-overflow: ellipsis;
+    overflow: hidden;
+}
+
+.dark .app-global-tooltip {
+    background: rgba(30, 41, 59, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #f8fafc;
+    box-shadow: 0 10px 25px -4px rgba(0, 0, 0, 0.6), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+}
+
+.app-global-tooltip.active {
+    display: block;
+    opacity: 1;
+    transform: translateY(0) scale(1);
 }
 
 /* Divisores interactivos ultra-delgados para redimensionar columnas sin consumir espacio */

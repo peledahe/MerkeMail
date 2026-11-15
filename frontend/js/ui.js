@@ -356,6 +356,9 @@ const UI = {
 
         // Inicializar barra flotante para opciones del sidebar colapsado (en lugar del tooltip nativo)
         this.initSidebarHoverBar();
+
+        // Inicializar tooltips elegantes con bordes redondeados suaves para todos los botones
+        this.initAppTooltips();
     },
 
     // Sincronizar Jerarquía Responsiva: Prioridad al área del correo
@@ -527,6 +530,123 @@ const UI = {
         });
 
         window.addEventListener('scroll', hideHoverBar, true);
+    },
+
+    // Sistema Global de Tooltips con Bordes Redondeados Suaves para todos los Botones de la Aplicación
+    initAppTooltips() {
+        const tooltipEl = document.getElementById('app-global-tooltip');
+        if (!tooltipEl) return;
+
+        let activeTarget = null;
+        let showTimeout = null;
+
+        const hideTooltip = () => {
+            if (showTimeout) {
+                clearTimeout(showTimeout);
+                showTimeout = null;
+            }
+            if (tooltipEl) {
+                tooltipEl.classList.remove('active');
+                tooltipEl.style.display = 'none';
+            }
+            activeTarget = null;
+        };
+
+        const showTooltip = (targetEl) => {
+            if (!targetEl || !document.body.contains(targetEl)) {
+                hideTooltip();
+                return;
+            }
+
+            // Si está dentro del sidebar y este se encuentra colapsado, el sidebar usa su propio tooltip (#sidebar-hover-bar)
+            const sidebar = document.getElementById('sidebar-container');
+            if (sidebar && sidebar.contains(targetEl) && (sidebar.classList.contains('collapsed') || sidebar.getBoundingClientRect().width <= 75)) {
+                hideTooltip();
+                return;
+            }
+
+            // Suprimir atributo title nativo para que el navegador jamás pinte el tooltip feo del sistema operativo
+            if (targetEl.hasAttribute('title')) {
+                const titleVal = targetEl.getAttribute('title').trim();
+                if (titleVal) {
+                    targetEl.dataset.appTooltip = titleVal;
+                }
+                targetEl.removeAttribute('title');
+            }
+
+            const text = targetEl.dataset.appTooltip || targetEl.dataset.tooltip || '';
+            if (!text || text.trim() === '') {
+                hideTooltip();
+                return;
+            }
+
+            tooltipEl.textContent = text;
+            tooltipEl.style.display = 'block';
+
+            // Medir dimensiones del elemento y tooltip
+            const rect = targetEl.getBoundingClientRect();
+            const tipRect = tooltipEl.getBoundingClientRect();
+            const margin = 7;
+
+            // Determinar posición vertical (arriba del botón si cabe, de lo contrario abajo)
+            let top = rect.top - tipRect.height - margin;
+            if (top < 8) {
+                top = rect.bottom + margin;
+            }
+
+            // Centrar horizontalmente respecto al botón
+            let left = rect.left + (rect.width / 2) - (tipRect.width / 2);
+            // Prevenir desbordamiento por los bordes de la pantalla
+            const paddingScreen = 10;
+            if (left < paddingScreen) {
+                left = paddingScreen;
+            } else if (left + tipRect.width > window.innerWidth - paddingScreen) {
+                left = window.innerWidth - tipRect.width - paddingScreen;
+            }
+
+            tooltipEl.style.top = `${Math.round(top)}px`;
+            tooltipEl.style.left = `${Math.round(left)}px`;
+
+            // Activar transición suave
+            void tooltipEl.offsetWidth;
+            tooltipEl.classList.add('active');
+        };
+
+        // Delegación global para mouseover / pointerenter
+        document.addEventListener('mouseover', (e) => {
+            const target = e.target.closest('button, a, [title], [data-app-tooltip], [data-tooltip]');
+            if (!target) {
+                hideTooltip();
+                return;
+            }
+
+            const elementWithTitle = (target.hasAttribute('title') || target.dataset.appTooltip || target.dataset.tooltip) ? target : target.closest('[title], [data-app-tooltip], [data-tooltip]');
+            if (!elementWithTitle) {
+                hideTooltip();
+                return;
+            }
+
+            if (elementWithTitle === activeTarget) return;
+
+            activeTarget = elementWithTitle;
+            if (showTimeout) clearTimeout(showTimeout);
+
+            // Retardo sutil y cómodo de 180ms
+            showTimeout = setTimeout(() => {
+                showTooltip(elementWithTitle);
+            }, 180);
+        }, true);
+
+        document.addEventListener('mouseout', (e) => {
+            if (activeTarget && (!e.relatedTarget || !activeTarget.contains(e.relatedTarget))) {
+                hideTooltip();
+            }
+        }, true);
+
+        // Ocultar al hacer click, pulsar teclas o scrollear
+        window.addEventListener('scroll', hideTooltip, true);
+        document.addEventListener('mousedown', hideTooltip, true);
+        document.addEventListener('keydown', hideTooltip, true);
     },
 
     // Inicializar Redimensionador de Lista de Correos

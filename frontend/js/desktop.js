@@ -6,6 +6,22 @@ const DesktopBridge = {
 
     init() {
         this.detectEnvironment();
+        this.initNativeBridge();
+        this.initWindowDragging();
+    },
+
+    initNativeBridge() {
+        if (typeof qt !== 'undefined' && qt.webChannelTransport) {
+            try {
+                if (typeof QWebChannel !== 'undefined') {
+                    new QWebChannel(qt.webChannelTransport, (channel) => {
+                        window.pyqtBridge = channel.objects.pyqtBridge;
+                    });
+                }
+            } catch (e) {
+                console.warn('Aviso inicializando QWebChannel:', e);
+            }
+        }
     },
 
     detectEnvironment() {
@@ -13,9 +29,10 @@ const DesktopBridge = {
         const isPort6524 = window.location.port === '6524';
         const hasDesktopParam = params.has('desktop') || params.get('app') === 'desktop';
         const isPyQt = !!window.pyqtBridge || (navigator.userAgent && navigator.userAgent.includes('QtWebEngine'));
-        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+        // Modo instalado de escritorio (PyQt6 / Puerto 6524 / ?desktop=1)
+        const isInstalledDesktop = isPort6524 || hasDesktopParam || isPyQt;
 
-        this.isDesktop = isPort6524 || hasDesktopParam || isPyQt || isStandalone;
+        this.isDesktop = isInstalledDesktop;
         this.applyEnvironmentUI();
     },
 
@@ -23,9 +40,10 @@ const DesktopBridge = {
         const controls = document.getElementById('desktop-window-controls');
         const btnInstallPwa = document.getElementById('btn-install-pwa');
         const pwaCardDrawer = document.getElementById('pwa-installation-card');
+        const btnPrint = document.getElementById('btn-print-email');
 
         if (this.isDesktop) {
-            // 1. En aplicación instalada: OCULTAR todas las opciones de instalar app
+            // 1. En aplicación instalada: OCULTAR todas las opciones de instalar app y botón de imprimir
             if (btnInstallPwa) {
                 btnInstallPwa.classList.add('hidden');
                 btnInstallPwa.classList.remove('flex');
@@ -33,15 +51,18 @@ const DesktopBridge = {
             if (pwaCardDrawer) {
                 pwaCardDrawer.classList.add('hidden');
             }
+            if (btnPrint) {
+                btnPrint.classList.add('hidden');
+            }
 
-            // 2. MOSTRAR controles de ventana (cerrar, ampliar/restaurar, minimizar) a la par del usuario
+            // 2. MOSTRAR controles de ventana (cerrar, ampliar/restaurar, minimizar) a la par del avatar
             if (controls) {
                 controls.classList.remove('hidden');
                 controls.classList.add('flex');
             }
             this.checkWindowState();
         } else {
-            // En navegador web (browser normal, puerto 8000):
+            // En navegador web (browser normal y modo PWA):
             // Ocultar controles de ventana ya que el navegador tiene los suyos
             if (controls) {
                 controls.classList.add('hidden');
@@ -50,11 +71,62 @@ const DesktopBridge = {
             if (pwaCardDrawer) {
                 pwaCardDrawer.classList.remove('hidden');
             }
+            if (btnPrint) {
+                btnPrint.classList.remove('hidden');
+            }
             // Dejar que UI gestione el botón de instalar app para quien navega por web
         }
     },
 
+    initWindowDragging() {
+        const header = document.getElementById('main-header');
+        if (!header) return;
+
+        // Clic sostenido en cualquier espacio vacío del header para arrastrar la ventana
+        header.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return; // Solo botón principal (izquierdo)
+
+            // Si el clic es sobre un elemento interactivo (botones, inputs, avatar, controles), no arrastrar
+            const interactive = e.target.closest('button, input, a, select, textarea, [onclick], #user-header-avatar, #desktop-window-controls, .cursor-pointer');
+            if (interactive) return;
+
+            // Iniciar arrastre nativo de ventana del sistema (vía consola instantánea de PyQt6 + bridge + fetch)
+            try {
+                console.log('__PYQT_ACTION__:start_drag');
+            } catch (_) {}
+
+            if (window.pyqtBridge && window.pyqtBridge.start_drag) {
+                try { window.pyqtBridge.start_drag(); } catch (_) {}
+            }
+            fetch('/api/desktop/window/start_drag', { method: 'POST' }).catch(() => {});
+        });
+
+        // Doble clic en espacio libre del header para alternar maximizado
+        header.addEventListener('dblclick', (e) => {
+            const interactive = e.target.closest('button, input, a, select, textarea, [onclick], #user-header-avatar, #desktop-window-controls, .cursor-pointer');
+            if (interactive) return;
+            this.toggleMaximizeWindow();
+        });
+    },
+
+    isActionPending: false,
+
     async minimizeWindow() {
+        if (this.isActionPending) return;
+        this.isActionPending = true;
+        setTimeout(() => { this.isActionPending = false; }, 300);
+
+        const isPyQt = (navigator.userAgent && navigator.userAgent.includes('QtWebEngine')) || (typeof qt !== 'undefined');
+        if (isPyQt) {
+            try {
+                console.log('__PYQT_ACTION__:minimize');
+                return;
+            } catch (_) {}
+        }
+
+        if (window.pyqtBridge && window.pyqtBridge.minimize) {
+            try { window.pyqtBridge.minimize(); return; } catch (_) {}
+        }
         try {
             await fetch('/api/desktop/window/minimize', { method: 'POST' });
         } catch (e) {
@@ -63,23 +135,64 @@ const DesktopBridge = {
     },
 
     async toggleMaximizeWindow() {
+        if (this.isActionPending) return;
+        this.isActionPending = true;
+        setTimeout(() => { this.isActionPending = false; }, 350);
+
+        // Determinamos la acción exacta según el estado actual para evitar ejecuciones dobles
+        const targetAction = this.isMaximized ? 'restore' : 'maximize';
+        const nextState = !this.isMaximized;
+
+        this.isMaximized = nextState;
+        this.updateMaximizeIcons();
+
+        const isPyQt = (navigator.userAgent && navigator.userAgent.includes('QtWebEngine')) || (typeof qt !== 'undefined');
+        if (isPyQt) {
+            try {
+                console.log(`__PYQT_ACTION__:${targetAction}`);
+                return; // Una sola acción directa en Qt, no ejecutar fetch
+            } catch (_) {}
+        }
+
+        if (window.pyqtBridge) {
+            if (targetAction === 'maximize' && window.pyqtBridge.maximize) {
+                try { window.pyqtBridge.maximize(); return; } catch (_) {}
+            } else if (targetAction === 'restore' && window.pyqtBridge.restore) {
+                try { window.pyqtBridge.restore(); return; } catch (_) {}
+            } else if (window.pyqtBridge.toggle_maximize) {
+                try { window.pyqtBridge.toggle_maximize(); return; } catch (_) {}
+            }
+        }
+
+        // Fallback vía endpoint HTTP (solo si no es PyQt nativo)
         try {
-            const res = await fetch('/api/desktop/window/toggle_maximize', { method: 'POST' });
+            const res = await fetch(`/api/desktop/window/${targetAction}`, { method: 'POST' });
             const data = await res.json();
             if (data.success && typeof data.result === 'boolean') {
                 this.isMaximized = data.result;
-            } else {
-                this.isMaximized = !this.isMaximized;
+                this.updateMaximizeIcons();
             }
-            this.updateMaximizeIcons();
         } catch (e) {
-            console.warn('Error alternando maximizado de ventana:', e);
-            this.isMaximized = !this.isMaximized;
-            this.updateMaximizeIcons();
+            console.warn('Error alternando tamaño de ventana:', e);
         }
     },
 
     async closeWindow() {
+        if (this.isActionPending) return;
+        this.isActionPending = true;
+        setTimeout(() => { this.isActionPending = false; }, 300);
+
+        const isPyQt = (navigator.userAgent && navigator.userAgent.includes('QtWebEngine')) || (typeof qt !== 'undefined');
+        if (isPyQt) {
+            try {
+                console.log('__PYQT_ACTION__:close');
+                return;
+            } catch (_) {}
+        }
+
+        if (window.pyqtBridge && window.pyqtBridge.close) {
+            try { window.pyqtBridge.close(); return; } catch (_) {}
+        }
         try {
             await fetch('/api/desktop/window/close', { method: 'POST' });
         } catch (e) {
@@ -87,7 +200,41 @@ const DesktopBridge = {
         }
     },
 
+    openExternalUrl(url) {
+        if (!url) return;
+        const isPyQt = (navigator.userAgent && navigator.userAgent.includes('QtWebEngine')) || (typeof qt !== 'undefined');
+        if (isPyQt) {
+            try {
+                console.log(`__PYQT_ACTION__:open_url:${url}`);
+                return;
+            } catch (_) {}
+        }
+
+        if (window.pyqtBridge && window.pyqtBridge.open_url) {
+            try { window.pyqtBridge.open_url(url); return; } catch (_) {}
+        }
+
+        // Fallback vía backend para abrir en el navegador predeterminado del sistema operativo
+        fetch('/api/desktop/open-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url })
+        }).catch(() => {
+            window.open(url, '_blank', 'noopener,noreferrer');
+        });
+    },
+
+    onNativeWindowStateChanged(isMaximized) {
+        this.isMaximized = !!isMaximized;
+        this.updateMaximizeIcons();
+    },
+
     async checkWindowState() {
+        if (window.pyqtBridge && window.pyqtBridge.is_maximized) {
+            this.isMaximized = !!window.pyqtBridge.is_maximized();
+            this.updateMaximizeIcons();
+            return;
+        }
         try {
             const res = await fetch('/api/desktop/window/state');
             if (res.ok) {
