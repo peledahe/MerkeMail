@@ -15,6 +15,12 @@ class ConfigService:
         has_gemini_key = bool(raw_key)
         is_ai_active = gemini_enabled and has_gemini_key
 
+        def_cal_raw = settings.get("default_calendar_id", "1")
+        try:
+            default_calendar_id = int(def_cal_raw) if def_cal_raw else 1
+        except (ValueError, TypeError):
+            default_calendar_id = 1
+
         return {
             "gemini_api_key": raw_key,
             "gemini_api_key_masked": masked_key,
@@ -23,7 +29,8 @@ class ConfigService:
             "is_ai_active": is_ai_active,
             "gemini_model": settings.get("gemini_model", "gemini-2.5-flash"),
             "theme": settings.get("theme", "dark"),
-            "ai_prompt_tone": settings.get("ai_prompt_tone", "formal")
+            "ai_prompt_tone": settings.get("ai_prompt_tone", "formal"),
+            "default_calendar_id": default_calendar_id
         }
 
     @staticmethod

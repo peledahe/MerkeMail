@@ -18,20 +18,40 @@ document.addEventListener('DOMContentLoaded', async () => {
         Composer.init();
     }
 
-    // Inicializar Módulos
-    await EmailManager.loadAccounts();
-    await EmailManager.loadLabels();
-    await EmailManager.loadEmails();
-    await CalendarManager.init();
-    await GeminiAI.initSettings();
-    await SignatureManager.init();
-    EmailManager.initAutoSyncScheduler();
+    // Estado inicial de seguridad para IA (oculto y rojo hasta verificar conexión)
+    if (window.GeminiAI) {
+        GeminiAI.applyAIStatusUI();
+    }
+
+    // Inicializar Detección de Modo Desktop / Controles de Ventana
+    if (window.DesktopBridge) {
+        DesktopBridge.init();
+    }
+
+    // Inicializar Módulos de forma independiente y tolerante a fallos
+    try { await EmailManager.loadAccounts(); } catch (e) { console.warn("Fallo cargando cuentas:", e); }
+    try { await EmailManager.loadLabels(); } catch (e) { console.warn("Fallo cargando etiquetas:", e); }
+    try { await EmailManager.loadEmails(); } catch (e) { console.warn("Fallo cargando correos:", e); }
+    try { await CalendarManager.init(); } catch (e) { console.warn("Fallo cargando calendario:", e); }
+    try { await GeminiAI.initSettings(); } catch (e) { console.warn("Fallo cargando IA:", e); }
+    try { await SignatureManager.init(); } catch (e) { console.warn("Fallo cargando firmas:", e); }
+    try { if (window.ContactsManager) await ContactsManager.init(); } catch (e) { console.warn("Fallo cargando contactos:", e); }
+    try { if (window.UserProfileAI) await UserProfileAI.init(); } catch (e) { console.warn("Fallo cargando perfil usuario:", e); }
+    try { if (window.AntigravityCopilot) AntigravityCopilot.initResizer(); } catch (e) { console.warn("Fallo resizer Elio:", e); }
+    try { EmailManager.initAutoSyncScheduler(); } catch (e) { console.warn("Fallo scheduler:", e); }
 
     // Inicializar Event Listeners
     setupEventListeners();
 });
 
 function setupEventListeners() {
+    // Reevaluar ubicación de etiquetas de correo al redimensionar ventana
+    window.addEventListener('resize', () => {
+        if (window.EmailManager && typeof EmailManager.setupLabelsResponsivePlacement === 'function') {
+            EmailManager.setupLabelsResponsivePlacement();
+        }
+    });
+
     // Alternador de Vista Principal (Correos vs Calendario)
     const btnNavMail = document.getElementById('nav-item-mail');
     const btnNavCalendar = document.getElementById('nav-item-calendar');
@@ -67,9 +87,56 @@ function setupEventListeners() {
         });
     }
 
-    // Buscador en vivo
+    // Buscador en vivo con invocación inteligente a @elio
     const searchInput = document.getElementById('main-search-input');
     const clearSearchBtn = document.getElementById('btn-clear-search');
+    const btnSubmitToElio = document.getElementById('btn-submit-to-elio');
+
+    // Despacho global para abrir asistente Elio y trasladar pregunta
+    window.dispatchSearchToElio = function() {
+        const input = document.getElementById('main-search-input');
+        if (!input) return;
+        const rawVal = input.value.trim();
+
+        if (rawVal.toLowerCase().includes('@elio')) {
+            // Extraer la pregunta retirando el comando @elio
+            const elioPrompt = rawVal.replace(/@elio\s*/gi, '').trim();
+
+            // Limpiar buscador y estado visual
+            input.value = '';
+            if (clearSearchBtn) clearSearchBtn.classList.add('hidden');
+            if (btnSubmitToElio) btnSubmitToElio.classList.add('hidden');
+
+            // Si la bandeja estaba filtrada por búsqueda anterior, restaurarla inmediatamente
+            if (window.EmailManager && EmailManager.searchQuery) {
+                EmailManager.searchQuery = '';
+                EmailManager.currentPage = 1;
+                EmailManager.clearSelection();
+                EmailManager.loadEmails();
+            }
+
+            // Abrir ventana modal / lateral de Elio
+            UI.openDrawer('drawer-antigravity-copilot');
+
+            // Trasladar la pregunta al chat de Elio
+            if (elioPrompt) {
+                if (window.AntigravityCopilot) {
+                    window.AntigravityCopilot.sendMessage(elioPrompt);
+                }
+            } else {
+                setTimeout(() => {
+                    document.getElementById('antigravity-chat-input')?.focus();
+                }, 200);
+            }
+        } else if (rawVal && window.EmailManager) {
+            // Búsqueda normal si no tiene @elio
+            EmailManager.searchQuery = rawVal;
+            EmailManager.currentPage = 1;
+            EmailManager.clearSelection();
+            EmailManager.loadEmails();
+        }
+    };
+
     if (searchInput) {
         let debounceTimer;
         const updateClearButtonVisibility = () => {
@@ -84,19 +151,52 @@ function setupEventListeners() {
 
         searchInput.addEventListener('input', (e) => {
             updateClearButtonVisibility();
+            const val = e.target.value.trim();
+            const lowerVal = val.toLowerCase();
+
+            // Si el texto incluye @elio, es una entrada para el asistente Elio (NO una búsqueda de correos)
+            if (lowerVal.includes('@elio')) {
+                clearTimeout(debounceTimer);
+                if (btnSubmitToElio) btnSubmitToElio.classList.remove('hidden');
+
+                // Si por tipeo rápido previo se había seteado una búsqueda, restaurar la bandeja
+                if (window.EmailManager && EmailManager.searchQuery) {
+                    EmailManager.searchQuery = '';
+                    EmailManager.currentPage = 1;
+                    EmailManager.clearSelection();
+                    EmailManager.loadEmails();
+                }
+                return;
+            } else {
+                if (btnSubmitToElio) btnSubmitToElio.classList.add('hidden');
+            }
+
+            // Si empieza con @ pero aún no completa @elio, no filtrar la bandeja todavía
+            if (lowerVal.startsWith('@')) {
+                clearTimeout(debounceTimer);
+                return;
+            }
+
+            // Búsqueda estándar de correos con debounce
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
-                EmailManager.searchQuery = e.target.value.trim();
+                EmailManager.searchQuery = val;
                 EmailManager.currentPage = 1;
                 EmailManager.clearSelection();
                 EmailManager.loadEmails();
             }, 300);
         });
 
-        // Al presionar Escape, también limpiar búsqueda rápidamente
+        // Manejo de teclas: Enter para invocar @elio o buscar, Escape para limpiar
         searchInput.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && searchInput.value) {
                 EmailManager.clearMainSearch();
+            } else if (e.key === 'Enter') {
+                const val = searchInput.value.trim();
+                if (val.toLowerCase().includes('@elio')) {
+                    e.preventDefault();
+                    window.dispatchSearchToElio();
+                }
             }
         });
     }

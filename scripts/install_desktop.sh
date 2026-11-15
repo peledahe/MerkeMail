@@ -43,24 +43,28 @@ if [ ! -f "$INSTALL_DIR/data/merkemail.db" ] && [ -f "$SOURCE_DIR/data/merkemail
     cp "$SOURCE_DIR/data/merkemail.db" "$INSTALL_DIR/data/merkemail.db"
 fi
 
-# 3. Crear entorno virtual independiente con uv
+# 3. Crear entorno virtual independiente con uv y habilitar system site-packages para PyQt6 WebEngine
 echo "-> Configurando entorno virtual Python independiente..."
 if command -v uv >/dev/null 2>&1; then
     if [ ! -d "$INSTALL_DIR/.venv" ]; then
-        uv venv "$INSTALL_DIR/.venv"
+        uv venv --system-site-packages "$INSTALL_DIR/.venv"
+    elif [ -f "$INSTALL_DIR/.venv/pyvenv.cfg" ]; then
+        sed -i 's/include-system-site-packages = false/include-system-site-packages = true/' "$INSTALL_DIR/.venv/pyvenv.cfg"
     fi
     echo "-> Instalando todas las dependencias desde requirements.txt..."
     uv pip install --python "$INSTALL_DIR/.venv/bin/python3" -r "$INSTALL_DIR/requirements.txt"
 else
     echo "-> uv no encontrado, usando python3 -m venv..."
     if [ ! -d "$INSTALL_DIR/.venv" ]; then
-        python3 -m venv "$INSTALL_DIR/.venv"
+        python3 -m venv --system-site-packages "$INSTALL_DIR/.venv"
+    elif [ -f "$INSTALL_DIR/.venv/pyvenv.cfg" ]; then
+        sed -i 's/include-system-site-packages = false/include-system-site-packages = true/' "$INSTALL_DIR/.venv/pyvenv.cfg"
     fi
     "$INSTALL_DIR/.venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
 fi
 
 # 4. Asegurar permisos ejecutables en lanzadores
-chmod +x "$INSTALL_DIR/desktop/launcher.sh" "$INSTALL_DIR/desktop/tray.py"
+chmod +x "$INSTALL_DIR/desktop/launcher.sh" "$INSTALL_DIR/desktop/tray.py" "$INSTALL_DIR/desktop/app_window.py" 2>/dev/null || true
 
 # 5. Instalar iconos en el sistema
 echo "-> Instalando iconos del sistema..."

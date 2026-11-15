@@ -1061,14 +1061,17 @@ const InlineReply = {
             btnAI.innerHTML = `<svg class="animate-spin -ml-0.5 mr-1.5 h-3.5 w-3.5 text-purple-600 dark:text-purple-400 inline" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> <span>Redactando con IA...</span>`;
         }
 
+        const toneSelect = document.getElementById('inline-reply-tone-select');
+        const selectedTone = toneSelect ? toneSelect.value : ((document.getElementById('gemini-default-tone')?.value) || 'formal');
+
         try {
             const res = await fetch(`/api/gemini/smart-reply/${emailId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     current_draft: currentDraft,
-                    user_instruction: 'Genera una respuesta cordial, completa y profesional que resuelva lo planteado en el correo.',
-                    tone: 'formal'
+                    user_instruction: 'Genera una respuesta completa y adecuada que resuelva lo planteado en el correo.',
+                    tone: selectedTone
                 })
             });
             const data = await res.json();

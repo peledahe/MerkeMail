@@ -1,10 +1,69 @@
 // Módulo de Interfaz de Usuario y Controles UI - MerkeMail
 
 const UI = {
+    // Traducción de errores técnicos a mensajes comprensibles y humanos
+    humanizeError(error) {
+        if (!error) return 'Ocurrió un inconveniente inesperado';
+        const msg = typeof error === 'string' ? error : (error.message || String(error));
+        if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed') || msg.includes('conexion')) {
+            return 'No pudimos conectar con el servidor local. Verifica que el servicio esté ejecutándose.';
+        }
+        if (msg.includes('500') || msg.includes('Internal Server Error')) {
+            return 'El servidor encontró una dificultad momentánea. Intenta de nuevo en unos momentos.';
+        }
+        if (msg.includes('404')) {
+            return 'El elemento solicitado no fue encontrado o ya no está disponible.';
+        }
+        if (msg.includes('401') || msg.includes('403')) {
+            return 'La sesión o credenciales han expirado. Vuelve a iniciar sesión o verifica tu cuenta.';
+        }
+        return msg;
+    },
+
+    // Imagen de error embebida para disponibilidad 100% offline o ante fallos del servidor
+    ERROR_GIF_DATA_URI: "data:image/gif;base64,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",
+
+    // Componente visual reutilizable para estados de error con imagen congruente asegurada
+    renderErrorState({
+        title = 'No logramos conectar con el servidor',
+        message = 'Parece que se interrumpió la conexión o el servicio no está respondiendo. No te preocupes, tus datos están seguros.',
+        retryAction = null,
+        retryText = 'Reintentar conexión',
+        size = 'md' // 'xs', 'sm', 'md', 'lg'
+    } = {}) {
+        const imgSize = size === 'xs' ? 'w-16 h-16' : (size === 'sm' ? 'w-24 h-24' : (size === 'lg' ? 'w-44 h-44' : 'w-32 h-32'));
+        const padding = size === 'xs' ? 'py-2 px-2' : (size === 'sm' ? 'py-4 px-3' : 'py-10 px-6');
+        const titleClass = size === 'xs' ? 'text-[11px] font-bold' : (size === 'sm' ? 'text-xs font-bold' : 'text-sm font-bold');
+        const msgClass = size === 'xs' ? 'text-[10px]' : (size === 'sm' ? 'text-[11px]' : 'text-xs');
+
+        const escapedTitle = window.EmailManager ? EmailManager.escapeHtml(title) : title;
+        const humanMsg = this.humanizeError(message);
+        const escapedMsg = window.EmailManager ? EmailManager.escapeHtml(humanMsg) : humanMsg;
+        const escapedRetry = window.EmailManager ? EmailManager.escapeHtml(retryText) : retryText;
+
+        return `
+            <div class="${padding} flex flex-col items-center justify-center text-center max-w-sm mx-auto select-none">
+                <img src="${this.ERROR_GIF_DATA_URI}" onerror="this.src='/img/error.gif'" alt="Error de conexión" class="${imgSize} object-contain mb-3 drop-shadow-sm pointer-events-none">
+                <h4 class="${titleClass} text-slate-800 dark:text-slate-100">${escapedTitle}</h4>
+                <p class="${msgClass} text-slate-500 dark:text-slate-400 mt-1 mb-3.5 leading-relaxed">
+                    ${escapedMsg}
+                </p>
+                ${retryAction ? `
+                    <button onclick="${retryAction}" class="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-semibold shadow-sm hover:shadow transition-all flex items-center gap-1.5 cursor-pointer">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        <span>${escapedRetry}</span>
+                    </button>
+                ` : ''}
+            </div>
+        `;
+    },
+
     // Sistema de Notificaciones Sticky (Guardado, Actualizaciones, Éxitos)
     showStickyToast(title, message, type = 'success', duration = 4000) {
         const container = document.getElementById('sticky-notifications-container');
         if (!container) return;
+
+        const displayMessage = type === 'error' ? this.humanizeError(message) : message;
 
         const toast = document.createElement('div');
         toast.className = `sticky-toast flex items-start gap-3 p-4 rounded-xl shadow-xl border mb-3 w-84 md:w-96 backdrop-blur-md transition-all ${
@@ -25,7 +84,7 @@ const UI = {
             ${iconSvg}
             <div class="flex-1 min-w-0">
                 <h4 class="font-semibold text-sm leading-tight">${title}</h4>
-                <p class="text-xs opacity-90 mt-0.5 line-clamp-2">${message}</p>
+                <p class="text-xs opacity-90 mt-0.5 line-clamp-2">${displayMessage}</p>
             </div>
             <button class="text-slate-400 hover:text-white transition-colors p-1" onclick="this.parentElement.remove()">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -94,6 +153,9 @@ const UI = {
         if (!drawer) return;
         drawer.classList.remove('hidden');
         document.body.classList.add('overflow-hidden');
+        if (drawerId === 'drawer-antigravity-copilot' && window.AntigravityCopilot) {
+            AntigravityCopilot.onOpenDrawer();
+        }
     },
 
     closeDrawer(drawerId) {
@@ -569,20 +631,29 @@ const UI = {
             });
         }
 
-        // Verificar si la app ya está instalada / en modo standalone
-        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-        this.updatePWAUIState(isStandalone);
+        // Verificar si la app ya está instalada / en modo standalone o modo desktop nativo
+        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop) || 
+                          window.location.port === '6524' || 
+                          window.location.search.includes('desktop=1') ||
+                          window.matchMedia('(display-mode: standalone)').matches || 
+                          window.navigator.standalone === true;
+        this.updatePWAUIState(isDesktop);
 
-        // Capturar el evento de instalación nativo
+        // Capturar el evento de instalación nativo (solo si estamos en el browser normal)
         window.addEventListener('beforeinstallprompt', (e) => {
             // Prevenir el banner automático para controlarlo nosotros
             e.preventDefault();
             this.deferredPrompt = e;
-            this.updatePWAUIState(false);
-            const btnHeader = document.getElementById('btn-install-pwa');
-            if (btnHeader) {
-                btnHeader.classList.remove('hidden');
-                btnHeader.classList.add('flex');
+            const currentIsDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop) || 
+                                     window.location.port === '6524' || 
+                                     window.location.search.includes('desktop=1');
+            if (!currentIsDesktop) {
+                this.updatePWAUIState(false);
+                const btnHeader = document.getElementById('btn-install-pwa');
+                if (btnHeader) {
+                    btnHeader.classList.remove('hidden');
+                    btnHeader.classList.add('flex');
+                }
             }
         });
 

@@ -43,6 +43,7 @@ pycparser==3.12
 pydantic==2.14.3
 pydantic-core==2.50.4
 pyjwt==2.15.1
+pyopenssl==26.4.0
 pyparsing==3.3.3
 pystray==0.19.5
 python-dateutil==4.0.0

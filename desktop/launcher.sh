@@ -11,4 +11,8 @@ if [ ! -f "$PYTHON_BIN" ]; then
     PYTHON_BIN="$(which python3)"
 fi
 
-exec "$PYTHON_BIN" "$DIR/desktop/tray.py" "$@"
+if [ -f "$DIR/desktop/app_window.py" ]; then
+    exec "$PYTHON_BIN" "$DIR/desktop/app_window.py" "$@"
+else
+    exec "$PYTHON_BIN" "$DIR/desktop/tray.py" "$@"
+fi

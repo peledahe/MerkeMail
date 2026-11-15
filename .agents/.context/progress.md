@@ -2,6 +2,29 @@
 
 ## Historial de Hitos Completados
 
+- [x] **Fase 79: Restauración Integral de Funcionalidades (Contactos, Perfil de Usuario y Asistente Elio):**
+  - Libreta de Contactos restaurada con acceso en cabecera (`[ 👥 ]`), navegación lateral, drawer lateral `drawer-contacts`, sincronización en un clic y autocompletado en redacción.
+  - Perfil del Usuario IA restaurado con acceso en cabecera (`[ 👤 ]`) y barra lateral, análisis automático Gemini e integración en prompts.
+  - Asistente Elio restaurado con su marca e icono oficial `img/bot.png`, botón de nuevo chat limpio (`+`), resizer y chip rápido `@elio` en la barra de búsqueda.
+  - Conservación absoluta de todas las nuevas funcionalidades: selección de cuenta por defecto, avatar reactivo, vistas completas de calendario (mes, semana, día) y creación de eventos enriquecida.
+  - Sincronización completa con el instalador de escritorio (`install_desktop.sh`).
+
+- [x] **Fase 78: Selección de Cuenta por Defecto y Avatar de Usuario:**
+  - Persistencia en base de datos (`accounts.is_default` y `settings.default_account_id`).
+  - Endpoints backend `GET /api/accounts/default` y `POST /api/accounts/{account_id}/default`.
+  - Drawer de Cuentas con badge `★ Predeterminada`, estrella dorada y botón para establecer cuenta principal con confirmación sticky toast.
+  - Selector de cuenta por defecto en panel de Configuración y preselección automática al redactar correos.
+  - Avatar de usuario en cabecera y panel de perfil actualizado dinámicamente según la cuenta por defecto (foto oficial de Google o inicial con color de cuenta).
+  - Sincronización con la aplicación de escritorio (`install_desktop.sh`).
+
+- [x] **Fase 77: Creación y Edición de Eventos con Características Completas (Google Calendar):**
+  - Modal enriquecido con horario/fecha, conmutador "Todo el día", repetición/recurrencia (diario, semanal, mensual, anual, días laborables).
+  - Integración nativa de videollamadas con Google Meet (generador automático de salas, enlaces y copiado al portapapeles).
+  - Campos de ubicación física, lista de invitados/asistentes con chips interactivos, selector de recordatorio/notificación, disponibilidad (ocupado/libre) y visibilidad (pública/privada/default).
+  - Paleta cromática oficial de 11 colores de Google Calendar con preselección visual.
+  - Edición completa de citas existentes (`PUT /api/events/{id}`) y visualización enriquecida en el drawer de detalle.
+  - Sincronización completa con el instalador de escritorio.
+
 - [x] **Fase 1: Infraestructura y Entorno:**
   - Creación del entorno virtual con `uv`, instalación de dependencias (`fastapi`, `uvicorn`, `google-genai`, `google-antigravity`, `google-auth-oauthlib`, etc.).
   - Estructura modular del proyecto (`backend/`, `frontend/`, `img/`, `data/`).
@@ -356,12 +379,11 @@
   - **Interruptor Toggle Estilo iOS / Radix UI:** Eliminado el checkbox genérico con palomita nativa deformada; reemplazado por un control suave `button role="switch"` con thumb deslizante flotante (`#gemini-switch-thumb`) y cambio de color fluido.
   - **Transición de Opciones y Banner de Pausa:** Al desactivar la IA, las opciones inferiores se atenúan suavemente con `opacity-40` y se muestra un banner informativo explicativo.
 
-- [x] **Fase 63: Instalador y Modo Escritorio para Linux (Ubuntu) con System Tray y Autostart:**
-  - **Instalación Aislada:** Instalador automatizado `scripts/install_desktop.sh` que despliega la aplicación de forma independiente en `~/.local/share/merkemail` con su propio `.venv`.
-  - **Puerto Exclusivo 6524:** La app instalada corre en `http://127.0.0.1:6524`, dejando el puerto `8000` para desarrollo continuo sin colisiones.
-  - **Lanzador en Menú de Aplicaciones:** Archivo `~/.local/share/applications/merkemail.desktop` e iconos instalados en `~/.local/share/icons/hicolor/`.
-  - **System Tray:** Controlador `desktop/tray.py` con `pystray` e icono en la barra de Ubuntu con menú contextual rápido.
-  - **Opciones en Ajustes:** Switches en el drawer de Configuración para activar/desactivar System Tray y el inicio automático al encender el equipo (`~/.config/autostart/merkemail.desktop`).
+- [x] **Fase 65: Mensajes de Error Empáticos y Humanos con Ilustración `error.gif`:**
+  - **Ilustración Integrada (`img/error.gif`):** Guardada la imagen proporcionada por el usuario en `img/error.gif` y sincronizada en el entorno de escritorio instalado.
+  - **Componente Visual `UI.renderErrorState`:** Muestra estados de error empáticos, con diseño centrado y tamaño congruente al contenedor (`sm` de 80px en chat/paneles laterales y `md` de 130px en listas principales), explicando el problema sin tecnicismos y con botón de reintento.
+  - **Humanización de Errores Técnicos en Toasts y Paneles:** Sustitución de `Failed to fetch` por explicaciones claras en Antigravity Copilot, bandeja de correos, visor de lectura y notificaciones sticky.
+  - **Reintento Inmediato en Antigravity Copilot:** Botón interactivo para reenviar el último mensaje en caso de corte temporal de conexión.
 
 - [x] **Fase 62: Optimización de Rendimiento en Apertura de Correos y Limpieza de Procesos:**
   - **Limpieza de Procesos Huérfanos/Zombies:** Se depuraron procesos zombies que congestionaban la cola de sockets locales de Python/Uvicorn, logrando tiempos de respuesta de **6 a 8 milisegundos** por correo.

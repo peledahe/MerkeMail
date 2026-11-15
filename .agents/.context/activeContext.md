@@ -2,12 +2,167 @@
 
 ## Estado de Desarrollo Actual
 
-- **Fase 63 - Instalador y Ejecución Nativa de Escritorio para Linux (Ubuntu):**
-  - **Instalación Aislada:** Creado el instalador `scripts/install_desktop.sh` que instala la aplicación de forma 100% independiente en `~/.local/share/merkemail` con su propio entorno virtual `.venv` y dependencias (`requirements.txt`).
-  - **Puerto Exclusivo para la App (6524):** La app instalada corre en el puerto **6524**, permitiendo que el entorno de desarrollo en `/home/perry/Desarrollo/MerkeMail` siga activo y operativo en el puerto **8000** sin interferencias.
-  - **Acceso en el Menú de Ubuntu (`.desktop`):** Registrado `~/.local/share/applications/merkemail.desktop` con iconos oficiales en `~/.local/share/icons/hicolor/` (512x512, 192x192 y SVG) y acciones rápidas de Redactar y Ajustes.
-  - **Bandeja del Sistema (System Tray):** Implementado `desktop/tray.py` con `pystray` y ventana Chrome en modo aplicación (`--app=http://127.0.0.1:6524 --class=merkemail`), ofreciendo opciones de Abrir, Redactar, Sincronizar, Ajustes y Salir.
-  - **Controles en Ajustes:** Añadida la tarjeta "Aplicación de Escritorio (Ubuntu)" en `#drawer-settings` con switches reactivos para activar/desactivar el **System Tray** y el **Inicio Automático al encender la máquina** (`~/.config/autostart/merkemail.desktop`), gestionados por `frontend/js/desktop.js` y endpoints `/api/desktop/settings`.
+- **Fase 79 - Restauración Integral de Funcionalidades (Contactos, Perfil de Usuario y Asistente Elio):**
+  - **Libreta de Contactos y Agenda de Direcciones:**
+    - Restaurado el acceso directo en la cabecera superior (`[ 👥 ]`) y en el menú de navegación lateral (`#nav-item-contacts`).
+    - Restaurado el panel lateral completo `drawer-contacts` con buscador interactivo en vivo, badge de total de contactos (144 contactos actuales), botón para sincronizar al instante (`ContactsManager.syncNow`) con sticky toasts, y enlace directo para redactar o copiar correo.
+    - Autocompletado de contactos activo en tiempo real en los campos `Para`, `CC` y `CCO` de la ventana de redacción (`#compose-to`, `#compose-cc`, `#compose-bcc`).
+    - Inclusión del script `<script src="/static/js/contacts.js"></script>` en el frontend.
+  - **Perfil del Usuario IA:**
+    - Restaurado el botón de acceso directo en el header (`[ 👤 ]`) y en el sidebar bajo "Herramientas IA".
+    - Panel lateral `drawer-user-profile` completamente operativo con análisis inteligente vía Gemini (`/api/user-profile/analyze`), campos de bio, cargos, organizaciones, teléfono, ubicación, sitios web y directrices de estilo.
+    - Sincronización automática del perfil en las instrucciones de redacción y del asistente Elio.
+  - **Asistente Elio y Barra de Búsqueda:**
+    - Sidebar actualizado con la marca e identidad visual de `Elio (@elio)` y su icono oficial `img/bot.png`.
+    - Barra de búsqueda superior con invocación rápida a `@elio`, chip de acción rápida `Preguntar a Elio` y placeholder contextual.
+    - Drawer de Elio (`drawer-antigravity-copilot`) restaurado con su interfaz moderna: botón de `+ Nuevo Chat` (`#btn-antigravity-new-chat`), botón de expansión/compresión, badges de capacidades centrados, saludo inteligente con cuentas reales y sugerencias rápidas sin fechas inventadas.
+  - **Sincronización:**
+    - Verificación y sincronización con el instalador de escritorio (`install_desktop.sh`).
+
+- **Fase 78 - Selección de Cuenta por Defecto y Avatar de Usuario:**
+  - **Soporte en Base de Datos y Backend:**
+    - Columna `is_default INTEGER DEFAULT 0` en tabla `accounts` y configuración `default_account_id` en `settings`.
+    - Endpoints `GET /api/accounts/default` y `POST /api/accounts/{account_id}/default` para consultar y conmutar la cuenta principal de forma atómica.
+    - `GET /api/accounts` expone `is_default` para consumo reactivo en la UI.
+  - **Gestión Visual de Cuentas (`drawer-accounts` y `drawer-settings`):**
+    - En el panel de "Cuentas Conectadas", la cuenta por defecto se destaca con badge `★ Predeterminada`, marco resaltado y estrella dorada.
+    - Las demás cuentas cuentan con el botón interactivo para "Establecer como cuenta por defecto" (`EmailManager.setDefaultAccount`), con sticky toast al guardar.
+    - Selector desplegable en el panel de Configuración (`#settings-default-account-select`) sincronizado en tiempo real.
+  - **Avatar de Usuario Reactivo:**
+    - `AvatarService.updateSystemHeaderAvatar()` prioriza la cuenta por defecto (`is_default === 1`).
+    - Actualiza el avatar del header (`#user-header-avatar`) y el del drawer de perfil de usuario (`#user-profile-header-avatar`), utilizando la imagen de perfil oficial de Google (`avatar_url`) o las iniciales estilizadas con el color de la cuenta.
+  - **Redacción de Correos:**
+    - El selector de remitente en la ventana de redacción (`#compose-account`) preselecciona automáticamente la cuenta por defecto con indicador visual `★`.
+  - **Sincronización:** Instalación de escritorio actualizada con `install_desktop.sh`.
+
+- **Fase 78 - Selección de Cuenta por Defecto y Avatar de Usuario:**
+  - **Soporte en Base de Datos y Backend:**
+    - Columna `is_default INTEGER DEFAULT 0` en tabla `accounts` y configuración `default_account_id` en `settings`.
+    - Endpoints `GET /api/accounts/default` y `POST /api/accounts/{account_id}/default` para consultar y conmutar la cuenta principal de forma atómica.
+    - `GET /api/accounts` expone `is_default` para consumo reactivo en la UI.
+  - **Gestión Visual de Cuentas (`drawer-accounts` y `drawer-settings`):**
+    - En el panel de "Cuentas Conectadas", la cuenta por defecto se destaca con badge `★ Predeterminada`, marco resaltado y estrella dorada.
+    - Las demás cuentas cuentan con el botón interactivo para "Establecer como cuenta por defecto" (`EmailManager.setDefaultAccount`), con sticky toast al guardar.
+    - Selector desplegable en el panel de Configuración (`#settings-default-account-select`) sincronizado en tiempo real.
+  - **Avatar de Usuario Reactivo:**
+    - `AvatarService.updateSystemHeaderAvatar()` prioriza la cuenta por defecto (`is_default === 1`).
+    - Actualiza el avatar del header (`#user-header-avatar`) y el del drawer de perfil de usuario (`#user-profile-header-avatar`), utilizando la imagen de perfil oficial de Google (`avatar_url`) o las iniciales estilizadas con el color de la cuenta.
+  - **Redacción de Correos:**
+    - El selector de remitente en la ventana de redacción (`#compose-account`) preselecciona automáticamente la cuenta por defecto con indicador visual `★`.
+  - **Sincronización:** Instalación de escritorio actualizada con `install_desktop.sh`.
+
+- **Fase 77 - Creación y Edición de Eventos con Características Completas Estilo Google Calendar:**
+  - **Modal de Creación y Edición Enriquecido (`new-event-modal`):**
+    - Rediseño integral inspirado en Google Calendar, con soporte para crear nuevos eventos y editar registros existentes (`POST /api/events` y `PUT /api/events/{id}`).
+    - **Horario y Fechas Avanzadas:** Modo "Todo el día" (conmuta dinámicamente entre selectores de solo fecha o fecha+hora de inicio y fin).
+    - **Recurrencia / Repetición (`recurrence`):** Opciones para "No se repite", "Cada día", "Cada semana", "Cada mes", "Anualmente" y "Todos los días laborables (lun-vie)".
+    - **Videoconferencia Integrada Google Meet (`meeting_url`):** Botón para generar salas virtuales automáticas (`meet.google.com/xxx-yyyy-zzz`), caja de reunión con botón para copiar enlace con sticky toast, enlace directo clickeable y opción para quitar o personalizar con URLs de Zoom/Teams.
+    - **Ubicación Física:** Campo para direcciones, salas u oficinas.
+    - **Gestión de Invitados (`attendees`):** Chips interactivos de asistentes con botón de eliminación `×` y validación de correo.
+    - **Paleta Cromática Google Calendar (`color`):** 11 tonos oficiales (Pavo real, Lavanda, Uva, Flamenco, Tomate, Mandarina, Plátano, Salvia, Albahaca, Arándano, Grafito) más el color predeterminado del calendario.
+    - **Recordatorios / Notificaciones (`notification_minutes`):** 10 min, 15 min, 30 min, 1 hora, 1 día o sin recordatorio.
+    - **Disponibilidad y Visibilidad (`availability` / `visibility`):** Ocupado/Disponible y Predeterminada/Pública/Privada.
+    - **Notas y Descripción:** Soporte amplio para agenda y enlaces clickeables.
+  - **Drawer de Detalle del Evento (`drawer-event-detail`):**
+    - Visualización de insignia de recurrencia, botón prominente "Unirse con Google Meet", lista de invitados con avatares iniciales, badges de disponibilidad/visibilidad y botón "✏️ Editar" para abrir el formulario de actualización inmediata.
+  - **Integración con Asistente Elio:**
+    - `agendar_evento_calendario` en `antigravity_agent.py` actualizado para aceptar videollamadas, invitados y eventos de día completo.
+
+- **Fase 77 - Creación y Edición de Eventos con Características Completas Estilo Google Calendar:**
+  - **Modal de Creación y Edición Enriquecido (`new-event-modal`):**
+    - Rediseño integral inspirado en Google Calendar, con soporte para crear nuevos eventos y editar registros existentes (`POST /api/events` y `PUT /api/events/{id}`).
+    - **Horario y Fechas Avanzadas:** Modo "Todo el día" (conmuta dinámicamente entre selectores de solo fecha o fecha+hora de inicio y fin).
+    - **Recurrencia / Repetición (`recurrence`):** Opciones para "No se repite", "Cada día", "Cada semana", "Cada mes", "Anualmente" y "Todos los días laborables (lun-vie)".
+    - **Videoconferencia Integrada Google Meet (`meeting_url`):** Botón para generar salas virtuales automáticas (`meet.google.com/xxx-yyyy-zzz`), caja de reunión con botón para copiar enlace con sticky toast, enlace directo clickeable y opción para quitar o personalizar con URLs de Zoom/Teams.
+    - **Ubicación Física:** Campo para direcciones, salas u oficinas.
+    - **Gestión de Invitados (`attendees`):** Chips interactivos de asistentes con botón de eliminación `×` y validación de correo.
+    - **Paleta Cromática Google Calendar (`color`):** 11 tonos oficiales (Pavo real, Lavanda, Uva, Flamenco, Tomate, Mandarina, Plátano, Salvia, Albahaca, Arándano, Grafito) más el color predeterminado del calendario.
+    - **Recordatorios / Notificaciones (`notification_minutes`):** 10 min, 15 min, 30 min, 1 hora, 1 día o sin recordatorio.
+    - **Disponibilidad y Visibilidad (`availability` / `visibility`):** Ocupado/Disponible y Predeterminada/Pública/Privada.
+    - **Notas y Descripción:** Soporte amplio para agenda y enlaces clickeables.
+  - **Drawer de Detalle del Evento (`drawer-event-detail`):**
+    - Visualización de insignia de recurrencia, botón prominente "Unirse con Google Meet", lista de invitados con avatares iniciales, badges de disponibilidad/visibilidad y botón "✏️ Editar" para abrir el formulario de actualización inmediata.
+  - **Integración con Asistente Elio:**
+    - `agendar_evento_calendario` en `antigravity_agent.py` actualizado para aceptar videollamadas, invitados y eventos de día completo.
+
+- **Fase 76 - Tareas sin Fecha en Calendarios, Herencia de Color de Cuentas y Control de Desbordamiento con Modal:**
+  - **Sección de Tareas sin Fecha (Tasks):**
+    - Nueva tarjeta lateral en el módulo de Calendario (`#calendar-tasks-list`) con contador dinámico y botón de creación directa (`+ Nueva`).
+    - Soporte completo en backend (`backend/database.py`, `backend/calendar_service.py`, `backend/main.py`) para tareas sin fecha fija (`start_time=""` o `NULL`, `is_task=1`, `is_completed=0/1`).
+    - Checkboxes interactivos para marcar tareas como completadas o reactivarlas (`PATCH /api/tasks/{id}/toggle`), con tachado visual y persistencia.
+  - **Identificación Cromática según Calendario o Cuenta Conectada:**
+    - Eventos y tareas heredan el color específico del calendario (`calendar_color`) y, en caso de no tenerlo, el color de la cuenta conectada (`account_color`), garantizando que cada registro muestre visualmente su procedencia.
+    - Soporte multicuenta sin duplicaciones (`LEFT JOIN` corregido con subconsulta determinista).
+  - **Control de Desbordamiento en Celdas Mensuales (`+N más`):**
+    - En la vista de mes, cada celda muestra un máximo de 2 eventos para evitar distorsiones en la cuadrícula.
+    - Cuando un día supera este límite, se renderiza un botón estilizado `+N más (X total)`.
+    - Al hacer clic en el botón se abre el modal central `#modal-day-events`, mostrando todos los eventos y tareas programados para esa fecha con su hora, color y acceso directo al modal lateral de detalle.
+
+- **Fase 75 - Mejoras Avanzadas en Calendario: Modal Lateral de Detalle, Vistas (Mes, Semana, Día con Horas), Botón Hoy y Calendario por Defecto:**
+  - **Modal Lateral (Drawer) de Detalle del Evento (`drawer-event-detail`):** Panel lateral derecho que presenta toda la información disponible de citas y eventos. Incluye detector de enlaces para unirse con un clic a reuniones de Google Meet, Zoom o Teams en nueva pestaña (`target="_blank" rel="noopener noreferrer"`), enlaces web activos en la descripción (`linkifyText`), botón para saltar al correo de origen y eliminación protegida por modal `UI.confirm` con notificación sticky.
+  - **Vistas Dinámicas de Mes, Semana y Día (Horas):** Selector de modalidades con persistencia en `localStorage` (`merke_calendar_view`).
+    - *Mes:* Cuadrícula mensual completa con indicadores de días y eventos.
+    - *Semana:* 7 columnas (Lun-Dom) con franjas horarias (07:00 a 21:00) y eventos mapeados a sus horas respectivas.
+    - *Día:* Timeline diario vertical de 06:00 a 23:00 con detalle exhaustivo de compromisos y atajos para agendar en horas vacías.
+  - **Botón Hoy y Navegación Reactiva:** Botón `Hoy` para regresar a la fecha actual y navegación `<` / `>` adaptada a semanas, días o meses según la vista activa.
+  - **Calendario por Defecto y Tareas:**
+    - Selector en `drawer-settings` (`settings-default-calendar-select`) guardado en la base de datos (`default_calendar_id`).
+    - Modal de creación (`new-event-modal`) con alternador de tipo "Evento / Cita" vs "Tarea / Pendiente", preseleccionando el calendario por defecto y permitiendo elegir otro.
+    - Asistente Elio (`agendar_evento_calendario`) agenda citas y tareas en el calendario configurado por defecto.
+
+- **Fase 74 - Solución a Error de Conexión en Lanzador de Escritorio (`ERR_CONNECTION_REFUSED`):**
+  - **Incompatibilidad pyOpenSSL en Virtualenv:** Se resolvió el conflicto de `AttributeError: module 'lib' has no attribute 'GEN_EMAIL'` originado por paquetes de sistema en Ubuntu 24.04 al importar bibliotecas de Google API con `cryptography` moderna.
+  - **Fijación de pyopenssl:** Se instaló y fijó `pyopenssl==26.4.0` tanto en el venv de la app de escritorio (`~/.local/share/merkemail/.venv`) como en desarrollo y en `requirements.txt`.
+  - **Margen de Arranque en Ventana:** Se aumentó la ventana de espera de arranque del backend a 8 segundos en `desktop/app_window.py` y `desktop/tray.py`.
+  - **Sincronización:** Se ejecutó `scripts/install_desktop.sh` y se validó que el backend responda en el puerto 6524.
+
+- **Fase 73 - Blindaje y Auditoría de Seguridad de Cuentas Conectadas:**
+  - **Cifrado de Credenciales y Tokens en SQLite:** Implementado `backend/crypto_service.py` con clave `data/.secret.key` (permisos 0600). Las contraseñas IMAP y tokens de actualización (`oauth_refresh_token`) se almacenan cifrados con Fernet.
+  - **Eliminación de Exposición de Tokens:** Se blindaron los endpoints `/api/accounts` y `/api/accounts/{id}` para no exponer bajo ninguna circunstancia los tokens OAuth ni contraseñas.
+  - **Endurecimiento de CORS:** Eliminado `allow_origins=["*"]` y limitado exclusivamente a localhost/127.0.0.1 para evitar peticiones cruzadas desde webs de terceros.
+  - **CSRF Token en OAuth2:** Generación y validación de tokens aleatorios para el parámetro `state` en el flujo de Google OAuth.
+  - **CSP Estricto en Visor de Correos:** Aislamiento total de scripts en el iframe de lectura con `Content-Security-Policy: script-src 'none'`.
+
+- **Fase 72 - Reubicación Responsiva de Etiquetas en Barra Delgada Secundaria:**
+  - **Detección Automática de Espacio Disponible:** Implementado `EmailManager.setupLabelsResponsivePlacement` con `ResizeObserver` y detector de ancho en el panel de lectura.
+  - **Barra Delgada Inferior (`#email-secondary-labels-bar`):** Al estrechar la ventana o en pantallas compactas donde los botones de acción ocupan el ancho superior, las etiquetas se desplazan fluidamente a una barra secundaria delgada ubicada justo debajo de las acciones.
+  - **Comportamiento Reversible y Scroll Suave:** Al recuperar el espacio en pantalla grande, las etiquetas retornan arriba; en ambas ubicaciones cuentan con desplazamiento horizontal fluido con rueda de ratón o tacto.
+
+- **Fase 71 - Scroll Horizontal para Etiquetas en Barra Superior de Correo:**
+  - **Desplazamiento Horizontal en `.email-labels-scroll`:** Se modificó la barra superior del visor de correo abierto individual para contener las etiquetas en un carril con `overflow-x-auto flex-nowrap` y scrollbar delgado estilizado.
+  - **Interacción Fluida con Rueda del Ratón:** Se habilitó el desplazamiento horizontal con la rueda del ratón (`wheel` a `scrollLeft`), evitando que las etiquetas se oculten o salten de línea.
+  - **Blindaje de la Barra de Acciones:** La barra de acciones de la derecha se mantiene intacta en una sola fila con `flex-nowrap shrink-0`.
+
+- **Fase 70 - Opción de Nuevo Chat Limpio (Sin Resumen ni Persistencia de Contexto):**
+  - **Botón en Cabecera de Elio:** Se incorporó el botón con icono `+` (`#btn-antigravity-new-chat`) al lado del control de ampliación.
+  - **Limpieza Total de Contexto:** Al activarlo, descarta y borra todos los mensajes y estados previos del DOM y memoria sin guardarlos, e invoca el endpoint `POST /api/agent/reset`.
+  - **Inicio Directo sin Tarjeta de Resumen:** La nueva conversación se inicia con un saludo limpio y directo de Elio sin inyectar la tarjeta de estado de bandeja ni recomendaciones, enfocando el input para redactar o consultar de inmediato.
+
+- **Fase 69 - Búsqueda de Correos por Fecha y Estado (Leídos y No Leídos en Recibidos):**
+  - **Detección de Fechas Relativas en Herramientas:** Se mejoró `buscar_correos` en `backend/antigravity_agent.py` para reconocer términos como "ayer", "hoy", "antier" y formatos de fecha YYYY-MM-DD o DD/MM/YYYY.
+  - **Depuración de Stopwords:** Se eliminan automáticamente términos de orden o intención (`busca`, `correos`, `de ayer`, `leídos`) del filtro textual para evitar que fallen búsquedas temporales.
+  - **Inclusión de Leídos y No Leídos en Recibidos:** La herramienta ahora busca tanto en correos leídos (`is_read = 1`) como no leídos (`is_read = 0`) en toda la bandeja de Recibidos (`INBOX`, `CATEGORY_UPDATES`, `CATEGORY_PROMOTIONS`, etc.), permitiendo a Elio listar todos los correos recibidos ayer o en cualquier fecha con sus respectivos enlaces directos al visor.
+
+- **Fase 68 - Ventana de Asistente Elio Redimensionable y Ajuste Responsivo Total:**
+  - **Tirador Resizer Interactivo:** Se integró un resizer lateral arrastrable (`#antigravity-drawer-resizer`) en el borde izquierdo del panel de Elio con cursor `ew-resize`, permitiendo al usuario cambiar el ancho libremente con el ratón entre 360px y el 94% del ancho de la pantalla, persistiendo la medida en `localStorage`.
+  - **Botón de Ampliar/Restaurar:** Botón `#btn-antigravity-toggle-expand` en la cabecera de Elio para alternar entre vista estándar (~448px) y vista expandida (~680px - 90vw), con cambio reactivo de iconos expand/compress.
+  - **Ajuste Estricto de Contenido:** Se aplicaron clases `min-w-0 w-full overflow-hidden break-words` en `#antigravity-messages-container`, `#antigravity-welcome-bubble` y en los mensajes del chat, solucionando el desborde horizontal de texto y botones en el modo estándar.
+
+- **Fase 67 - Licencia Business Source License 1.1 (BSL 1.1) y Perfil IA del Usuario:**
+  - **Licencia BSL 1.1:** Archivo `LICENSE` asignado formalmente con conversión a Apache 2.0 a los 4 años y referenciado en `README.md`.
+  - **Perfil IA del Usuario:** Módulo `user_profile_service.py` y `frontend/js/user_profile.js` para extraer y sintetizar datos del usuario (nombre, teléfono, dirección, rol, tono, enlaces) desde firmas y correos, alimentando el contexto para la redacción de correos.
+
+- **Fase 66 - Libreta de Contactos, Invocación @elio y Prevención de Guardado en Spam/Papelera:**
+  - **Sincronización de Contactos:** Servicio y drawer de contactos de cuentas conectadas sincronizado periódicamente cada 15 min.
+  - **Invocación @elio en Búsqueda:** Al escribir `@elio ...` en la barra de búsqueda superior, se intercepta automáticamente, abriendo el chat de Elio y trasladando la consulta.
+  - **Restricción de Almacenamiento:** Deshabilitado el botón de almacenar/archivar para correos en Spam, Papelera o Borradores.
+  - **Visor Inicial Vacío:** Si la lista de correos está vacía o hay error, el visor muestra la pantalla inicial en lugar de retener el último correo abierto.
+
+- **Fase 65 - Mensajes de Error Empáticos y Humanos con Ilustración `error.gif`:**
+  - **Ilustración de Desconexión (`img/error.gif`):** Incorporada la ilustración del usuario en el sistema (`img/error.gif` y `~/.local/share/merkemail/img/error.gif`).
+  - **Función Centralizada `UI.renderErrorState`:** Genera un diseño centrado, limpio y amable adaptado con tamaños proporcionados (`sm` para drawers/chat, `md` para listas y detalle de correos), explicando de manera humana lo ocurrido y ofreciendo un botón para reintentar la acción.
+  - **Humanización de Errores Técnicos:** Sustituidos mensajes como `Failed to fetch` o excepciones HTTP por explicaciones empáticas en Antigravity Copilot, la lista de correos, el visor de lectura y las notificaciones sticky.
+  - **Reintento Directo en Copilot:** En caso de corte o desconexión, el chat de Antigravity muestra la tarjeta con `error.gif` y el botón *"Reintentar mensaje"* para reenviar la última solicitud sin tener que volver a escribirla.
 
 - **Fase 62 - Optimización de Rendimiento y Resolución de Procesos Huérfanos/Zombies:**
   - **Detección y Limpieza de Procesos:** Se identificaron procesos secundarios huérfanos/zombies acumulados de recargas previas de Uvicorn (`--reload`) que causaban congestión en los sockets locales. Se purgaron todos los procesos huérfanos y se estabilizó el servidor Uvicorn en modo directo, reduciendo la latencia de respuesta de los correos a **6-8 ms**.
@@ -431,3 +586,29 @@
 
 
 
+
+## Última Actualización: Libreta de Contactos y Sincronización cada 15m
+- Botón 1 ahora abre el Drawer de Libreta de Contactos (`drawer-contacts`).
+- Botón 3 conserva la apertura del Drawer de Cuentas (`drawer-accounts`).
+- Sincronización automática de contactos en segundo plano cada 15 minutos (900s) extrayendo interactores de todas las cuentas.
+- Autocompletado inteligente en los campos de destinatarios (`Para`, `CC`, `CCO`) al redactar, responder y reenviar.
+- Acceso a búsqueda de contactos integrado en el agente inteligente Elio.
+
+## Última Actualización: Invocación @elio en Buscador Principal
+- `@elio` en el buscador ya no se procesa como búsqueda de correos; no filtra ni vacía la bandeja.
+- Abre automáticamente el drawer de Elio y traslada la pregunta correspondiente.
+- Se agregó botón contextual `Preguntar a Elio ↵` en el buscador para envío inmediato por Enter o clic.
+
+## Última Actualización: Visor de Correos Inicial en Vacío o Error
+- El visor de lectura se resetea automáticamente a "Ningún correo seleccionado" cuando la lista no tiene correos, ocurre un error o el correo consultado ya no está en la bandeja activa.
+
+## Última Actualización: Bloqueo de Almacenamiento/Archivado en Spam, Papelera y Borradores
+- No se permite archivar correos que pertenezcan a Spam, Papelera o Borradores (se ocultan los botones en la interfaz y se bloquea en backend).
+
+## Última Actualización: Perfil de Usuario Analizado por IA
+- Integrado en el sidebar bajo 'HERRAMIENTAS IA' -> 'Perfil del Usuario'.
+- Drawer lateral con botón para analizar con Gemini firmas, cuentas y correos enviados.
+- Almacenamiento persistente en base de datos e inyección de contexto en redactor, respuestas inteligentes y asistente Elio.
+
+## Última Actualización: Licencia BSL 1.1
+- Se configuró la Business Source License 1.1 (BSL 1.1) en el archivo LICENSE y README.md.

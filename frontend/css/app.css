@@ -22,6 +22,28 @@ body {
     background: rgba(100, 116, 139, 0.7);
 }
 
+/* Contenedor de Etiquetas con scroll horizontal suave y limpio */
+.email-labels-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.4) transparent;
+}
+.email-labels-scroll::-webkit-scrollbar {
+    height: 4px;
+}
+.email-labels-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+.email-labels-scroll::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.35);
+    border-radius: 9999px;
+}
+.email-labels-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.65);
+}
+
 /* Animaciones de Cajones Laterales (Drawers) */
 .drawer-backdrop {
     transition: opacity 0.25s ease-in-out;

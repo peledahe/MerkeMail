@@ -5,6 +5,19 @@ from google import genai
 from google.genai import types
 from backend.database import get_setting
 
+TONE_DESCRIPTIONS = {
+    "formal": "formal y ejecutivo (estilo profesional de negocios, muy respetuoso, estructurado y formal)",
+    "cordial": "cordial (amable, educado, atento y profesional con calidez)",
+    "amigable": "amigable (cercano y jovial, con calidez humana, entusiasmo, simpatía y trato cercano sin formalismos rígidos)",
+    "familiar": "familiar (con profundo afecto, cercanía entrañable, cariño y confianza íntima, como si se tratara de un miembro de la propia familia)",
+    "conciso": "conciso y directo (breve, al grano, sin rodeos ni frases de relleno)",
+    "comercial": "comercial y persuasivo (orientado a ventas, destacando beneficios y con una llamada a la acción atractiva)"
+}
+
+def get_tone_description(tone: str) -> str:
+    key = (tone or "formal").strip().lower()
+    return TONE_DESCRIPTIONS.get(key, tone)
+
 class GeminiService:
     @staticmethod
     def get_client(api_key: Optional[str] = None) -> genai.Client:
@@ -134,9 +147,20 @@ class GeminiService:
             "'subject' (asunto sugerido) y 'body' (cuerpo del correo formateado en párrafos limpios)."
         )
         
+        tone_desc = get_tone_description(tone)
+        
+        user_profile_context = ""
+        try:
+            from backend.user_profile_service import UserProfileService
+            user_profile_context = UserProfileService.get_context_prompt_snippet()
+        except Exception:
+            pass
+
         user_content = f"""
+        {user_profile_context}
+
         Instrucción del usuario: {prompt}
-        Tono deseado: {tone} (formal, cordial, persuasivo, conciso, directo o comercial)
+        Tono deseado: {tone_desc}
         Idioma: {language}
         Contexto del destinatario: {recipient_context or 'No especificado'}
         Borrador actual existente (si aplica mejorar): {current_draft or 'Ninguno'}
@@ -189,7 +213,16 @@ class GeminiService:
             "organizado en párrafos limpios y listos para enviar."
         )
 
+        user_profile_context = ""
+        try:
+            from backend.user_profile_service import UserProfileService
+            user_profile_context = UserProfileService.get_context_prompt_snippet()
+        except Exception:
+            pass
+
         user_content = f"""
+        {user_profile_context}
+
         CORREO RECIBIDO:
         De: {sender}
         Asunto: {subject}
@@ -198,9 +231,9 @@ class GeminiService:
 
         INSTRUCCIÓN O NOTA ADICIONAL: {user_instruction or 'Redactar una respuesta completa, atenta y profesional respondiendo a lo planteado en el correo.'}
         BORRADOR PREVIO DEL USUARIO (si empezó a escribir algo): {current_draft or 'Ninguno'}
-        TONO DESEADO: {tone}
+        TONO DESEADO: {get_tone_description(tone)}
 
-        Por favor genera la respuesta apropiada en español respetando el contexto del correo recibido.
+        Por favor genera la respuesta apropiada en español respetando el contexto del correo recibido y adoptando el perfil del remitente.
         """
 
         response = cls._generate_with_fallback(

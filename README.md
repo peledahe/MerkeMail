@@ -78,3 +78,10 @@ La aplicación estará disponible en: **http://127.0.0.1:8000**
 2. Pega tu API Key de [Google AI Studio](https://aistudio.google.com/app/apikey).
 3. Haz clic en **Probar Conexión** para verificar el estado en tiempo real.
 4. Selecciona tu modelo favorito (`gemini-2.5-flash` o `gemini-2.5-pro`) y pulsa **Guardar Cambios**.
+
+---
+
+## 📄 Licencia
+
+Este proyecto está licenciado bajo la **Business Source License 1.1 (BSL 1.1)**. Consulta el archivo [LICENSE](file:///home/perry/Desarrollo/MerkeMail/LICENSE) para conocer los términos completos y las concesiones de uso. En la fecha de cambio (Change Date), el código transiciona automáticamente a **GNU General Public License v2.0 or later (GPL-2.0-or-later)**.
+

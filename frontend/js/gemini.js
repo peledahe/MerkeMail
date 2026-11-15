@@ -3,15 +3,22 @@
 const GeminiAI = {
     currentCandidates: [],
     isAiActive: false,
-    geminiEnabled: true,
+    geminiEnabled: false,
     hasGeminiKey: false,
+
+    setDisconnectedState() {
+        this.geminiEnabled = false;
+        this.hasGeminiKey = false;
+        this.isAiActive = false;
+        this.applyAIStatusUI();
+    },
 
     applyAIStatusUI() {
         const isAiActive = !!(this.geminiEnabled && this.hasGeminiKey);
         this.isAiActive = isAiActive;
 
         // 1. Indicador en el icono de configuración (Header)
-        // Rojo cuando no está activo, verde cuando está activo
+        // Rojo cuando no está activo o sin key o sin conexión, verde únicamente cuando está activo y configurado
         const statusDot = document.getElementById('gemini-status-dot');
         if (statusDot) {
             if (isAiActive) {
@@ -19,7 +26,7 @@ const GeminiAI = {
                 statusDot.title = 'Servicio de IA Gemini activo';
             } else {
                 statusDot.className = 'w-2 h-2 rounded-full bg-rose-500 absolute top-1 right-1 ring-2 ring-white dark:ring-slate-900';
-                statusDot.title = !this.geminiEnabled ? 'Servicio de IA desactivado' : 'API Key de Gemini no configurada';
+                statusDot.title = !this.hasGeminiKey ? 'API Key de Gemini no configurada' : (!this.geminiEnabled ? 'Servicio de IA desactivado' : 'Sin conexión con la IA');
             }
         }
 
@@ -82,8 +89,10 @@ const GeminiAI = {
         document.querySelectorAll('.btn-reply-ai-feature').forEach(el => {
             if (isAiActive) {
                 el.classList.remove('hidden');
+                if (el.id === 'inline-reply-tone-container') el.classList.add('flex');
             } else {
                 el.classList.add('hidden');
+                if (el.id === 'inline-reply-tone-container') el.classList.remove('flex');
             }
         });
 
@@ -140,13 +149,18 @@ const GeminiAI = {
             }
         }
 
+        const isReallyActive = !!(enabled && this.hasGeminiKey);
+
         if (pill) {
-            if (enabled) {
+            if (isReallyActive) {
                 pill.className = 'inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shrink-0';
                 pill.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Activo';
-            } else {
+            } else if (!enabled) {
                 pill.className = 'inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 dark:text-slate-400 border border-slate-500/20 shrink-0';
                 pill.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Desactivado';
+            } else {
+                pill.className = 'inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 shrink-0';
+                pill.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Inactivo';
             }
         }
 
@@ -167,15 +181,27 @@ const GeminiAI = {
         }
 
         if (statusBadge) {
-            if (!enabled) {
-                statusBadge.className = 'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-500/10 text-slate-500 dark:text-slate-400 border border-slate-500/20';
-                statusBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Desactivado';
-            } else if (this.hasGeminiKey) {
+            if (isReallyActive) {
                 statusBadge.className = 'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20';
                 statusBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Conectado';
+            } else if (!enabled) {
+                statusBadge.className = 'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-500/10 text-slate-500 dark:text-slate-400 border border-slate-500/20';
+                statusBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Desactivado';
             } else {
                 statusBadge.className = 'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20';
-                statusBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Sin configurar';
+                statusBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Inactivo';
+            }
+        }
+
+        // Actualizar también el indicador del asistente Elio
+        const elioBadge = document.getElementById('antigravity-agent-status-badge');
+        if (elioBadge) {
+            if (isReallyActive) {
+                elioBadge.className = 'text-[9px] px-1.5 py-0.5 rounded font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+                elioBadge.textContent = 'AGENTIC';
+            } else {
+                elioBadge.className = 'text-[9px] px-1.5 py-0.5 rounded font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20';
+                elioBadge.textContent = 'INACTIVO';
             }
         }
     },
@@ -187,18 +213,32 @@ const GeminiAI = {
     async initSettings() {
         try {
             const res = await fetch('/api/settings');
+            if (!res.ok) {
+                this.setDisconnectedState();
+                return;
+            }
             const data = await res.json();
             
             const keyInput = document.getElementById('gemini-api-key-input');
             const modelSelect = document.getElementById('gemini-model-select');
 
+            const isKeyNotEmpty = !!(data.gemini_api_key && data.gemini_api_key.trim().length > 0);
             this.geminiEnabled = (data.gemini_enabled !== false && data.gemini_enabled !== 'false' && data.gemini_enabled !== 0);
-            this.hasGeminiKey = !!data.has_gemini_key;
-            this.isAiActive = !!data.is_ai_active;
+            this.hasGeminiKey = !!(data.has_gemini_key && isKeyNotEmpty);
+            this.isAiActive = !!(this.geminiEnabled && this.hasGeminiKey);
 
             this.updateSwitchUI(this.geminiEnabled);
 
-            if (keyInput) keyInput.value = data.gemini_api_key || '';
+            if (keyInput) {
+                keyInput.value = data.gemini_api_key || '';
+                keyInput.oninput = () => {
+                    const keyVal = keyInput.value.trim();
+                    this.hasGeminiKey = keyVal.length > 0;
+                    this.isAiActive = !!(this.geminiEnabled && this.hasGeminiKey);
+                    this.updateSwitchUI(this.geminiEnabled);
+                    this.applyAIStatusUI();
+                };
+            }
 
             if (this.hasGeminiKey && data.gemini_api_key) {
                 // Cargar modelos dinámicamente según la API conectada
@@ -207,10 +247,39 @@ const GeminiAI = {
                 modelSelect.innerHTML = '<option value="">(Ingresa tu API Key y pulsa "Probar Conexión" para listar modelos)</option>';
             }
 
+            // Seleccionar el tono por defecto guardado
+            const savedTone = data.ai_prompt_tone || data.gemini_default_tone || 'formal';
+            const defaultToneSelect = document.getElementById('gemini-default-tone');
+            if (defaultToneSelect) defaultToneSelect.value = savedTone;
+            const composeToneSelect = document.getElementById('ai-compose-tone');
+            if (composeToneSelect) composeToneSelect.value = savedTone;
+
+            // Poblar y seleccionar el calendario predeterminado
+            const defaultCalSelect = document.getElementById('settings-default-calendar-select');
+            if (defaultCalSelect) {
+                try {
+                    const calRes = await fetch('/api/calendars');
+                    const cals = await calRes.json();
+                    if (cals && cals.length > 0) {
+                        const targetCalId = data.default_calendar_id || cals[0].id;
+                        defaultCalSelect.innerHTML = cals.map(c => `
+                            <option value="${c.id}" ${c.id == targetCalId ? 'selected' : ''}>
+                                ${c.name} (${c.provider})
+                            </option>
+                        `).join('');
+                    } else {
+                        defaultCalSelect.innerHTML = '<option value="">(No hay calendarios activos)</option>';
+                    }
+                } catch (calErr) {
+                    console.error("Error al cargar lista de calendarios en ajustes:", calErr);
+                }
+            }
+
             // Aplicar reactividad a toda la interfaz
             this.applyAIStatusUI();
         } catch (e) {
-            console.error("Error al cargar ajustes de Gemini:", e);
+            console.warn("Sin conexión con el servicio de IA:", e);
+            this.setDisconnectedState();
         }
     },
 
@@ -295,6 +364,8 @@ const GeminiAI = {
         const apiKey = document.getElementById('gemini-api-key-input').value.trim();
         const model = document.getElementById('gemini-model-select').value;
         const tone = document.getElementById('gemini-default-tone').value;
+        const defaultCalEl = document.getElementById('settings-default-calendar-select');
+        const defaultCalendarId = defaultCalEl ? (defaultCalEl.value || '1') : '1';
 
         try {
             const res = await fetch('/api/settings', {
@@ -304,15 +375,19 @@ const GeminiAI = {
                     gemini_enabled: isEnabled ? 'true' : 'false',
                     gemini_api_key: apiKey,
                     gemini_model: model,
-                    ai_prompt_tone: tone
+                    ai_prompt_tone: tone,
+                    default_calendar_id: defaultCalendarId
                 })
             });
             if (res.ok) {
                 const toastMsg = isEnabled 
-                    ? 'Ajustes de IA y API Key actualizados exitosamente' 
-                    : 'Servicio de IA desactivado. Las opciones de IA han sido ocultadas.';
+                    ? 'Ajustes de IA y Calendario actualizados exitosamente' 
+                    : 'Ajustes guardados correctamente.';
                 UI.showStickyToast('Configuración Guardada', toastMsg, 'success');
                 await this.initSettings();
+                if (window.CalendarManager && typeof CalendarManager.loadDefaultCalendarConfig === 'function') {
+                    await CalendarManager.loadDefaultCalendarConfig();
+                }
                 UI.closeDrawer('drawer-settings');
             } else {
                 const err = await res.json();
@@ -339,7 +414,7 @@ const GeminiAI = {
 
         const originalBtnText = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = `<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Generando con Gemini...`;
+        btn.innerHTML = `<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Generando con Elio...`;
 
         try {
             const res = await fetch('/api/ai/draft', {
@@ -357,7 +432,7 @@ const GeminiAI = {
                 subjectResult.textContent = data.data.subject;
                 bodyResult.textContent = data.data.body;
                 resultBox.classList.remove('hidden');
-                UI.showStickyToast('Borrador Generado', 'Gemini ha redactado tu correo con éxito', 'success');
+                UI.showStickyToast('Borrador Generado', 'Elio ha redactado tu correo con éxito', 'success');
             } else {
                 UI.showStickyToast('Error de Generación', data.detail || 'Verifica tu API Key', 'error');
             }
@@ -431,7 +506,7 @@ const GeminiAI = {
 
         const originalBtnText = btnAnalyze.innerHTML;
         btnAnalyze.disabled = true;
-        btnAnalyze.innerHTML = `<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Evaluando buzón con Gemini...`;
+        btnAnalyze.innerHTML = `<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Evaluando buzón con Elio...`;
 
         listContainer.innerHTML = `<div class="p-8 text-center text-slate-400 text-xs">Evaluando correos con IA...</div>`;
 
@@ -473,7 +548,13 @@ const GeminiAI = {
                 btnExecute.classList.remove('opacity-50');
             }
         } catch (e) {
-            listContainer.innerHTML = `<div class="p-4 text-center text-rose-500 text-xs">Error: ${e.message}</div>`;
+            listContainer.innerHTML = window.UI ? UI.renderErrorState({
+                title: 'No pudimos analizar los correos',
+                message: 'Ocurrió un inconveniente al evaluar los mensajes con IA. Verifica tu conexión o intenta con un criterio más específico.',
+                retryAction: 'GeminiAI.previewCleanup()',
+                retryText: 'Reintentar análisis',
+                size: 'sm'
+            }) : `<div class="p-4 text-center text-rose-500 text-xs">Error al procesar solicitud</div>`;
         } finally {
             btnAnalyze.disabled = false;
             btnAnalyze.innerHTML = originalBtnText;

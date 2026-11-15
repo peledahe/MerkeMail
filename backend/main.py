@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, HTTPException, Query, Body, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, Body, BackgroundTasks, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,15 +14,27 @@ from backend.gemini_service import GeminiService
 from backend.config_service import ConfigService
 from backend.antigravity_agent import AntigravityMailAgent
 from backend.google_oauth import GoogleOAuthService
+from backend.contacts_service import ContactsService
+from backend.crypto_service import CryptoService
+import secrets
 
 app = FastAPI(title="MerkeMail - Email & Calendar Manager")
 
-# Habilitar CORS
+# Habilitar CORS seguro restringido a orígenes locales
+ALLOWED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:6524",
+    "http://127.0.0.1:6524",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -109,7 +121,7 @@ class BatchActionRequest(BaseModel):
     label_id: Optional[int] = None
 
 class EventCreateRequest(BaseModel):
-    calendar_id: int
+    calendar_id: Optional[int] = None
     title: str
     start_time: str
     end_time: str
@@ -117,6 +129,40 @@ class EventCreateRequest(BaseModel):
     location: Optional[str] = ""
     all_day: int = 0
     origin_email_id: Optional[int] = None
+    is_task: Optional[int] = 0
+    account_id: Optional[int] = None
+    meeting_url: Optional[str] = ""
+    color: Optional[str] = ""
+    recurrence: Optional[str] = "none"
+    notification_minutes: Optional[int] = 10
+    attendees: Optional[str] = ""
+    availability: Optional[str] = "busy"
+    visibility: Optional[str] = "default"
+
+class EventUpdateRequest(BaseModel):
+    calendar_id: Optional[int] = None
+    title: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    description: Optional[str] = None
+    location: Optional[str] = None
+    all_day: Optional[int] = None
+    is_task: Optional[int] = None
+    account_id: Optional[int] = None
+    meeting_url: Optional[str] = None
+    color: Optional[str] = None
+    recurrence: Optional[str] = None
+    notification_minutes: Optional[int] = None
+    attendees: Optional[str] = None
+    availability: Optional[str] = None
+    visibility: Optional[str] = None
+
+class TaskCreateRequest(BaseModel):
+    calendar_id: Optional[int] = None
+    title: str
+    description: Optional[str] = ""
+    due_date: Optional[str] = ""
+    account_id: Optional[int] = None
 
 class SignatureCreateRequest(BaseModel):
     name: str
@@ -132,9 +178,27 @@ class LabelCreateRequest(BaseModel):
 class EmailLabelRequest(BaseModel):
     label_id: int
 
+import asyncio
+
+async def _periodic_contacts_sync():
+    """Sincroniza periódicamente la libreta de contactos cada 15 minutos."""
+    while True:
+        try:
+            await asyncio.sleep(900)  # 15 minutos
+            ContactsService.sync_contacts()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[Contacts] Error en sincronización periódica: {e}")
+
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     init_db()
+    try:
+        ContactsService.sync_contacts()
+    except Exception as e:
+        print(f"[Contacts] Error en sincronización inicial: {e}")
+    asyncio.create_task(_periodic_contacts_sync())
 
 @app.get("/")
 def serve_index():
@@ -171,7 +235,9 @@ def save_google_oauth_config(req: GoogleCredentialsRequest):
 @app.get("/api/auth/google/url")
 def get_google_auth_url(request: Request, redirect_uri: Optional[str] = None):
     effective_uri = redirect_uri or f"{str(request.base_url).rstrip('/')}/api/auth/google/callback"
-    url = GoogleOAuthService.get_authorization_url(effective_uri)
+    csrf_state = secrets.token_urlsafe(32)
+    set_setting("oauth_csrf_state", csrf_state)
+    url = GoogleOAuthService.get_authorization_url(effective_uri, state=csrf_state)
     if not url:
         return {
             "has_config": False,
@@ -180,7 +246,7 @@ def get_google_auth_url(request: Request, redirect_uri: Optional[str] = None):
     return {"has_config": True, "url": url}
 
 @app.get("/api/auth/google/callback", response_class=HTMLResponse)
-def google_oauth_callback(request: Request, code: Optional[str] = None, error: Optional[str] = None):
+def google_oauth_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
     if error:
         return HTMLResponse(content=f"""
             <html><body style="font-family: sans-serif; text-align: center; padding: 40px; background: #0f172a; color: #fff;">
@@ -189,6 +255,16 @@ def google_oauth_callback(request: Request, code: Optional[str] = None, error: O
                 <button onclick="window.close()" style="padding: 10px 20px; background: #334155; color: #fff; border: none; border-radius: 8px; cursor: pointer;">Cerrar Ventana</button>
             </body></html>
         """)
+
+    expected_state = get_setting("oauth_csrf_state")
+    if expected_state and state and state != expected_state:
+        return HTMLResponse(content="""
+            <html><body style="font-family: sans-serif; text-align: center; padding: 40px; background: #0f172a; color: #fff;">
+                <h2 style="color: #ef4444;">Fallo de Validación CSRF</h2>
+                <p>El token de estado de autenticación no coincide. Por seguridad se canceló la vinculación.</p>
+                <button onclick="window.close()" style="padding: 10px 20px; background: #334155; color: #fff; border: none; border-radius: 8px; cursor: pointer;">Cerrar Ventana</button>
+            </body></html>
+        """, status_code=403)
 
     if not code:
         return HTMLResponse(content="<h3>No se recibió código de autorización</h3>")
@@ -251,6 +327,43 @@ def get_available_models(data: Dict[str, str] = Body(...)):
     return GeminiService.test_and_list_models(key)
 
 # --- ENDPOINTS DE APLICACIÓN DE ESCRITORIO (LINUX / UBUNTU) ---
+_desktop_window_callbacks = {
+    "minimize": None,
+    "toggle_maximize": None,
+    "close": None,
+    "is_maximized": lambda: False
+}
+
+def register_desktop_window_callbacks(minimize=None, toggle_maximize=None, close=None, is_maximized=None):
+    global _desktop_window_callbacks
+    if minimize: _desktop_window_callbacks["minimize"] = minimize
+    if toggle_maximize: _desktop_window_callbacks["toggle_maximize"] = toggle_maximize
+    if close: _desktop_window_callbacks["close"] = close
+    if is_maximized: _desktop_window_callbacks["is_maximized"] = is_maximized
+
+@app.post("/api/desktop/window/{action}")
+def window_action(action: str):
+    cb = _desktop_window_callbacks.get(action)
+    if cb:
+        try:
+            res = cb()
+            return {"success": True, "action": action, "result": res}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    return {"success": False, "error": f"Controlador de ventana no registrado para '{action}'"}
+
+@app.get("/api/desktop/window/state")
+def window_state():
+    is_max = False
+    cb = _desktop_window_callbacks.get("is_maximized")
+    if cb:
+        try:
+            is_max = cb()
+        except Exception:
+            pass
+    has_handler = bool(_desktop_window_callbacks.get("close"))
+    return {"is_maximized": bool(is_max), "has_handler": has_handler}
+
 @app.get("/api/desktop/settings")
 def get_desktop_settings():
     return ConfigService.get_desktop_settings()
@@ -275,9 +388,38 @@ def reinstall_desktop():
 @app.get("/api/accounts")
 def list_accounts():
     conn = get_db()
-    rows = conn.execute("SELECT id, name, email, provider, imap_host, imap_port, imap_user, smtp_host, smtp_port, is_active, color, sync_interval, avatar_url FROM accounts ORDER BY id ASC").fetchall()
+    rows = conn.execute("SELECT id, name, email, provider, imap_host, imap_port, imap_user, smtp_host, smtp_port, is_active, color, sync_interval, avatar_url, is_default FROM accounts ORDER BY id ASC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+@app.get("/api/accounts/default")
+def get_default_account():
+    conn = get_db()
+    row = conn.execute("SELECT id, name, email, provider, is_active, color, sync_interval, avatar_url, is_default FROM accounts WHERE is_default = 1 LIMIT 1").fetchone()
+    if not row:
+        row = conn.execute("SELECT id, name, email, provider, is_active, color, sync_interval, avatar_url, is_default FROM accounts ORDER BY id ASC LIMIT 1").fetchone()
+    conn.close()
+    if not row:
+        return None
+    return dict(row)
+
+@app.post("/api/accounts/{account_id}/default")
+def set_default_account(account_id: int):
+    conn = get_db()
+    acc = conn.execute("SELECT id, name, email, avatar_url, color FROM accounts WHERE id = ?", (account_id,)).fetchone()
+    if not acc:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+    conn.execute("UPDATE accounts SET is_default = 0")
+    conn.execute("UPDATE accounts SET is_default = 1 WHERE id = ?", (account_id,))
+    conn.commit()
+    conn.close()
+    set_setting("default_account_id", str(account_id))
+    return {
+        "success": True, 
+        "account": dict(acc), 
+        "message": f"'{acc['name'] or acc['email']}' establecida como cuenta por defecto"
+    }
 
 @app.get("/api/avatar/{email:path}")
 def get_avatar_for_email(email: str):
@@ -319,8 +461,12 @@ def get_account_detail(account_id: int):
     if not row:
         raise HTTPException(status_code=404, detail="Cuenta no encontrada")
     data = dict(row)
-    # Devolver password vacío para evitar exponerlo en texto plano
+    # Seguridad crítica: nunca exponer contraseñas ni tokens OAuth en respuestas JSON
     data["imap_password"] = ""
+    data["has_password"] = bool(row["imap_password"])
+    data["has_oauth_token"] = bool(row["oauth_refresh_token"])
+    data.pop("oauth_access_token", None)
+    data.pop("oauth_refresh_token", None)
     return data
 
 @app.post("/api/accounts")
@@ -333,12 +479,15 @@ def create_account(account: AccountCreate):
         if imap_user.endswith("@gmail.com") and not account.email.endswith("@gmail.com") and "gmail.com" not in (account.imap_host or ""):
             imap_user = account.email
 
+        # Cifrar contraseña de correo de forma transparente
+        encrypted_pass = CryptoService.encrypt(account.imap_password) if account.imap_password else ""
+
         cursor.execute('''
             INSERT INTO accounts (name, email, provider, imap_host, imap_port, imap_ssl, imap_user, imap_password, smtp_host, smtp_port, smtp_ssl, color, sync_interval)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             account.name, account.email, account.provider, account.imap_host, account.imap_port,
-            account.imap_ssl, imap_user, account.imap_password, account.smtp_host,
+            account.imap_ssl, imap_user, encrypted_pass, account.smtp_host,
             account.smtp_port, account.smtp_ssl, account.color, interval
         ))
         conn.commit()
@@ -360,13 +509,14 @@ def update_account(account_id: int, account: AccountUpdate):
             imap_user = account.email
 
         if account.imap_password and account.imap_password.strip():
+            encrypted_pass = CryptoService.encrypt(account.imap_password)
             cursor.execute('''
                 UPDATE accounts SET name = ?, email = ?, provider = ?, imap_host = ?, imap_port = ?,
                 imap_ssl = ?, imap_user = ?, imap_password = ?, smtp_host = ?, smtp_port = ?, smtp_ssl = ?, color = ?, sync_interval = ?
                 WHERE id = ?
             ''', (
                 account.name, account.email, account.provider, account.imap_host, account.imap_port,
-                account.imap_ssl, imap_user, account.imap_password, account.smtp_host,
+                account.imap_ssl, imap_user, encrypted_pass, account.smtp_host,
                 account.smtp_port, account.smtp_ssl, account.color, interval, account_id
             ))
         else:
@@ -1016,11 +1166,16 @@ def batch_action_emails(req: BatchActionRequest):
     placeholders = ",".join("?" for _ in req.email_ids)
 
     if req.action == "archive":
-        conn.execute(
-            f"UPDATE emails SET folder = CASE WHEN folder = 'ARCHIVE' THEN 'INBOX' ELSE 'ARCHIVE' END WHERE id IN ({placeholders})",
+        # No permitir archivar o almacenar correos que están en Papelera (TRASH), Spam (SPAM) o Borradores (DRAFT/DRAFTS)
+        cursor = conn.execute(
+            f"""
+            UPDATE emails 
+            SET folder = CASE WHEN folder = 'ARCHIVE' THEN 'INBOX' ELSE 'ARCHIVE' END 
+            WHERE id IN ({placeholders}) AND UPPER(COALESCE(folder, '')) NOT IN ('SPAM', 'TRASH', 'DRAFT', 'DRAFTS')
+            """,
             req.email_ids
         )
-        msg = f"{len(req.email_ids)} correos procesados (Archivado / Restaurar a Recibidos)"
+        msg = f"{cursor.rowcount} correos procesados (Archivado / Restaurar a Recibidos)"
     elif req.action == "spam":
         conn.execute(
             f"UPDATE emails SET folder = CASE WHEN folder = 'SPAM' THEN 'INBOX' ELSE 'SPAM' END WHERE id IN ({placeholders})",
@@ -1173,6 +1328,42 @@ def set_default_signature(sig_id: int):
     conn.close()
     return {"success": True, "message": "Firma establecida como predeterminada"}
 
+# --- ENDPOINTS DE PERFIL DEL USUARIO ANALIZADO POR IA ---
+class UserProfileUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    roles_and_titles: Optional[str] = None
+    organization: Optional[str] = None
+    phone: Optional[str] = None
+    address_location: Optional[str] = None
+    websites: Optional[str] = None
+    communication_style: Optional[str] = None
+    summary_bio: Optional[str] = None
+    extra_context: Optional[str] = None
+
+@app.get("/api/user-profile")
+def get_user_profile():
+    from backend.user_profile_service import UserProfileService
+    profile = UserProfileService.get_profile()
+    return {"success": True, "profile": profile}
+
+@app.post("/api/user-profile/analyze")
+def analyze_user_profile():
+    from backend.user_profile_service import UserProfileService
+    try:
+        profile = UserProfileService.analyze_profile()
+        return {"success": True, "profile": profile}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/user-profile")
+def update_user_profile(req: UserProfileUpdateRequest):
+    from backend.user_profile_service import UserProfileService
+    try:
+        profile = UserProfileService.update_profile(req.model_dump(exclude_unset=True))
+        return {"success": True, "profile": profile}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # --- ENDPOINTS DE AGENTE AUTÓNOMO ANTIGRAVITY ---
 class AgentChatRequest(BaseModel):
     message: str
@@ -1181,6 +1372,117 @@ class AgentChatRequest(BaseModel):
 async def chat_with_agent(req: AgentChatRequest):
     result = await AntigravityMailAgent.chat(req.message)
     return result
+
+@app.post("/api/agent/reset")
+def reset_agent_context():
+    """Reinicia la conversación del agente Elio sin persistir el contexto anterior."""
+    return {"success": True, "message": "Contexto de conversación reiniciado exitosamente."}
+
+@app.get("/api/agent/summary")
+def get_agent_summary():
+    """Genera un resumen inteligente en tiempo real de correos sin leer, asuntos urgentes y citas próximas con recomendaciones de atención."""
+    conn = get_db()
+    
+    # Total de correos sin leer en carpetas principales
+    unread_count = conn.execute(
+        "SELECT COUNT(*) as c FROM emails WHERE is_read = 0 AND folder NOT IN ('TRASH', 'SPAM')"
+    ).fetchone()["c"]
+
+    # Correos que requieren atención prioritaria (pagos, facturas, alertas de cuenta o seguridad)
+    priority_rows = conn.execute("""
+        SELECT id, sender, subject, date, snippet
+        FROM emails
+        WHERE folder NOT IN ('TRASH', 'SPAM')
+          AND (
+            subject LIKE '%pago%' OR subject LIKE '%factura%' OR subject LIKE '%alerta%'
+            OR subject LIKE '%suspensi%' OR subject LIKE '%urgente%' OR subject LIKE '%rechazado%'
+            OR snippet LIKE '%total a pagar%' OR snippet LIKE '%vencim%'
+          )
+        ORDER BY date DESC LIMIT 3
+    """).fetchall()
+
+    # Si hay pocos prioritarios, complementar con los correos sin leer más recientes
+    unread_rows = []
+    if len(priority_rows) < 3:
+        p_ids = [r["id"] for r in priority_rows]
+        placeholders = ",".join("?" for _ in p_ids) if p_ids else "-1"
+        unread_rows = conn.execute(f"""
+            SELECT id, sender, subject, date, snippet
+            FROM emails
+            WHERE is_read = 0 AND folder NOT IN ('TRASH', 'SPAM') AND id NOT IN ({placeholders})
+            ORDER BY date DESC LIMIT {3 - len(priority_rows)}
+        """, p_ids if p_ids else []).fetchall()
+
+    conn.close()
+
+    # Próxima cita de la agenda
+    upcoming_event = None
+    try:
+        events = CalendarService.get_events()
+        if events:
+            upcoming_event = events[0]
+    except Exception:
+        pass
+
+    # Generar texto de recomendaciones contextuales
+    recommendations = []
+    has_disney_or_payment = any("pago" in (r["subject"] or "").lower() or "suspensi" in (r["subject"] or "").lower() for r in priority_rows)
+    has_invoice = any("factura" in (r["subject"] or "").lower() for r in priority_rows)
+
+    if has_disney_or_payment:
+        recommendations.append("Revisar prioritariamente los avisos de pagos y alertas de cuenta para prevenir cortes en tus suscripciones.")
+    if has_invoice:
+        recommendations.append("Comprobar los importes y fechas de vencimiento de las facturas recientes.")
+    if upcoming_event:
+        start_fmt = upcoming_event['start_time'].replace('T', ' ')
+        recommendations.append(f"Considerar tu próxima cita: '{upcoming_event['title']}' ({start_fmt}).")
+    if unread_count > 0 and not recommendations:
+        recommendations.append(f"Tienes {unread_count} correos sin leer esperando tu lectura.")
+
+    rec_text = " ".join(recommendations) if recommendations else "Todo está en orden. No tienes asuntos pendientes de alta prioridad."
+
+    return {
+        "success": True,
+        "unread_count": unread_count,
+        "priority_emails": [dict(r) for r in priority_rows],
+        "recent_unreads": [dict(r) for r in unread_rows],
+        "upcoming_event": upcoming_event,
+        "recommendation": rec_text
+    }
+
+# --- ENDPOINTS DE LIBRETA DE CONTACTOS / AGENDA DE DIRECCIONES ---
+class ContactCreateRequest(BaseModel):
+    name: str
+    email: str
+    phone: Optional[str] = ""
+    notes: Optional[str] = ""
+    account_id: Optional[int] = None
+
+@app.get("/api/contacts")
+def list_contacts(q: str = "", limit: int = 300):
+    return ContactsService.get_contacts(q=q, limit=limit)
+
+@app.post("/api/contacts/sync")
+def sync_contacts():
+    return ContactsService.sync_contacts()
+
+@app.post("/api/contacts")
+def create_contact(req: ContactCreateRequest):
+    try:
+        return ContactsService.add_contact(
+            name=req.name,
+            email_addr=req.email,
+            phone=req.phone or "",
+            notes=req.notes or "",
+            account_id=req.account_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/contacts/{contact_id}")
+def delete_contact(contact_id: int):
+    ContactsService.delete_contact(contact_id)
+    return {"success": True, "message": "Contacto eliminado"}
 
 # --- ENDPOINTS DE IA CON GEMINI ---
 @app.post("/api/ai/draft")
@@ -1214,7 +1516,7 @@ def get_smart_reply(email_id: int, req: Optional[SmartReplyRequest] = None):
 
     user_inst = req.user_instruction if req else ""
     current_draft = req.current_draft if req else ""
-    tone = req.tone if req else "formal"
+    tone = (req.tone if req and req.tone else None) or get_setting("ai_prompt_tone") or get_setting("gemini_default_tone") or "formal"
 
     try:
         reply_data = GeminiService.generate_smart_reply(
@@ -1280,6 +1582,13 @@ def get_calendars():
 def get_events(start_date: Optional[str] = None, end_date: Optional[str] = None):
     return CalendarService.get_events(start_date, end_date)
 
+@app.get("/api/events/{event_id}")
+def get_event_detail(event_id: int):
+    event = CalendarService.get_event_by_id(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Evento no encontrado")
+    return event
+
 @app.post("/api/events")
 def create_event(event: EventCreateRequest):
     result = CalendarService.create_event(
@@ -1290,9 +1599,43 @@ def create_event(event: EventCreateRequest):
         description=event.description or "",
         location=event.location or "",
         all_day=event.all_day,
-        origin_email_id=event.origin_email_id
+        origin_email_id=event.origin_email_id,
+        is_task=event.is_task or 0,
+        account_id=event.account_id,
+        meeting_url=event.meeting_url or "",
+        color=event.color or "",
+        recurrence=event.recurrence or "none",
+        notification_minutes=event.notification_minutes,
+        attendees=event.attendees or "",
+        availability=event.availability or "busy",
+        visibility=event.visibility or "default"
     )
     return {"success": True, "event": result, "message": "Evento guardado en el calendario"}
+
+@app.put("/api/events/{event_id}")
+def update_event(event_id: int, event: EventUpdateRequest):
+    result = CalendarService.update_event(
+        event_id=event_id,
+        calendar_id=event.calendar_id,
+        title=event.title,
+        start_time=event.start_time,
+        end_time=event.end_time,
+        description=event.description,
+        location=event.location,
+        all_day=event.all_day,
+        is_task=event.is_task,
+        account_id=event.account_id,
+        meeting_url=event.meeting_url,
+        color=event.color,
+        recurrence=event.recurrence,
+        notification_minutes=event.notification_minutes,
+        attendees=event.attendees,
+        availability=event.availability,
+        visibility=event.visibility
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Evento no encontrado")
+    return {"success": True, "event": result, "message": "Evento actualizado exitosamente"}
 
 @app.delete("/api/events/{event_id}")
 def delete_event(event_id: int):
@@ -1301,8 +1644,30 @@ def delete_event(event_id: int):
         raise HTTPException(status_code=404, detail="Evento no encontrado")
     return {"success": True, "message": "Evento eliminado del calendario"}
 
+@app.get("/api/tasks")
+def list_tasks(include_completed: bool = True):
+    return CalendarService.get_tasks(include_completed=include_completed)
+
+@app.post("/api/tasks")
+def create_task(task: TaskCreateRequest):
+    result = CalendarService.create_task(
+        calendar_id=task.calendar_id,
+        title=task.title,
+        description=task.description or "",
+        due_date=task.due_date or "",
+        account_id=task.account_id
+    )
+    return {"success": True, "task": result, "message": "Tarea guardada exitosamente"}
+
+@app.patch("/api/tasks/{task_id}/toggle")
+def toggle_task(task_id: int):
+    updated = CalendarService.toggle_task(task_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    return {"success": True, "task": updated}
+
 @app.post("/api/events/from-email/{email_id}")
-def create_event_from_email(email_id: int, calendar_id: int = Query(1)):
+def create_event_from_email(email_id: int, calendar_id: Optional[int] = Query(None)):
     conn = get_db()
     row = conn.execute("SELECT subject, sender, body_text, snippet FROM emails WHERE id = ?", (email_id,)).fetchone()
     conn.close()
@@ -1315,8 +1680,9 @@ def create_event_from_email(email_id: int, calendar_id: int = Query(1)):
         if not event_info:
             return {"success": False, "message": "No se detectaron fechas ni eventos específicos en el correo"}
 
+        target_cal_id = calendar_id or CalendarService.get_default_calendar_id()
         event = CalendarService.create_event(
-            calendar_id=calendar_id,
+            calendar_id=target_cal_id,
             title=event_info.get("title", row["subject"]),
             start_time=event_info.get("start_time", "2026-11-20T10:00:00"),
             end_time=event_info.get("end_time", "2026-11-20T11:00:00"),

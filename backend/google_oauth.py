@@ -12,6 +12,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from backend.database import get_db, get_setting, set_setting
+from backend.crypto_service import CryptoService
 
 GOOGLE_SCOPES = [
     "https://mail.google.com/",
@@ -95,7 +96,8 @@ class GoogleOAuthService:
 
         if existing:
             acc_id = existing["id"]
-            final_refresh_token = refresh_token or existing["oauth_refresh_token"]
+            raw_refresh = refresh_token or CryptoService.decrypt(existing["oauth_refresh_token"])
+            final_refresh_token = CryptoService.encrypt(raw_refresh)
             cursor.execute('''
                 UPDATE accounts SET
                     name = ?, provider = 'gmail', auth_type = 'oauth2',
@@ -104,6 +106,7 @@ class GoogleOAuthService:
                 WHERE id = ?
             ''', (user_name, access_token, final_refresh_token, expiry_date, avatar_url, acc_id))
         else:
+            encrypted_refresh = CryptoService.encrypt(refresh_token)
             cursor.execute('''
                 INSERT INTO accounts (
                     name, email, provider, auth_type,
@@ -111,7 +114,7 @@ class GoogleOAuthService:
                     smtp_host, smtp_port, color, avatar_url,
                     oauth_access_token, oauth_refresh_token, oauth_token_expiry
                 ) VALUES (?, ?, 'gmail', 'oauth2', 'imap.gmail.com', 993, ?, '', 'smtp.gmail.com', 587, '#ef4444', ?, ?, ?, ?)
-            ''', (user_name, user_email, user_email, avatar_url, access_token, refresh_token, expiry_date))
+            ''', (user_name, user_email, user_email, avatar_url, access_token, encrypted_refresh, expiry_date))
             acc_id = cursor.lastrowid
 
         conn.commit()
@@ -142,9 +145,10 @@ class GoogleOAuthService:
             raise ValueError("Cuenta no encontrada")
 
         cfg = cls.get_credentials_config()
+        decrypted_refresh = CryptoService.decrypt(acc["oauth_refresh_token"])
         creds = Credentials(
             token=acc["oauth_access_token"],
-            refresh_token=acc["oauth_refresh_token"],
+            refresh_token=decrypted_refresh,
             token_uri="https://oauth2.googleapis.com/token",
             client_id=cfg["client_id"],
             client_secret=cfg["client_secret"],
@@ -351,13 +355,23 @@ class GoogleOAuthService:
         new_msg_ids = [mid for mid in msg_ids if mid not in existing_by_uid]
         existing_msg_ids = [mid for mid in msg_ids if mid in existing_by_uid]
 
+        # Google API Client no es thread-safe; aislamos una instancia de service por hilo
+        import threading
+        thread_local = threading.local()
+
+        def get_thread_service():
+            if not hasattr(thread_local, "service"):
+                thread_local.service = build("gmail", "v1", credentials=creds)
+            return thread_local.service
+
         # 1. Descarga concurrente de mensajes nuevos con ThreadPoolExecutor
         full_messages = {}
         if new_msg_ids:
             import concurrent.futures
             def fetch_full(mid):
                 try:
-                    return mid, service.users().messages().get(userId="me", id=mid, format="full").execute()
+                    s = get_thread_service()
+                    return mid, s.users().messages().get(userId="me", id=mid, format="full").execute()
                 except Exception as e:
                     return mid, None
 
@@ -374,7 +388,8 @@ class GoogleOAuthService:
             import concurrent.futures
             def fetch_min(mid):
                 try:
-                    return mid, service.users().messages().get(userId="me", id=mid, fields="id,labelIds").execute()
+                    s = get_thread_service()
+                    return mid, s.users().messages().get(userId="me", id=mid, fields="id,labelIds").execute()
                 except Exception as e:
                     return mid, None
 

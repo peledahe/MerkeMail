@@ -1,5 +1,122 @@
 // Módulo de Gestión de Aplicación de Escritorio (Desktop Linux) - MerkeMail
 
+const DesktopBridge = {
+    isDesktop: false,
+    isMaximized: false,
+
+    init() {
+        this.detectEnvironment();
+    },
+
+    detectEnvironment() {
+        const params = new URLSearchParams(window.location.search);
+        const isPort6524 = window.location.port === '6524';
+        const hasDesktopParam = params.has('desktop') || params.get('app') === 'desktop';
+        const isPyQt = !!window.pyqtBridge || (navigator.userAgent && navigator.userAgent.includes('QtWebEngine'));
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+        this.isDesktop = isPort6524 || hasDesktopParam || isPyQt || isStandalone;
+        this.applyEnvironmentUI();
+    },
+
+    applyEnvironmentUI() {
+        const controls = document.getElementById('desktop-window-controls');
+        const btnInstallPwa = document.getElementById('btn-install-pwa');
+        const pwaCardDrawer = document.getElementById('pwa-installation-card');
+
+        if (this.isDesktop) {
+            // 1. En aplicación instalada: OCULTAR todas las opciones de instalar app
+            if (btnInstallPwa) {
+                btnInstallPwa.classList.add('hidden');
+                btnInstallPwa.classList.remove('flex');
+            }
+            if (pwaCardDrawer) {
+                pwaCardDrawer.classList.add('hidden');
+            }
+
+            // 2. MOSTRAR controles de ventana (cerrar, ampliar/restaurar, minimizar) a la par del usuario
+            if (controls) {
+                controls.classList.remove('hidden');
+                controls.classList.add('flex');
+            }
+            this.checkWindowState();
+        } else {
+            // En navegador web (browser normal, puerto 8000):
+            // Ocultar controles de ventana ya que el navegador tiene los suyos
+            if (controls) {
+                controls.classList.add('hidden');
+                controls.classList.remove('flex');
+            }
+            if (pwaCardDrawer) {
+                pwaCardDrawer.classList.remove('hidden');
+            }
+            // Dejar que UI gestione el botón de instalar app para quien navega por web
+        }
+    },
+
+    async minimizeWindow() {
+        try {
+            await fetch('/api/desktop/window/minimize', { method: 'POST' });
+        } catch (e) {
+            console.warn('Error minimizando ventana:', e);
+        }
+    },
+
+    async toggleMaximizeWindow() {
+        try {
+            const res = await fetch('/api/desktop/window/toggle_maximize', { method: 'POST' });
+            const data = await res.json();
+            if (data.success && typeof data.result === 'boolean') {
+                this.isMaximized = data.result;
+            } else {
+                this.isMaximized = !this.isMaximized;
+            }
+            this.updateMaximizeIcons();
+        } catch (e) {
+            console.warn('Error alternando maximizado de ventana:', e);
+            this.isMaximized = !this.isMaximized;
+            this.updateMaximizeIcons();
+        }
+    },
+
+    async closeWindow() {
+        try {
+            await fetch('/api/desktop/window/close', { method: 'POST' });
+        } catch (e) {
+            console.warn('Error cerrando ventana:', e);
+        }
+    },
+
+    async checkWindowState() {
+        try {
+            const res = await fetch('/api/desktop/window/state');
+            if (res.ok) {
+                const data = await res.json();
+                this.isMaximized = !!data.is_maximized;
+                this.updateMaximizeIcons();
+            }
+        } catch (e) {
+            // Ignorar si el backend aún no responde
+        }
+    },
+
+    updateMaximizeIcons() {
+        const iconMax = document.getElementById('icon-desktop-maximize');
+        const iconRestore = document.getElementById('icon-desktop-restore');
+        if (iconMax && iconRestore) {
+            if (this.isMaximized) {
+                iconMax.classList.add('hidden');
+                iconRestore.classList.remove('hidden');
+            } else {
+                iconMax.classList.remove('hidden');
+                iconRestore.classList.add('hidden');
+            }
+        }
+    }
+};
+
+window.DesktopBridge = DesktopBridge;
+
 const DesktopApp = {
     installed: false,
     systemTray: true,
@@ -125,5 +242,6 @@ const DesktopApp = {
 window.DesktopApp = DesktopApp;
 
 document.addEventListener('DOMContentLoaded', () => {
+    DesktopBridge.init();
     DesktopApp.init();
 });

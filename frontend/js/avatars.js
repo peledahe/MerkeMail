@@ -106,30 +106,42 @@ const AvatarService = {
         `;
     },
 
-    // Actualizar avatar del sistema en el header principal (primera cuenta registrada o activa)
+    // Actualizar avatar del sistema en el header principal y perfil (cuenta predeterminada del usuario)
     updateSystemHeaderAvatar() {
         const headerAvatar = document.getElementById('user-header-avatar');
-        if (!headerAvatar) return;
+        const profileHeaderAvatar = document.getElementById('user-profile-header-avatar');
 
         if (window.EmailManager && EmailManager.accounts && EmailManager.accounts.length > 0) {
-            const currentAcc = (EmailManager.currentAccountId 
-                ? EmailManager.accounts.find(a => a.id === EmailManager.currentAccountId) 
-                : null) || EmailManager.accounts[0];
-            const avatarUrl = currentAcc.avatar_url || this.getUrl(currentAcc.email);
-            const initial = (currentAcc.name || currentAcc.email || 'P')[0].toUpperCase();
-            const color = currentAcc.color || '#3b82f6';
+            // Usar la cuenta predeterminada del usuario por defecto
+            const defaultAcc = EmailManager.accounts.find(a => a.is_default === 1) || EmailManager.accounts[0];
+            const avatarUrl = defaultAcc.avatar_url || this.getUrl(defaultAcc.email);
+            const initial = (defaultAcc.name || defaultAcc.email || 'U')[0].toUpperCase();
+            const color = defaultAcc.color || '#3b82f6';
 
-            headerAvatar.title = `Cuenta: ${currentAcc.name} (${currentAcc.email})`;
-            headerAvatar.style.border = `2px solid ${color}`;
+            if (headerAvatar) {
+                headerAvatar.title = `Cuenta por defecto: ${defaultAcc.name} (${defaultAcc.email})`;
+                headerAvatar.style.border = `2px solid ${color}`;
 
-            if (avatarUrl) {
-                headerAvatar.innerHTML = `
-                    <img src="${avatarUrl}" alt="${initial}" class="w-full h-full object-cover rounded-full" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
-                    <span style="display:none; background-color: ${color};" class="w-full h-full rounded-full flex items-center justify-center font-bold text-white text-xs">${initial}</span>
-                `;
-            } else {
-                headerAvatar.textContent = initial;
-                headerAvatar.style.backgroundColor = color;
+                if (avatarUrl) {
+                    headerAvatar.innerHTML = `
+                        <img src="${avatarUrl}" alt="${initial}" class="w-full h-full object-cover rounded-full" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
+                        <span style="display:none; background-color: ${color};" class="w-full h-full rounded-full flex items-center justify-center font-bold text-white text-xs">${initial}</span>
+                    `;
+                } else {
+                    headerAvatar.innerHTML = `<span class="w-full h-full flex items-center justify-center font-bold text-white text-xs" style="background-color: ${color}">${initial}</span>`;
+                }
+            }
+
+            if (profileHeaderAvatar) {
+                profileHeaderAvatar.style.border = `2px solid ${color}`;
+                if (avatarUrl) {
+                    profileHeaderAvatar.innerHTML = `
+                        <img src="${avatarUrl}" alt="${initial}" class="w-full h-full object-cover rounded-full" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
+                        <span style="display:none; background-color: ${color};" class="w-full h-full rounded-full flex items-center justify-center font-bold text-white text-base">${initial}</span>
+                    `;
+                } else {
+                    profileHeaderAvatar.innerHTML = `<span class="w-full h-full flex items-center justify-center font-bold text-white text-base" style="background-color: ${color}">${initial}</span>`;
+                }
             }
         }
     }

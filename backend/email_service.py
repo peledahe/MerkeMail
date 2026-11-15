@@ -11,6 +11,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from bs4 import BeautifulSoup
 from backend.database import get_db
+from backend.crypto_service import CryptoService
 
 def decode_mime_header(header_value: str) -> str:
     """Decodifica encabezados codificados en RFC 2047."""
@@ -50,7 +51,8 @@ class EmailService:
         
         # Test IMAP
         try:
-            imap_pass = account_data["imap_password"].replace(" ", "").strip()
+            raw_pass = CryptoService.decrypt(account_data.get("imap_password", "")) or ""
+            imap_pass = raw_pass.replace(" ", "").strip()
             is_local = "127.0.0.1" in account_data["imap_host"] or "localhost" in account_data["imap_host"]
             mail = None
             if account_data.get("imap_ssl", 1):
@@ -81,7 +83,8 @@ class EmailService:
 
         # Test SMTP
         try:
-            smtp_pass = account_data["imap_password"].replace(" ", "").strip()
+            raw_pass = CryptoService.decrypt(account_data.get("imap_password", "")) or ""
+            smtp_pass = raw_pass.replace(" ", "").strip()
             port = int(account_data["smtp_port"])
             is_local = "127.0.0.1" in account_data["smtp_host"] or "localhost" in account_data["smtp_host"]
             if port == 465 or account_data.get("smtp_ssl") == 2:
@@ -145,7 +148,8 @@ class EmailService:
             else:
                 mail = imaplib.IMAP4(account["imap_host"], int(account["imap_port"]))
 
-            mail.login(account["imap_user"].strip(), account["imap_password"].replace(" ", "").strip())
+            raw_pass = CryptoService.decrypt(account.get("imap_password", "")) or ""
+            mail.login(account["imap_user"].strip(), raw_pass.replace(" ", "").strip())
             status, _ = mail.select(folder, readonly=True)
             if status != "OK":
                 return {"success": False, "error": f"No se pudo seleccionar la carpeta {folder}"}
@@ -368,7 +372,8 @@ class EmailService:
                         if not is_local:
                             raise tls_err
 
-            server.login(account["imap_user"].strip(), account["imap_password"].replace(" ", "").strip())
+            raw_pass = CryptoService.decrypt(account.get("imap_password", "")) or ""
+            server.login(account["imap_user"].strip(), raw_pass.replace(" ", "").strip())
             server.sendmail(account["email"], recipients, msg.as_string())
             server.quit()
 

@@ -68,35 +68,104 @@ const EmailManager = {
         return map[clean] || map[clean.toUpperCase()] || name;
     },
 
-    toggleAutoSync() {
-        this.autoSyncEnabled = !this.autoSyncEnabled;
-        localStorage.setItem('merkemail_auto_sync', this.autoSyncEnabled ? 'true' : 'false');
-        this.updateAutoSyncUI();
-        if (this.autoSyncEnabled) {
-            UI.showStickyToast('Sincronización Automática', 'Sincronización periódica reanudada', 'success');
-            this.checkAutoSync();
-        } else {
-            UI.showStickyToast('Sincronización en Pausa', 'Sincronización periódica automática suspendida', 'warning');
-        }
-    },
+    accountErrors: {},
+    syncSystemStatus: 'inactive', // 'active' | 'problems' | 'inactive' | 'paused'
 
-    updateAutoSyncUI() {
+    updateSystemSyncPill(status, customTitle = null) {
+        if (!status) {
+            if (this.syncSystemStatus === 'inactive') status = 'inactive';
+            else if (Object.keys(this.accountErrors).length > 0) status = 'problems';
+            else if (!this.autoSyncEnabled) status = 'paused';
+            else status = 'active';
+        }
+        this.syncSystemStatus = status;
+
         const btn = document.getElementById('btn-toggle-auto-sync');
         const dot = document.getElementById('sync-status-dot');
         const text = document.getElementById('sync-status-text');
         if (!btn || !dot || !text) return;
 
-        if (this.autoSyncEnabled) {
+        btn.classList.remove('hidden');
+        btn.classList.add('lg:flex');
+
+        if (status === 'active') {
             btn.className = 'hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-400 text-xs font-semibold shadow-2xs hover:opacity-90 active:scale-95 transition-all cursor-pointer';
-            btn.title = 'Sincronización periódica activa. Haz clic para suspender (pausar)';
+            btn.title = customTitle || 'Todas las cuentas conectadas y sincronizadas. Haz clic para suspender o sincronizar.';
             dot.className = 'w-2 h-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse';
             text.textContent = 'Activo';
-        } else {
+        } else if (status === 'problems') {
+            const errAccounts = Object.keys(this.accountErrors).length;
             btn.className = 'hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800/60 text-amber-700 dark:text-amber-400 text-xs font-semibold shadow-2xs hover:opacity-90 active:scale-95 transition-all cursor-pointer';
-            btn.title = 'Sincronización automática en pausa. Haz clic para reanudar';
-            dot.className = 'w-2 h-2 rounded-full bg-amber-500 dark:bg-amber-400';
+            btn.title = customTitle || `${errAccounts} cuenta(s) presentan problemas de sincronización. Haz clic para ver detalles o reintentar.`;
+            dot.className = 'w-2 h-2 rounded-full bg-amber-500 dark:bg-amber-400 animate-pulse';
+            text.textContent = 'Problemas';
+        } else if (status === 'inactive') {
+            btn.className = 'hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800/60 text-rose-700 dark:text-rose-400 text-xs font-semibold shadow-2xs hover:opacity-90 active:scale-95 transition-all cursor-pointer';
+            btn.title = customTitle || 'Sin conexión con el servidor. Haz clic para reintentar conectar.';
+            dot.className = 'w-2 h-2 rounded-full bg-rose-500 dark:bg-rose-400 animate-pulse';
+            text.textContent = 'Inactivo';
+        } else if (status === 'paused') {
+            btn.className = 'hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-semibold shadow-2xs hover:opacity-90 active:scale-95 transition-all cursor-pointer';
+            btn.title = 'Sincronización automática suspendida. Haz clic para reactivar.';
+            dot.className = 'w-2 h-2 rounded-full bg-slate-400';
             text.textContent = 'Pausado';
         }
+    },
+
+    async handleStatusPillClick() {
+        if (this.syncSystemStatus === 'inactive') {
+            UI.showStickyToast('Reconectando', 'Intentando restablecer conexión con el servidor...', 'info');
+            await this.retryFullConnection();
+        } else if (this.syncSystemStatus === 'problems') {
+            const errs = Object.entries(this.accountErrors).map(([id, msg]) => `• Cuenta ${id}: ${msg}`).join('\n');
+            UI.showStickyToast('Problemas de Conexión', errs || 'Una o más cuentas no pudieron sincronizar.', 'warning');
+            await this.syncCurrentView();
+        } else {
+            this.toggleAutoSync();
+        }
+    },
+
+    async retryFullConnection() {
+        try {
+            await this.loadAccounts();
+            await this.loadLabels();
+            await this.loadEmails();
+            if (window.GeminiAI) await GeminiAI.initSettings();
+            if (window.CalendarManager) await CalendarManager.init();
+            this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
+
+            // Actualizar la descripción de bienvenida del asistente Elio
+            if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
+                AntigravityCopilot.updateConnectedServices();
+            }
+            UI.showStickyToast('Conectado', 'Conexión con el servidor restablecida con éxito', 'success');
+        } catch (e) {
+            this.updateSystemSyncPill('inactive', 'No se pudo conectar al servidor');
+            if (window.GeminiAI) GeminiAI.setDisconnectedState();
+            UI.showStickyToast('Sin Conexión', 'El servidor aún no responde. Revisa que el backend esté ejecutándose.', 'error');
+        }
+    },
+
+    toggleAutoSync() {
+        this.autoSyncEnabled = !this.autoSyncEnabled;
+        localStorage.setItem('merkemail_auto_sync', this.autoSyncEnabled ? 'true' : 'false');
+        if (this.autoSyncEnabled) {
+            this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
+
+            // Actualizar la descripción de bienvenida del asistente Elio
+            if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
+                AntigravityCopilot.updateConnectedServices();
+            }
+            UI.showStickyToast('Sincronización Automática', 'Sincronización periódica reanudada', 'success');
+            this.checkAutoSync();
+        } else {
+            this.updateSystemSyncPill('paused');
+            UI.showStickyToast('Sincronización en Pausa', 'Sincronización periódica automática suspendida', 'warning');
+        }
+    },
+
+    updateAutoSyncUI() {
+        this.updateSystemSyncPill();
     },
 
     initAutoSyncScheduler() {
@@ -129,14 +198,20 @@ const EmailManager = {
                 try {
                     const res = await fetch(`/api/emails/sync?account_id=${acc.id}`, { method: 'POST' });
                     const data = await res.json();
-                    if (data.success && data.synced_count > 0) {
-                        anySynced = true;
+                    if (data.success) {
+                        delete this.accountErrors[acc.id];
+                        if (data.synced_count > 0) anySynced = true;
+                    } else {
+                        this.accountErrors[acc.id] = data.error || 'Fallo de sincronización';
                     }
                 } catch (e) {
                     console.warn(`Error en auto-sync para cuenta ${acc.email}:`, e);
+                    this.accountErrors[acc.id] = e.message || 'Error de red';
                 }
             }
         }
+
+        this.updateSystemSyncPill();
 
         if (anySynced) {
             await this.loadEmails(false);
@@ -427,12 +502,16 @@ const EmailManager = {
     clearMainSearch() {
         const mainInput = document.getElementById('main-search-input');
         const clearBtn = document.getElementById('btn-clear-search');
+        const elioBtn = document.getElementById('btn-submit-to-elio');
         if (mainInput) {
             mainInput.value = '';
             mainInput.focus();
         }
         if (clearBtn) {
             clearBtn.classList.add('hidden');
+        }
+        if (elioBtn) {
+            elioBtn.classList.add('hidden');
         }
         this.searchQuery = '';
         if (this.advancedFilters && this.advancedFilters.keyword) {
@@ -466,8 +545,10 @@ const EmailManager = {
         this.searchQuery = '';
         const mainInput = document.getElementById('main-search-input');
         const clearBtn = document.getElementById('btn-clear-search');
+        const elioBtn = document.getElementById('btn-submit-to-elio');
         if (mainInput) mainInput.value = '';
         if (clearBtn) clearBtn.classList.add('hidden');
+        if (elioBtn) elioBtn.classList.add('hidden');
         this.resetAdvancedSearchForm();
         this.updateActiveFiltersBanner();
     },
@@ -560,16 +641,21 @@ const EmailManager = {
                     accounts.map(a => `<option value="${a.id}">${a.name} (${a.email})</option>`).join('');
             }
             if (composeAccountSelect) {
-                composeAccountSelect.innerHTML = accounts.map(a => `<option value="${a.id}">${a.name} &lt;${a.email}&gt;</option>`).join('');
+                composeAccountSelect.innerHTML = accounts.map(a => `<option value="${a.id}" ${a.is_default ? 'selected' : ''}>${a.name} &lt;${a.email}&gt;${a.is_default ? ' ★' : ''}</option>`).join('');
+                const defaultAcc = accounts.find(a => a.is_default === 1);
+                if (defaultAcc) {
+                    composeAccountSelect.value = defaultAcc.id;
+                }
             }
 
-            // Actualizar avatar del header con la primera cuenta registrada (Cuenta del sistema)
+            // Actualizar avatar del header con la cuenta predeterminada
             if (window.AvatarService) {
                 AvatarService.updateSystemHeaderAvatar();
             } else {
                 const headerAvatar = document.getElementById('user-header-avatar');
-                if (headerAvatar && accounts.length > 0) {
-                    const initial = (accounts[0].name || accounts[0].email || 'U')[0].toUpperCase();
+                const defaultAcc = accounts.find(a => a.is_default === 1) || accounts[0];
+                if (headerAvatar && defaultAcc) {
+                    const initial = (defaultAcc.name || defaultAcc.email || 'U')[0].toUpperCase();
                     headerAvatar.textContent = initial;
                 }
             }
@@ -577,37 +663,69 @@ const EmailManager = {
             // Actualizar lista rápida de cuentas en el sidebar izquierdo
             this.renderSidebarAccounts();
             
+            // Renderizar selector de cuenta por defecto en drawer de configuración si existe
+            const settingsAccountSelect = document.getElementById('settings-default-account-select');
+            if (settingsAccountSelect) {
+                settingsAccountSelect.innerHTML = accounts.map(a => `
+                    <option value="${a.id}" ${a.is_default ? 'selected' : ''}>${a.name} (${a.email})${a.is_default ? ' ★' : ''}</option>
+                `).join('');
+            }
+
             // Renderizar lista en drawer de cuentas
             const listEl = document.getElementById('accounts-list-container');
             if (listEl) {
-                listEl.innerHTML = accounts.map(a => `
-                    <div class="p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700/60 flex flex-col gap-2.5 shadow-2xs">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-2.5 min-w-0">
+                listEl.innerHTML = accounts.map(a => {
+                    const isDef = a.is_default === 1;
+                    return `
+                    <div class="p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-xl border ${isDef ? 'border-amber-400 dark:border-amber-500/80 ring-1 ring-amber-400/40 bg-amber-50/20 dark:bg-amber-950/20' : 'border-slate-200 dark:border-slate-700/60'} flex flex-col gap-2.5 shadow-2xs transition-all">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="flex items-center gap-2.5 min-w-0 flex-1">
                                 ${window.AvatarService ? AvatarService.render(a.email, a.name, 'w-8 h-8 text-xs', '', a.color) : `<span class="w-3 h-3 rounded-full shrink-0 shadow-xs" style="background-color: ${a.color || '#3b82f6'}"></span>`}
-                                <div class="truncate">
-                                    <p class="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">${this.escapeHtml(a.name)}</p>
+                                <div class="truncate flex-1">
+                                    <div class="flex items-center gap-1.5 truncate">
+                                        <p class="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">${this.escapeHtml(a.name)}</p>
+                                        ${isDef ? `<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700/60 px-1.5 py-0.2 rounded-md shrink-0">★ Predeterminada</span>` : ''}
+                                    </div>
                                     <p class="text-[11px] text-slate-500 dark:text-slate-400 truncate">${this.escapeHtml(a.email)} &bull; <span class="uppercase">${a.provider}</span></p>
                                 </div>
                             </div>
                             <div class="flex items-center gap-1 shrink-0">
-                                <button onclick="EmailManager.testAccountConnection(${a.id})" class="p-1.5 text-slate-400 hover:text-indigo-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors" title="Probar conexión IMAP/SMTP">
+                                ${isDef ? `
+                                    <div class="p-1.5 text-amber-500 rounded-lg cursor-default" title="Esta es tu cuenta por defecto">
+                                        <svg class="w-4 h-4 fill-amber-400 text-amber-500" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                                    </div>
+                                ` : `
+                                    <button onclick="EmailManager.setDefaultAccount(${a.id})" class="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer" title="Establecer como cuenta por defecto">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
+                                    </button>
+                                `}
+                                <button onclick="EmailManager.testAccountConnection(${a.id})" class="p-1.5 text-slate-400 hover:text-indigo-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer" title="Probar conexión IMAP/SMTP">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                                 </button>
-                                <button onclick="EmailManager.openEditAccountModal(${a.id})" class="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors" title="Editar cuenta y color">
+                                <button onclick="EmailManager.openEditAccountModal(${a.id})" class="p-1.5 text-slate-400 hover:text-amber-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer" title="Editar cuenta y color">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                                 </button>
-                                <button onclick="EmailManager.deleteAccount(${a.id}, '${this.escapeHtml(a.email)}')" class="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors" title="Eliminar cuenta">
+                                <button onclick="EmailManager.deleteAccount(${a.id}, '${this.escapeHtml(a.email)}')" class="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer" title="Eliminar cuenta">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                                 </button>
                             </div>
                         </div>
                         <div id="account-test-status-${a.id}" class="hidden text-[11px] p-2 rounded-lg"></div>
                     </div>
-                `).join('') || '<p class="text-sm text-slate-500 py-4 text-center">No hay cuentas configuradas</p>';
+                    `;
+                }).join('') || '<p class="text-sm text-slate-500 py-4 text-center">No hay cuentas configuradas</p>';
+            }
+
+            this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
+
+            // Actualizar la descripción de bienvenida del asistente Elio
+            if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
+                AntigravityCopilot.updateConnectedServices();
             }
         } catch (e) {
             console.error("Error al cargar cuentas:", e);
+            this.updateSystemSyncPill('inactive', 'Sin conexión con el servidor backend');
+            if (window.GeminiAI) GeminiAI.setDisconnectedState();
         }
     },
 
@@ -771,15 +889,37 @@ const EmailManager = {
                 params.append('folder', this.currentFolder);
             }
             const res = await fetch(`/api/emails/sync?${params.toString()}`, { method: 'POST' });
+            if (!res.ok) {
+                this.updateSystemSyncPill('inactive', 'El servidor respondió con error al sincronizar');
+                UI.showStickyToast('Error', 'No se pudo completar la sincronización', 'error');
+                return;
+            }
             const data = await res.json();
             if (data.success) {
+                if (this.currentAccountId) {
+                    delete this.accountErrors[this.currentAccountId];
+                } else {
+                    this.accountErrors = {};
+                }
+                this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
+
+            // Actualizar la descripción de bienvenida del asistente Elio
+            if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
+                AntigravityCopilot.updateConnectedServices();
+            }
                 UI.showStickyToast('Sincronización Exitosa', `${data.synced_count || 0} correos actualizados`, 'success');
                 await this.loadEmails();
                 await this.loadLabels();
             } else {
-                UI.showStickyToast('Aviso', data.error || 'No se pudieron descargar nuevos correos', 'warning');
+                if (this.currentAccountId) {
+                    this.accountErrors[this.currentAccountId] = data.error || 'Error de sincronización';
+                }
+                this.updateSystemSyncPill('problems', data.error);
+                UI.showStickyToast('Problemas al sincronizar', data.error || 'Hubo un error con una cuenta', 'warning');
             }
         } catch (e) {
+            this.updateSystemSyncPill('inactive', 'Sin conexión con el servidor backend');
+            if (window.GeminiAI) GeminiAI.setDisconnectedState();
             UI.showStickyToast('Error de sincronización', e.message, 'error');
         }
     },
@@ -1033,6 +1173,12 @@ const EmailManager = {
     },
 
     async archiveCurrentEmail(emailId) {
+        const folderUpper = (this.currentFolder || (this.currentOpenedEmail && this.currentOpenedEmail.folder) || '').toUpperCase();
+        if (['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes(folderUpper) || (this.currentOpenedEmail && ['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes((this.currentOpenedEmail.folder || '').toUpperCase()))) {
+            UI.showStickyToast('Acción no permitida', 'No se permite almacenar o archivar correos en Spam, Papelera o Borradores', 'warning');
+            return;
+        }
+
         try {
             const res = await fetch('/api/emails/batch-action', {
                 method: 'POST',
@@ -1225,8 +1371,23 @@ const EmailManager = {
             this.updateActiveFiltersBanner();
             this.renderEmailsTable();
             this.renderPagination();
+            this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
+
+            // Actualizar la descripción de bienvenida del asistente Elio
+            if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
+                AntigravityCopilot.updateConnectedServices();
+            }
         } catch (e) {
-            listContainer.innerHTML = `<div class="py-12 text-center text-rose-400 text-xs">Error al cargar correos: ${e.message}</div>`;
+            this.resetDetailView();
+            listContainer.innerHTML = window.UI ? UI.renderErrorState({
+                title: 'No pudimos conectar con tus correos',
+                message: 'Parece que el servicio local no está respondiendo o se interrumpió la red. Tus datos guardados están seguros.',
+                retryAction: 'EmailManager.retryFullConnection()',
+                retryText: 'Reintentar conexión',
+                size: 'md'
+            }) : `<div class="py-12 text-center text-rose-400 text-xs">No pudimos conectar con tus correos. Intenta de nuevo.</div>`;
+            this.updateSystemSyncPill('inactive', 'Sin conexión con el servidor backend');
+            if (window.GeminiAI) GeminiAI.setDisconnectedState();
         }
     },
 
@@ -1235,6 +1396,7 @@ const EmailManager = {
         if (!listContainer) return;
 
         if (this.emails.length === 0) {
+            this.resetDetailView();
             listContainer.innerHTML = `
                 <div class="py-16 text-center text-slate-400 dark:text-slate-500 text-xs">
                     <svg class="w-8 h-8 stroke-1 opacity-50 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
@@ -1242,6 +1404,11 @@ const EmailManager = {
                 </div>
             `;
             return;
+        }
+
+        // Si el correo actualmente seleccionado ya no se encuentra en la lista filtrada o nueva carpeta, resetear visor
+        if (this.selectedEmailId && !this.emails.some(e => e.id === this.selectedEmailId)) {
+            this.resetDetailView();
         }
 
         listContainer.innerHTML = this.emails.map(email => {
@@ -1435,6 +1602,7 @@ const EmailManager = {
             const folderDisplayName = this.getFolderDisplayName(email.folder);
             const isInboxCategory = ['INBOX', 'CATEGORY_UPDATES', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_FORUMS', 'CATEGORY_PERSONAL'].includes((email.folder || '').toUpperCase());
             const isSpam = (email.folder === 'SPAM' || this.currentFolder === 'SPAM');
+            const isTrashOrSpamOrDraft = ['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes((this.currentFolder || '').toUpperCase()) || ['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes((email.folder || '').toUpperCase());
             const hasImages = Boolean(email.body_html && (/<img\b|background-image\s*:/i.test(email.body_html)));
             const hasImagesAuthorized = this.authorizedSpamImages.has(email.id);
 
@@ -1479,48 +1647,54 @@ const EmailManager = {
             detailPanel.innerHTML = `
                 <div class="h-full flex flex-col min-w-0 bg-white dark:bg-slate-950 overflow-hidden select-text">
                     <!-- Top Action Bar del Correo -->
-                    <div class="email-top-action-bar h-12 px-4 md:px-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-900/60 shrink-0 min-w-0">
-                        <div class="flex items-center gap-2 flex-wrap min-w-0 overflow-hidden">
-                            <!-- Volver (visible en móviles) -->
-                            <button onclick="EmailManager.backToList()" class="p-1.5 text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-lg md:hidden shrink-0" title="Volver a la lista">
+                    <div class="email-top-action-bar h-12 px-3 md:px-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-900/60 shrink-0 min-w-0">
+                        <!-- Sección Izquierda: Botón Volver + Slot Superior de Etiquetas -->
+                        <div class="flex items-center min-w-0 flex-1 mr-2 sm:mr-3 overflow-hidden">
+                            <!-- Volver (visible en móviles y vistas estrechas) -->
+                            <button onclick="EmailManager.backToList()" class="p-1.5 text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-lg md:hidden shrink-0 mr-1.5" title="Volver a la lista">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
                             </button>
 
-                            <!-- Indicador Carpeta / Recibidos con botón de archivar -->
-                            <span class="inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full font-medium ${isSpam ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'} shrink-0" title="${folderDisplayName}">
-                                <span>${folderDisplayName}</span>
-                                ${isInboxCategory ? `
-                                    <button onclick="EmailManager.archiveCurrentEmail(${email.id})" class="hover:text-rose-500 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-full w-3.5 h-3.5 flex items-center justify-center text-xs leading-none transition-colors ml-0.5 cursor-pointer" title="Archivar (quitar de ${folderDisplayName})">&times;</button>
+                            <!-- Slot Superior de Etiquetas (con scroll horizontal si cabe arriba) -->
+                            <div id="email-labels-top-slot" class="email-labels-scroll flex-1 min-w-0 flex items-center gap-1.5 sm:gap-2 overflow-x-auto flex-nowrap py-1 select-none" onwheel="if(event.deltaY !== 0){this.scrollLeft += event.deltaY; event.preventDefault();}">
+                                <!-- Indicador Carpeta / Recibidos con botón de archivar -->
+                                <span class="inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full font-medium ${isSpam ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'} shrink-0 whitespace-nowrap" title="${folderDisplayName}">
+                                    <span>${folderDisplayName}</span>
+                                    ${isInboxCategory ? `
+                                        <button onclick="EmailManager.archiveCurrentEmail(${email.id})" class="hover:text-rose-500 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-full w-3.5 h-3.5 flex items-center justify-center text-xs leading-none transition-colors ml-0.5 cursor-pointer shrink-0" title="Archivar (quitar de ${folderDisplayName})">&times;</button>
+                                    ` : ''}
+                                </span>
+
+                                ${email.has_attachments ? `
+                                    <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-200/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 shadow-2xs shrink-0 whitespace-nowrap" title="Contiene archivos adjuntos">
+                                        <svg class="w-3 h-3 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+                                        </svg>
+                                        <span>Adjuntos</span>
+                                    </span>
                                 ` : ''}
-                            </span>
 
-                            ${email.has_attachments ? `
-                                <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-200/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 shadow-2xs shrink-0" title="Contiene archivos adjuntos">
-                                    <svg class="w-3 h-3 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
-                                    </svg>
-                                    <span>Adjuntos</span>
-                                </span>
-                            ` : ''}
-
-                            <!-- Badges de Etiquetas Asignadas con botón '×' claro para eliminarlas -->
-                            ${emailLabels.map(lbl => {
-                                const labelDisplayName = this.getLabelDisplayName(lbl.name);
-                                return `
-                                <span class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-0.5 rounded-full shadow-2xs shrink-0 transition-all" style="background-color: ${lbl.color}22; color: ${lbl.color}; border: 1px solid ${lbl.color}55;" title="Etiqueta: ${this.escapeHtml(labelDisplayName)}">
-                                    <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: ${lbl.color}"></span>
-                                    <span>${this.escapeHtml(labelDisplayName)}</span>
-                                    <button onclick="EmailManager.removeLabelFromEmail(${email.id}, ${lbl.id}, event)" class="hover:bg-black/15 dark:hover:bg-white/20 rounded-full w-4 h-4 flex items-center justify-center text-xs leading-none transition-transform hover:scale-110 ml-0.5 cursor-pointer" title="Eliminar etiqueta '${this.escapeHtml(labelDisplayName)}' de este correo">&times;</button>
-                                </span>
-                            `}).join('')}
+                                <!-- Badges de Etiquetas Asignadas con botón '×' claro para eliminarlas -->
+                                ${emailLabels.map(lbl => {
+                                    const labelDisplayName = this.getLabelDisplayName(lbl.name);
+                                    return `
+                                    <span class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-0.5 rounded-full shadow-2xs shrink-0 whitespace-nowrap transition-all" style="background-color: ${lbl.color}22; color: ${lbl.color}; border: 1px solid ${lbl.color}55;" title="Etiqueta: ${this.escapeHtml(labelDisplayName)}">
+                                        <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: ${lbl.color}"></span>
+                                        <span class="whitespace-nowrap">${this.escapeHtml(labelDisplayName)}</span>
+                                        <button onclick="EmailManager.removeLabelFromEmail(${email.id}, ${lbl.id}, event)" class="hover:bg-black/15 dark:hover:bg-white/20 rounded-full w-4 h-4 flex items-center justify-center text-xs leading-none transition-transform hover:scale-110 ml-0.5 shrink-0 cursor-pointer" title="Eliminar etiqueta '${this.escapeHtml(labelDisplayName)}' de este correo">&times;</button>
+                                    </span>
+                                `;}).join('')}
+                            </div>
                         </div>
 
                         <!-- Acciones Rápidas Superior Derecha (Gestión Individual & Redacción) -->
-                        <div class="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-wrap">
-                            <!-- 1. Botón Archivar -->
-                            <button onclick="EmailManager.archiveCurrentEmail(${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Archivar correo (quitar de Recibidos)">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
-                            </button>
+                        <div id="email-top-actions-right" class="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap overflow-x-auto no-scrollbar">
+                            <!-- 1. Botón Archivar / Almacenar (Oculto en Papelera, Spam y Borradores) -->
+                            ${!isTrashOrSpamOrDraft ? `
+                                <button onclick="EmailManager.archiveCurrentEmail(${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Archivar correo (quitar de Recibidos)">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+                                </button>
+                            ` : ''}
 
                             <!-- 2. Botón Marcar como Spam / No es spam -->
                             <button onclick="EmailManager.markSpamCurrentEmail(${email.id})" class="p-2 ${isSpam ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800' : 'text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-slate-200 dark:border-slate-800'} rounded-lg border transition-colors shadow-2xs cursor-pointer" title="${isSpam ? 'Marcar como legítimo (mover a Recibidos)' : 'Marcar como spam'}">
@@ -1585,6 +1759,9 @@ const EmailManager = {
                             </button>
                         </div>
                     </div>
+
+                    <!-- Barra nueva delgada para etiquetas cuando no caben arriba al reducir espacio -->
+                    <div id="email-secondary-labels-bar" class="hidden px-3 md:px-6 py-1.5 bg-slate-100/70 dark:bg-slate-900/60 border-b border-slate-200/90 dark:border-slate-800/80 flex items-center gap-1.5 sm:gap-2 overflow-x-auto flex-nowrap email-labels-scroll select-none shrink-0 min-h-[34px]" onwheel="if(event.deltaY !== 0){this.scrollLeft += event.deltaY; event.preventDefault();}"></div>
 
                     <!-- Cabecera del Correo (Asunto & Ficha Remitente) -->
                     <div class="px-4 md:px-8 pt-6 pb-4 border-b border-slate-200 dark:border-slate-800/80 shrink-0 min-w-0">
@@ -1869,6 +2046,19 @@ const EmailManager = {
                                         <span>+ Responder con IA</span>
                                     </button>
 
+                                    <!-- Selector de Tono para el Mensaje Actual -->
+                                    <div id="inline-reply-tone-container" class="${(window.GeminiAI && GeminiAI.isAiActive) ? 'flex' : 'hidden'} items-center gap-1.5 ml-1 btn-reply-ai-feature">
+                                        <label for="inline-reply-tone-select" class="text-[11px] font-semibold text-slate-500 dark:text-slate-400 select-none">Tono:</label>
+                                        <select id="inline-reply-tone-select" class="text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/80 rounded-xl px-2.5 py-1.5 text-slate-700 dark:text-slate-200 font-medium focus:ring-2 focus:ring-purple-500 focus:outline-none cursor-pointer shadow-2xs hover:border-purple-300 transition-colors" title="Tono de respuesta para este mensaje actual">
+                                            <option value="formal">Formal</option>
+                                            <option value="cordial">Cordial</option>
+                                            <option value="amigable">Amigable (Cercano y jovial)</option>
+                                            <option value="familiar">Familiar (Como de la familia)</option>
+                                            <option value="conciso">Conciso</option>
+                                            <option value="comercial">Comercial</option>
+                                        </select>
+                                    </div>
+
                                     <div class="h-4 w-px bg-slate-200 dark:bg-slate-700 mx-1"></div>
 
                                     <!-- Botón Alternar Barra de Formato (Aa) -->
@@ -1948,10 +2138,83 @@ const EmailManager = {
                         // Colocar el cursor para editar en la parte de arriba
                         InlineReply.focusTop();
                     }
+
+                    // Establecer por defecto el tono configurado globalmente en Ajustes
+                    const defaultTone = (document.getElementById('gemini-default-tone') && document.getElementById('gemini-default-tone').value) || 'formal';
+                    const inlineToneSelect = document.getElementById('inline-reply-tone-select');
+                    if (inlineToneSelect) {
+                        inlineToneSelect.value = defaultTone;
+                    }
+
+                    // Evaluar y ajustar ubicación de etiquetas según espacio disponible
+                    EmailManager.setupLabelsResponsivePlacement();
                 }
             }, 60);
         } catch (e) {
-            detailPanel.innerHTML = `<div class="p-8 text-center text-rose-500 text-xs">Error: ${e.message}</div>`;
+            detailPanel.innerHTML = window.UI ? UI.renderErrorState({
+                title: 'No pudimos abrir este correo',
+                message: 'Ocurrió una interrupción al intentar consultar el contenido del mensaje. Por favor intenta de nuevo.',
+                retryAction: `EmailManager.openEmailDetail(${emailId})`,
+                retryText: 'Reintentar abrir correo',
+                size: 'md'
+            }) : `<div class="p-8 text-center text-rose-500 text-xs">No se pudo cargar el correo</div>`;
+        }
+    },
+
+    setupLabelsResponsivePlacement() {
+        const checkPlacement = () => {
+            const topBar = document.querySelector('.email-top-action-bar');
+            const topSlot = document.getElementById('email-labels-top-slot');
+            const secondaryBar = document.getElementById('email-secondary-labels-bar');
+            if (!topBar || !topSlot || !secondaryBar) return;
+
+            const actionsRight = document.getElementById('email-top-actions-right') || topBar.querySelector('#email-top-actions-right');
+            const backBtn = topBar.querySelector('button[title="Volver a la lista"]');
+
+            const topBarWidth = topBar.clientWidth;
+            const rightWidth = actionsRight ? actionsRight.offsetWidth : 440;
+            const backWidth = (backBtn && window.getComputedStyle(backBtn).display !== 'none') ? backBtn.offsetWidth + 8 : 0;
+            const availableWidth = topBarWidth - rightWidth - backWidth - 24;
+
+            const activeContainer = (topSlot.children.length > 0) ? topSlot : secondaryBar;
+            let requiredWidth = 0;
+            Array.from(activeContainer.children).forEach(ch => {
+                requiredWidth += (ch.offsetWidth || 0) + 8;
+            });
+
+            // Si el espacio libre en la barra superior es menor a lo que requieren las etiquetas,
+            // o si la barra mide menos de 760px o el espacio disponible es < 220px:
+            const shouldMoveDown = (availableWidth < requiredWidth + 16) || (availableWidth < 220) || (topBarWidth < 740);
+
+            if (shouldMoveDown) {
+                if (topSlot.children.length > 0) {
+                    secondaryBar.innerHTML = topSlot.innerHTML;
+                    topSlot.innerHTML = '';
+                }
+                secondaryBar.classList.remove('hidden');
+                topSlot.classList.add('hidden');
+            } else {
+                if (secondaryBar.children.length > 0) {
+                    topSlot.innerHTML = secondaryBar.innerHTML;
+                    secondaryBar.innerHTML = '';
+                }
+                topSlot.classList.remove('hidden');
+                secondaryBar.classList.add('hidden');
+            }
+        };
+
+        checkPlacement();
+        setTimeout(checkPlacement, 80);
+
+        const detailContainer = document.getElementById('email-detail-container');
+        if (window.ResizeObserver && detailContainer) {
+            if (this._detailResizeObserver) {
+                this._detailResizeObserver.disconnect();
+            }
+            this._detailResizeObserver = new ResizeObserver(() => {
+                checkPlacement();
+            });
+            this._detailResizeObserver.observe(detailContainer);
         }
     },
 
@@ -1994,11 +2257,12 @@ const EmailManager = {
                 });
             }
 
-            // 2. Construir documento HTML autónomo y seguro
+            // 2. Construir documento HTML autónomo y seguro con CSP estricto
             const frameDoc = `<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
     <base target="_blank">
@@ -2230,18 +2494,33 @@ const EmailManager = {
         }
     },
 
-    backToList() {
+    resetDetailView() {
         this.cancelReadTimer();
+        this.selectedEmailId = null;
+        this.currentOpenedEmail = null;
         const detailPanel = document.getElementById('email-detail-container');
-        const listPanel = document.getElementById('email-list-container');
+        if (!detailPanel) return;
+
+        detailPanel.innerHTML = `
+            <div class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400">
+                <div class="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center mb-4 shadow-2xs">
+                    <svg class="w-8 h-8 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                </div>
+                <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">Ningún correo seleccionado</h3>
+                <p class="text-xs text-slate-500 mt-1 max-w-sm">Haz clic en un correo de la lista izquierda para previsualizarlo y responder con IA.</p>
+            </div>
+        `;
+
         if (window.innerWidth < 768) {
-            if (detailPanel) {
-                detailPanel.classList.add('hidden');
-                detailPanel.classList.remove('flex');
-            }
+            detailPanel.classList.add('hidden');
+            detailPanel.classList.remove('flex');
+            const listPanel = document.getElementById('email-list-container');
             if (listPanel) listPanel.classList.remove('hidden');
         }
-        this.selectedEmailId = null;
+    },
+
+    backToList() {
+        this.resetDetailView();
     },
 
     toggleSpamImages(emailId) {
@@ -2604,6 +2883,18 @@ const EmailManager = {
                 selectAllCb.indeterminate = true;
             }
         }
+
+        // Ocultar botón de archivar masivo en carpetas Papelera (TRASH), Spam (SPAM) y Borradores (DRAFT/DRAFTS)
+        const folderUpper = (this.currentFolder || '').toUpperCase();
+        const canArchiveInFolder = !['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes(folderUpper);
+        const batchArchiveBtn = document.getElementById('btn-batch-archive');
+        const batchMoreArchiveBtn = document.getElementById('batch-more-item-archive');
+        if (batchArchiveBtn) {
+            batchArchiveBtn.style.display = canArchiveInFolder ? '' : 'none';
+        }
+        if (batchMoreArchiveBtn) {
+            batchMoreArchiveBtn.style.display = canArchiveInFolder ? '' : 'none';
+        }
     },
 
     onCheckboxChange(emailId, isChecked) {
@@ -2658,6 +2949,14 @@ const EmailManager = {
     async executeBatchAction(action, extraData = {}) {
         const ids = this.getSelectedEmailIds();
         if (ids.length === 0) return;
+
+        if (action === 'archive') {
+            const folderUpper = (this.currentFolder || '').toUpperCase();
+            if (['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes(folderUpper)) {
+                UI.showStickyToast('Acción no permitida', 'No se permite almacenar o archivar correos en Spam, Papelera o Borradores', 'warning');
+                return;
+            }
+        }
 
         // Cerrar posibles dropdowns
         const moreDrop = document.getElementById('batch-more-dropdown');
@@ -2771,6 +3070,35 @@ const EmailManager = {
                 }
             } else {
                 UI.showStickyToast('Sin cita detectada', data.message || 'No se encontraron horarios específicos', 'warning');
+            }
+        } catch (e) {
+            UI.showStickyToast('Error', e.message, 'error');
+        }
+    },
+
+    async setDefaultAccount(accountId) {
+        try {
+            const res = await fetch(`/api/accounts/${accountId}/default`, { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                this.accounts.forEach(a => {
+                    a.is_default = (a.id === accountId) ? 1 : 0;
+                });
+                this.renderAccounts();
+                if (window.AvatarService) {
+                    AvatarService.updateSystemHeaderAvatar();
+                }
+                const selectSettings = document.getElementById('settings-default-account-select');
+                if (selectSettings) selectSettings.value = accountId;
+
+                UI.showStickyToast(
+                    'Cuenta Predeterminada',
+                    `"${data.account.name || data.account.email}" se ha establecido como tu cuenta por defecto`,
+                    'success',
+                    3000
+                );
+            } else {
+                UI.showStickyToast('Error', data.detail || 'No se pudo cambiar la cuenta por defecto', 'error');
             }
         } catch (e) {
             UI.showStickyToast('Error', e.message, 'error');
