@@ -1,5 +1,6 @@
 import os
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional
 from google import genai
 from google.genai import types
@@ -296,56 +297,100 @@ class GeminiService:
     @classmethod
     def analyze_cleanup_by_prompt(cls, prompt: str, emails_metadata: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Analiza una lista de correos y determina cuáles coinciden con el prompt de depuración del usuario.
-        Retorna la lista de IDs candidatos para depuración con el motivo específico.
+        Analiza exhaustivamente correos de todas las cuentas y determina cuáles
+        coinciden con el prompt de depuración del usuario usando procesamiento concurrente de lotes.
         """
+        if not emails_metadata:
+            return {"candidates": []}
+
         client = cls.get_client()
         model_name = get_setting("gemini_model", "gemini-3.8-flash")
 
         system_instruction = (
-            "Eres un asistente de depuración y limpieza inteligente de bandejas de correo. "
-            "Tu tarea es evaluar la lista de correos proporcionada con respecto a la instrucción del usuario "
-            "y devolver en formato JSON una lista llamada 'candidates'. Cada elemento de 'candidates' debe contener: "
-            "'id' (el id numérico del correo), 'subject' (asunto), 'sender' (remitente), "
-            "'reason' (explicación breve y justificada de por qué coincide con el criterio de depuración)."
+            "Eres un evaluador inteligente de correos para depuración y limpieza multicuenta de bandejas de correo. "
+            "Tu misión es analizar rigurosamente la lista de correos provista e identificar TODOS los correos que cumplen "
+            "con el criterio o instrucción en lenguaje natural solicitado por el usuario (por ejemplo: redes sociales "
+            "como LinkedIn, TikTok, Facebook, Instagram, Twitter/X, Pinterest, YouTube; boletines informativos o newsletters; "
+            "ofertas o promociones; notificaciones automáticas o transaccionales; mensajes no leídos antiguos; etc.). "
+            "Devuelve ÚNICAMENTE un objeto JSON con la clave 'candidates', donde cada elemento es un objeto con: "
+            "'id' (número entero identificador del correo), 'reason' (explicación breve, concisa y justificada en español "
+            "de por qué cumple el criterio)."
         )
 
-        # Preparar versión ligera de los correos para el prompt
-        emails_summary = [
-            {
-                "id": m.get("id"),
-                "sender": m.get("sender"),
-                "subject": m.get("subject"),
-                "snippet": m.get("snippet", "")[:120],
-                "date": str(m.get("date")),
-                "folder": m.get("folder")
-            }
-            for m in emails_metadata[:80] # procesar hasta 80 correos por tanda
-        ]
+        chunk_size = 140
+        chunks = [emails_metadata[i:i + chunk_size] for i in range(0, len(emails_metadata), chunk_size)]
 
-        content = f"""
-        Instrucción de depuración del usuario: "{prompt}"
-        
-        Lista de correos a evaluar:
-        {json.dumps(emails_summary, ensure_ascii=False)}
-        
-        Devuelve JSON con la clave 'candidates' conteniendo los que cumplen el criterio. Si ninguno cumple, lista vacía.
-        """
+        def process_chunk(chunk):
+            compact_list = [
+                {
+                    "id": m.get("id"),
+                    "acc": m.get("account_email") or f"Cuenta #{m.get('account_id')}",
+                    "f": m.get("folder", ""),
+                    "s": (m.get("sender") or "")[:70],
+                    "sub": (m.get("subject") or "")[:90],
+                    "snip": (m.get("snippet") or "")[:110]
+                }
+                for m in chunk
+            ]
+            content = f"""
+            Instrucción de depuración del usuario: "{prompt}"
+            
+            Lista de correos a evaluar:
+            {json.dumps(compact_list, ensure_ascii=False)}
+            
+            Devuelve JSON con la clave 'candidates' conteniendo los correos que cumplen el criterio:
+            {{"candidates": [{{"id": 123, "reason": "motivo justificado..."}}]}}
+            Si ninguno cumple, devuelve {{"candidates": []}}.
+            """
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=content,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        response_mime_type="application/json",
+                        temperature=0.1
+                    )
+                )
+                data = json.loads(response.text)
+                return data.get("candidates", [])
+            except Exception as e:
+                print(f"[GeminiService] Error analizando lote de correos: {e}")
+                return []
 
-        response = client.models.generate_content(
-            model=model_name,
-            contents=content,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                response_mime_type="application/json",
-                temperature=0.2
-            )
-        )
+        raw_candidates = []
+        if len(chunks) == 1:
+            raw_candidates = process_chunk(chunks[0])
+        else:
+            with ThreadPoolExecutor(max_workers=min(5, len(chunks))) as executor:
+                futures = [executor.submit(process_chunk, c) for c in chunks]
+                for f in as_completed(futures):
+                    raw_candidates.extend(f.result())
 
-        try:
-            return json.loads(response.text)
-        except Exception:
-            return {"candidates": []}
+        # Enriquecer y ordenar los candidatos preservando metadatos completos y orden cronológico
+        seen_ids = set()
+        candidates = []
+        raw_candidates_map = {}
+        for rc in raw_candidates:
+            cid = rc.get("id")
+            if cid is not None and cid not in raw_candidates_map:
+                raw_candidates_map[cid] = rc.get("reason") or "Coincide con el criterio de depuración"
+
+        for m in emails_metadata:
+            mid = m.get("id")
+            if mid in raw_candidates_map and mid not in seen_ids:
+                seen_ids.add(mid)
+                candidates.append({
+                    "id": mid,
+                    "subject": m.get("subject") or "(Sin Asunto)",
+                    "sender": m.get("sender") or "",
+                    "account": m.get("account_email") or f"Cuenta #{m.get('account_id')}",
+                    "folder": m.get("folder") or "Bandeja",
+                    "date": str(m.get("date") or "")[:19],
+                    "reason": raw_candidates_map[mid]
+                })
+
+        return {"candidates": candidates}
 
     @classmethod
     def extract_calendar_event(cls, subject: str, sender: str, body: str) -> Optional[Dict[str, Any]]:

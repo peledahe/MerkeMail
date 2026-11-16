@@ -498,23 +498,37 @@ const GeminiAI = {
         const countSpan = document.getElementById('cleanup-found-count');
         const btnAnalyze = document.getElementById('btn-analyze-cleanup');
         const btnExecute = document.getElementById('btn-execute-cleanup');
+        const toggleAllBtn = document.getElementById('btn-toggle-all-cleanup');
 
         if (!prompt) {
-            UI.showStickyToast('Prompt requerido', 'Ingresa una orden de depuración (ej: "boletines y promociones de más de 30 días")', 'warning');
+            UI.showStickyToast('Prompt requerido', 'Ingresa una orden de depuración (ej: "todos los mensajes de redes sociales")', 'warning');
             return;
         }
 
         const originalBtnText = btnAnalyze.innerHTML;
         btnAnalyze.disabled = true;
-        btnAnalyze.innerHTML = `<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Evaluando buzón con Elio...`;
+        btnAnalyze.innerHTML = `<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Evaluando todos los buzones con Elio...`;
 
-        listContainer.innerHTML = `<div class="p-8 text-center text-slate-400 text-xs">Evaluando correos con IA...</div>`;
+        listContainer.innerHTML = `
+            <div class="p-8 text-center text-slate-400 text-xs flex flex-col items-center justify-center gap-2">
+                <svg class="animate-spin h-5 w-5 text-rose-500" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                </svg>
+                <span>Evaluando absolutamente todos los correos de todas las cuentas con Elio...</span>
+            </div>
+        `;
+        if (toggleAllBtn) toggleAllBtn.classList.add('hidden');
 
         try {
             const res = await fetch('/api/ai/cleanup-preview', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: prompt, folder: EmailManager.currentFolder || 'INBOX' })
+                body: JSON.stringify({
+                    prompt: prompt,
+                    all_accounts: true,
+                    folder: 'ALL'
+                })
             });
 
             const data = await res.json();
@@ -525,16 +539,23 @@ const GeminiAI = {
             if (this.currentCandidates.length === 0) {
                 listContainer.innerHTML = `
                     <div class="p-8 text-center text-slate-500 text-xs">
-                        No se encontraron correos que coincidan con el criterio de depuración especificado.
+                        No se encontraron correos que coincidan con el criterio de depuración especificado en ninguna cuenta.
                     </div>
                 `;
                 btnExecute.disabled = true;
-                btnExecute.classList.add('opacity-50');
+                btnExecute.classList.add('opacity-50', 'cursor-not-allowed');
+                btnExecute.textContent = 'Depurar Seleccionados (Papelera)';
+                if (toggleAllBtn) toggleAllBtn.classList.add('hidden');
             } else {
                 listContainer.innerHTML = this.currentCandidates.map(c => `
-                    <div class="p-3 bg-white dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700/60 flex items-start gap-3 shadow-2xs">
-                        <input type="checkbox" checked value="${c.id}" class="cleanup-check-item mt-1 rounded border-slate-300 text-rose-600 focus:ring-rose-500">
+                    <div class="p-3 bg-white dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700/60 flex items-start gap-3 shadow-2xs hover:border-slate-300 dark:hover:border-slate-600 transition-colors">
+                        <input type="checkbox" checked value="${c.id}" onchange="GeminiAI.updateCleanupSelectionCount()" class="cleanup-check-item mt-1 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer">
                         <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-1.5 flex-wrap mb-1">
+                                ${c.account ? `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-750 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 truncate max-w-[210px]" title="${EmailManager.escapeHtml(c.account)}"><svg class="w-2.5 h-2.5 opacity-60 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207"/></svg>${EmailManager.escapeHtml(c.account)}</span>` : ''}
+                                ${c.folder ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-900/40">${EmailManager.escapeHtml(c.folder)}</span>` : ''}
+                                ${c.date ? `<span class="text-[10px] text-slate-400">${EmailManager.escapeHtml(c.date)}</span>` : ''}
+                            </div>
                             <p class="text-xs font-semibold text-slate-900 dark:text-white truncate">${EmailManager.escapeHtml(c.subject || '(Sin Asunto)')}</p>
                             <p class="text-[11px] text-slate-500 dark:text-slate-400 truncate">${EmailManager.escapeHtml(c.sender || '')}</p>
                             <span class="inline-block mt-1 px-2 py-0.5 rounded bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-[10px] font-medium border border-rose-200 dark:border-rose-900/40">
@@ -545,13 +566,18 @@ const GeminiAI = {
                 `).join('');
 
                 btnExecute.disabled = false;
-                btnExecute.classList.remove('opacity-50');
+                btnExecute.classList.remove('opacity-50', 'cursor-not-allowed');
+                if (toggleAllBtn) {
+                    toggleAllBtn.classList.remove('hidden');
+                    toggleAllBtn.textContent = 'Deseleccionar todos';
+                }
+                this.updateCleanupSelectionCount();
             }
         } catch (e) {
             listContainer.innerHTML = window.UI ? UI.renderErrorState({
                 title: 'No pudimos analizar los correos',
                 message: 'Ocurrió un inconveniente al evaluar los mensajes con IA. Verifica tu conexión o intenta con un criterio más específico.',
-                retryAction: 'GeminiAI.previewCleanup()',
+                retryAction: 'GeminiAI.analyzeCleanupPrompt()',
                 retryText: 'Reintentar análisis',
                 size: 'sm'
             }) : `<div class="p-4 text-center text-rose-500 text-xs">Error al procesar solicitud</div>`;
@@ -559,6 +585,36 @@ const GeminiAI = {
             btnAnalyze.disabled = false;
             btnAnalyze.innerHTML = originalBtnText;
         }
+    },
+
+    updateCleanupSelectionCount() {
+        const checked = document.querySelectorAll('.cleanup-check-item:checked');
+        const total = document.querySelectorAll('.cleanup-check-item');
+        const btnExecute = document.getElementById('btn-execute-cleanup');
+        const toggleAllBtn = document.getElementById('btn-toggle-all-cleanup');
+
+        if (btnExecute) {
+            if (checked.length === 0) {
+                btnExecute.disabled = true;
+                btnExecute.classList.add('opacity-50', 'cursor-not-allowed');
+                btnExecute.textContent = 'Depurar Seleccionados (Papelera)';
+            } else {
+                btnExecute.disabled = false;
+                btnExecute.classList.remove('opacity-50', 'cursor-not-allowed');
+                btnExecute.textContent = `Depurar Seleccionados (${checked.length})`;
+            }
+        }
+
+        if (toggleAllBtn && total.length > 0) {
+            toggleAllBtn.textContent = checked.length === total.length ? 'Deseleccionar todos' : 'Seleccionar todos';
+        }
+    },
+
+    toggleSelectAllCandidates() {
+        const checkboxes = document.querySelectorAll('.cleanup-check-item');
+        const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+        checkboxes.forEach(cb => { cb.checked = !allChecked; });
+        this.updateCleanupSelectionCount();
     },
 
     async executeBatchCleanup() {
@@ -602,6 +658,7 @@ const GeminiAI = {
         const listContainer = document.getElementById('cleanup-candidates-list');
         const countSpan = document.getElementById('cleanup-found-count');
         const btnExecute = document.getElementById('btn-execute-cleanup');
+        const toggleAllBtn = document.getElementById('btn-toggle-all-cleanup');
 
         if (promptInput) promptInput.value = '';
         if (countSpan) countSpan.textContent = '0';
@@ -611,6 +668,10 @@ const GeminiAI = {
         if (btnExecute) {
             btnExecute.disabled = true;
             btnExecute.classList.add('opacity-50', 'cursor-not-allowed');
+            btnExecute.textContent = 'Depurar Seleccionados (Papelera)';
+        }
+        if (toggleAllBtn) {
+            toggleAllBtn.classList.add('hidden');
         }
         this.currentCandidates = [];
         UI.closeDrawer('drawer-cleanup-ai');

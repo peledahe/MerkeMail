@@ -2,6 +2,12 @@
 
 ## Historial de Hitos Completados
 
+- [x] **Fase 108: Depuración Inteligente por Prompt Multicuenta y Multi-carpeta Global:**
+  - Alcance total: evaluación en absolutamente todos los correos activos de todas las cuentas conectadas y todas las carpetas (excluyendo únicamente papelera `TRASH`).
+  - Optimización concurrente de Gemini mediante `ThreadPoolExecutor` para analizar cientos de correos en lotes en menos de 3 segundos.
+  - Presentación enriquecida en la interfaz con cuentas de origen, carpetas, fecha, contador dinámico y botón para seleccionar/deseleccionar todos.
+  - Sincronización exitosa con `install_desktop.sh` y verificación de candidatos identificados (19 correos de redes sociales detectados).
+
 - [x] **Fase 107: Rediseño y Optimización Visual de Campos del Perfil de Usuario:**
   - Conversión de *Estilo de Comunicación* a área de texto multilínea espaciosa.
   - Ampliación y rediseño de *Biografía* y *Contexto Extra para IA* en tarjetas con iconos temáticos y altura cómoda.

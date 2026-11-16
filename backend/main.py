@@ -128,8 +128,9 @@ class SmartReplyRequest(BaseModel):
 
 class AICleanupRequest(BaseModel):
     prompt: str
-    folder: str = "INBOX"
+    folder: Optional[str] = "ALL"
     account_id: Optional[int] = None
+    all_accounts: bool = True
 
 class BatchDeleteRequest(BaseModel):
     email_ids: List[int]
@@ -1896,14 +1897,23 @@ def summarize_email(email_id: int):
 
 @app.post("/api/ai/cleanup-preview")
 def cleanup_preview(req: AICleanupRequest):
-    """Evalúa los correos de la bandeja según el prompt y devuelve candidatos con justificación."""
+    """Evalúa absolutamente todos los correos activos de todas las cuentas según el prompt y devuelve candidatos con justificación."""
     conn = get_db()
-    query = "SELECT id, folder, sender, subject, snippet, date FROM emails WHERE folder = ?"
-    params = [req.folder]
-    if req.account_id:
-        query += " AND account_id = ?"
+    query = """
+        SELECT e.id, e.account_id, a.email as account_email, a.name as account_name,
+               e.folder, e.sender, e.subject, e.snippet, e.date
+        FROM emails e
+        LEFT JOIN accounts a ON e.account_id = a.id
+        WHERE e.folder != 'TRASH'
+    """
+    params = []
+    if req.account_id and not req.all_accounts:
+        query += " AND e.account_id = ?"
         params.append(req.account_id)
-    query += " ORDER BY COALESCE(datetime(date), date) DESC, id DESC LIMIT 80"
+    if req.folder and req.folder.upper() not in ('ALL', 'TODAS', 'TODOS', 'GLOBAL', ''):
+        query += " AND e.folder = ?"
+        params.append(req.folder)
+    query += " ORDER BY COALESCE(datetime(e.date), e.date) DESC, e.id DESC"
     rows = conn.execute(query, params).fetchall()
     conn.close()
 

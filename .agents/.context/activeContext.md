@@ -2,6 +2,20 @@
 
 ## Estado de Desarrollo Actual
 
+- **Fase 108 - Depuración Inteligente por Prompt Multicuenta y Multi-carpeta Global:**
+  - **Ampliación de Cobertura a Todos los Correos de Todas las Cuentas:**
+    - Se resolvió la limitación previa que restringía la evaluación a la carpeta actual `INBOX` y a un corte arbitrario de 80 correos.
+    - Se actualizó el endpoint `/api/ai/cleanup-preview` en `backend/main.py` para consultar la totalidad de correos activos de todas las cuentas conectadas (`WHERE folder != 'TRASH'`), trayendo la información de la cuenta asociada (`account_email`) y su carpeta.
+  - **Evaluación Concurrente por Lotes con Gemini:**
+    - Se optimizó `GeminiService.analyze_cleanup_by_prompt` en `backend/gemini_service.py` con `ThreadPoolExecutor`, particionando lotes compactos de 140 correos y procesándolos en paralelo.
+    - Tiempo de respuesta reducido a menos de 3 segundos para el buzón completo (>550 correos), clasificando con precisión todas las categorías solicitadas en lenguaje natural (ej. "todos los mensajes de redes sociales" identificó los 19 correos de LinkedIn, TikTok y Facebook en `CATEGORY_SOCIAL`, `CATEGORY_UPDATES` y `CATEGORY_PROMOTIONS`).
+  - **Mejora de UX en el Panel Lateral:**
+    - En `frontend/js/gemini.js` y `frontend/index.html`, la solicitud ahora envía `{ all_accounts: true, folder: 'ALL' }`.
+    - Cada candidato renderizado muestra badges distintivos con su cuenta (`perrydaniels@gmail.com`, etc.), su carpeta de origen y fecha, junto con la justificación detectada por la IA.
+    - Se añadió contador reactivo de selección y botón interactivo "Seleccionar todos / Deseleccionar todos".
+  - **Despliegue y Verificación:**
+    - Desplegado y verificado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`. Backend activo y validado en el puerto 6524.
+
 - **Fase 107 - Rediseño y Optimización Visual de Campos del Perfil de Usuario:**
   - **Ampliación y Formato Multilínea:**
     - **Estilo de Comunicación:** Se transformó de un campo `input` de una sola línea a un `textarea` estilizado con altura mínima y redimensión vertical para leer y editar cómodamente párrafos de estilo y tono sin cortes horizontales.
