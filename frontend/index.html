@@ -76,15 +76,16 @@
     <div id="desktop-window-drag-strip" class="w-full bg-white dark:bg-slate-900 select-none cursor-grab active:cursor-grabbing shrink-0 z-50 transition-colors" style="height: 3px;" title="Clic sostenido para mover la ventana"></div>
 
     <!-- ================= TOP GLOBAL HEADER (Estilo Gmail) ================= -->
-    <header id="main-header" class="h-16 px-2.5 sm:px-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0 z-30 select-none gap-2">
+    <header id="main-header" class="h-14 sm:h-16 px-2 sm:px-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0 z-30 select-none gap-1.5 sm:gap-2">
         <!-- Logo & Marca MerkeMail + Botón Menú Móvil + Botón Redactar -->
-        <div class="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+        <div class="flex items-center gap-1 sm:gap-2.5 shrink-0">
             <!-- Botón Menú Hamburguesa Móvil (Visible solo en < 768px) -->
             <button onclick="UI.toggleMobileSidebar()" class="md:hidden p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0" title="Abrir menú">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
 
-            <div class="flex items-center gap-2 cursor-pointer mr-0.5 sm:mr-1" onclick="EmailManager.currentFolder='INBOX'; EmailManager.loadEmails();">
+            <!-- Logo en Header (Oculto en móvil < 768px para evitar saturar la barra superior; visible en menú móvil y en >= 768px) -->
+            <div class="hidden md:flex items-center gap-2 cursor-pointer mr-0.5 sm:mr-1" onclick="EmailManager.currentFolder='INBOX'; EmailManager.loadEmails();">
                 <img src="/img/merke.svg" alt="MerkeMail Logo" class="w-8 h-8 rounded-lg shadow-sm" onerror="this.onerror=null; this.src='/img/merke.png';">
                 <div class="hidden sm:block">
                     <span class="font-bold text-base tracking-tight text-slate-900 dark:text-white flex items-center gap-1.5">
@@ -95,23 +96,23 @@
                 </div>
             </div>
 
-            <!-- Botón Cápsula Redactar en Header Superior (Adaptativo) -->
-            <button onclick="UI.openComposeModal()" class="flex items-center gap-1.5 sm:gap-2 py-1.5 sm:py-2 px-2.5 sm:px-3.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 shadow-xs hover:shadow dark:bg-slate-800 dark:hover:bg-slate-750 dark:border-slate-700 dark:text-white font-bold rounded-2xl text-xs md:text-sm transition-all active:scale-98 cursor-pointer shrink-0" title="Redactar nuevo correo">
+            <!-- Botón Cápsula Redactar en Header Superior (Compacto en móvil, completo en desktop) -->
+            <button onclick="UI.openComposeModal()" class="flex items-center justify-center gap-1.5 sm:gap-2 p-2 sm:py-2 sm:px-3.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 shadow-xs hover:shadow dark:bg-slate-800 dark:hover:bg-slate-750 dark:border-slate-700 dark:text-white font-bold rounded-xl sm:rounded-2xl text-xs md:text-sm transition-all active:scale-98 cursor-pointer shrink-0" title="Redactar nuevo correo">
                 <svg class="w-4 h-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-                <span class="hidden xs:inline sm:inline">Redactar</span>
+                <span class="hidden sm:inline">Redactar</span>
             </button>
         </div>
 
         <!-- Barra de Búsqueda Estilo Píldora Gmail -->
-        <div class="flex-1 max-w-2xl px-1 sm:px-3 md:px-6 min-w-0">
-            <div class="relative flex items-center w-full bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/60 rounded-full shadow-inner py-1.5 px-3 sm:px-4 focus-within:ring-2 focus-within:ring-indigo-500/60 focus-within:bg-white dark:focus-within:bg-slate-800 transition-all">
-                <button type="button" onclick="window.dispatchSearchToElio ? window.dispatchSearchToElio() : null" class="cursor-pointer text-slate-400 hover:text-indigo-500 mr-2 sm:mr-3 shrink-0 transition-colors" title="Buscar o consultar a @Elio">
+        <div class="flex-1 max-w-2xl px-0.5 sm:px-3 md:px-6 min-w-0">
+            <div class="relative flex items-center w-full bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/60 rounded-full shadow-inner py-1.5 px-2.5 sm:px-4 focus-within:ring-2 focus-within:ring-indigo-500/60 focus-within:bg-white dark:focus-within:bg-slate-800 transition-all">
+                <button type="button" onclick="window.dispatchSearchToElio ? window.dispatchSearchToElio() : null" class="cursor-pointer text-slate-400 hover:text-indigo-500 mr-1.5 sm:mr-3 shrink-0 transition-colors" title="Buscar o consultar a @Elio">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                 </button>
-                <input type="text" id="main-search-input" placeholder="Buscar correos... (o escribe @elio para invocar al asistente)" class="w-full bg-transparent text-xs md:text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none min-w-0">
+                <input type="text" id="main-search-input" placeholder="Buscar correos o @elio..." class="w-full bg-transparent text-xs md:text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none min-w-0">
                 
                 <!-- Chip de acción rápida para Elio (aparece automáticamente al escribir @elio) -->
-                <button id="btn-submit-to-elio" type="button" onclick="window.dispatchSearchToElio()" class="hidden items-center gap-1.5 px-2.5 py-1 mr-1 rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-semibold shadow-xs transition-all cursor-pointer shrink-0 whitespace-nowrap animate-fadeIn select-none" title="Preguntar a Elio (o presiona Enter ↵)">
+                <button id="btn-submit-to-elio" type="button" onclick="window.dispatchSearchToElio()" class="hidden items-center gap-1.5 px-2 sm:px-2.5 py-1 mr-1 rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-semibold shadow-xs transition-all cursor-pointer shrink-0 whitespace-nowrap animate-fadeIn select-none" title="Preguntar a Elio (o presiona Enter ↵)">
                     <img src="/img/bot.png" alt="Elio" class="w-4 h-4 rounded-full object-cover ring-1 ring-white/30">
                     <span class="font-bold text-[11px] tracking-tight">( ? )</span>
                 </button>
@@ -130,7 +131,7 @@
             </div>
         </div>
 
-        <!-- Acciones Rápidas & Perfil Usuario -->
+        <!-- Acciones Rápidas & Perfil Usuario (En móvil < 768px solo se muestra el Avatar y controles de ventana; los demás botones pasan al menú lateral móvil) -->
         <div class="flex items-center gap-1 sm:gap-2 shrink-0">
             <!-- Botón Instalar PWA en el dispositivo -->
             <button id="btn-install-pwa" onclick="UI.promptInstallPWA()" class="hidden items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-full bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs font-semibold shadow-2xs hover:shadow transition-all cursor-pointer" title="Instalar MerkeMail en tu dispositivo">
@@ -144,34 +145,34 @@
                 <span id="sync-status-text">Activo</span>
             </button>
 
-            <!-- Sincronizar Correos -->
-            <button onclick="EmailManager.syncCurrentView()" class="p-1.5 sm:p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs" title="Sincronizar correos nuevos">
+            <!-- Sincronizar Correos (Visible en >= 768px; en móvil está en el menú lateral) -->
+            <button onclick="EmailManager.syncCurrentView()" class="hidden md:flex p-1.5 sm:p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs" title="Sincronizar correos nuevos">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
             </button>
 
-            <!-- Firmas Multi-cuenta (Oculto en móvil) -->
-            <button onclick="SignatureManager.openSignaturesDrawer()" class="hidden sm:flex p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs" title="Gestor de Firmas">
+            <!-- Firmas Multi-cuenta (Visible en >= 768px) -->
+            <button onclick="SignatureManager.openSignaturesDrawer()" class="hidden md:flex p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs" title="Gestor de Firmas">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
             </button>
 
-            <!-- Cuentas Conectadas -->
+            <!-- Cuentas Conectadas (Visible en >= 768px) -->
             <button onclick="UI.openDrawer('drawer-accounts')" class="hidden md:flex p-1.5 sm:p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs" title="Cuentas Conectadas">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
             </button>
 
-            <!-- Ajustes & API Key -->
-            <button onclick="UI.openDrawer('drawer-settings')" class="p-1.5 sm:p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs relative" title="Ajustes & Gemini Key">
+            <!-- Ajustes & API Key (Visible en >= 768px) -->
+            <button onclick="UI.openDrawer('drawer-settings')" class="hidden md:flex p-1.5 sm:p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs relative" title="Ajustes & Gemini Key">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                 <span id="gemini-status-dot" class="w-2 h-2 rounded-full bg-emerald-500 absolute top-1 right-1 ring-2 ring-white dark:ring-slate-900"></span>
             </button>
 
-            <!-- Toggle Dark/Light Mode -->
-            <button onclick="UI.toggleTheme()" class="p-1.5 sm:p-2 rounded-full text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs" title="Cambiar tema">
+            <!-- Toggle Dark/Light Mode (Visible en >= 768px) -->
+            <button onclick="UI.toggleTheme()" class="hidden md:flex p-1.5 sm:p-2 rounded-full text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs" title="Cambiar tema">
                 <span id="theme-toggle-icon"></span>
             </button>
 
             <!-- Avatar del Usuario (Cuenta del Sistema - Indicador visual con borde limpio anti-aliased) -->
-            <div id="user-header-avatar" class="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white text-xs font-bold cursor-default ml-0.5 sm:ml-1 shrink-0 overflow-hidden select-none" style="transform: translateZ(0); -webkit-backface-visibility: hidden;" title="Cuenta por defecto">
+            <div id="user-header-avatar" class="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white text-xs font-bold cursor-default ml-0.5 sm:ml-1 shrink-0 overflow-hidden select-none" style="transform: translateZ(0); -webkit-backface-visibility: hidden;" title="Cuenta por defecto">
                 P
             </div>
 
