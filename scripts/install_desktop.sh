@@ -86,16 +86,14 @@ Comment=Cliente de Correo Inteligente con IA Gemini
 Exec=$INSTALL_DIR/desktop/launcher.sh
 Icon=merkemail
 Terminal=false
-StartupWMClass=merkemail
-Actions=Show;Quit;
+StartupWMClass=MerkeMail
+SingleMainWindow=true
+X-GNOME-SingleWindow=true
+Actions=Hide;
 
-[Desktop Action Show]
-Name=Mostrar la aplicación
-Exec=$INSTALL_DIR/desktop/launcher.sh --show
-
-[Desktop Action Quit]
-Name=Cerrar
-Exec=$INSTALL_DIR/desktop/launcher.sh --quit
+[Desktop Action Hide]
+Name=Ocultar Aplicación
+Exec=$INSTALL_DIR/desktop/launcher.sh --hide
 EOF
 
 chmod +x "$HOME/.local/share/applications/merkemail.desktop"

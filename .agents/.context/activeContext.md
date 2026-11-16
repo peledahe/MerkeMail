@@ -2,6 +2,24 @@
 
 ## Estado de Desarrollo Actual
 
+- **Fase 110 - Selector de Etiquetas en Primer Plano (`fixed z-[9999]`) y Lectura desde el Inicio sin Auto-Scroll al Responder:**
+  - **Selector de Etiquetas en Primer Plano (`frontend/js/email.js`):**
+    - Se eliminó `overflow-x-auto` de `#email-top-actions-right` y se montó `#email-label-dropdown-top-${emailId}` directamente sobre `document.body` con `position: fixed; z-index: 9999`, flotando siempre por encima del encabezado y del `iframe` del correo sin generar barras de scroll en la barra de acciones.
+  - **Lectura desde el Principio y Formulario de Respuesta Bajo Demanda (`frontend/js/email.js` y `frontend/js/composer.js`):**
+    - Se ocultó por defecto `#inline-reply-container` al abrir cualquier correo y se eliminó la llamada automática a `InlineReply.focusTop()`, fijando `scrollTop = 0` en `#email-detail-scroll-container` para que el correo siempre se muestre desde el principio.
+    - Al hacer clic en el botón **Responder** (`prepareReply`) o **Responder con IA** (`replyWithAI`), se despliega `#inline-reply-container`, se hace scroll suave hacia el formulario y se posiciona el cursor en el editor.
+
+- **Fase 109 - Simplificación del Menú de Barra de Tareas, Sección "Otras Apps" con Sincronización y Pie de Autoría Merke:**
+  - **Menú de Barra de Tareas y System Tray (`desktop/app_window.py` y `scripts/install_desktop.sh`):**
+    - Se alineó `WM_CLASS` (`sys.argv[0] = "merkemail"`, `StartupWMClass=MerkeMail`), `SingleMainWindow=true` y `X-GNOME-SingleWindow=true` en `merkemail.desktop`, eliminando la opción "Ventana nueva" y acciones duplicadas.
+    - Se configuró `Actions=Hide;` (`Ocultar Aplicación` -> `--hide`) y el menú del icono en bandeja/barra de tareas para presentar únicamente **Ocultar Aplicación** (o **Mostrar Aplicación** cuando está oculta) y **Cerrar**, actualizando reactivamente el estado en `showEvent`, `hideEvent` y `closeEvent`.
+  - **Sección "Otras Apps" y Sincronización Unificada (`frontend/index.html` y `frontend/js/ui.js`):**
+    - Se agregó el título **Otras Apps** sobre Calendario y Contactos en la barra lateral izquierda junto con el botón `#btn-sync-other-apps` (`UI.syncOtherApps(this)`), que fuerza en paralelo la sincronización de Calendario, Tareas y Contactos con notificación sticky.
+  - **Pie de Autoría "Desarrollado por Merke" (`frontend/index.html`):**
+    - Se incorporó en la parte inferior de la barra lateral izquierda el texto **Desarrollado por** acompañado de `/img/merke-2022.svg` en modo claro y `/img/merke-blanco-2022.svg` en modo oscuro, con enlace directo a `https://merke.net`.
+  - **Despliegue y Verificación:**
+    - Desplegado en `~/.local/share/merkemail` mediante `./scripts/install_desktop.sh`.
+
 - **Fase 108 - Depuración Inteligente por Prompt Multicuenta y Multi-carpeta Global:**
   - **Ampliación de Cobertura a Todos los Correos de Todas las Cuentas:**
     - Se resolvió la limitación previa que restringía la evaluación a la carpeta actual `INBOX` y a un corte arbitrario de 80 correos.
@@ -1035,3 +1053,17 @@
 - En el panel de chat con Elio (`AntigravityCopilot`), los mensajes enviados por el usuario ahora muestran el avatar de su cuenta predeterminada a la derecha de la burbuja (con fallback automático a inicial y color de la cuenta).
 - El avatar del usuario mantiene la misma proporción y alineación (`w-6 h-6 rounded-full`) que el avatar de Elio en las respuestas.
 - Sincronizado con la aplicación de escritorio (`./scripts/install_desktop.sh`).
+
+- **Fase 71: Prioridad de Sincronización Local, Ejecución en Segundo Plano, Optimización de Rendimiento y Alcance Universal de IAs:**
+  - **Prioridades de Sincronización (Correo, Contactos, Tareas y Calendario):**
+    - Prevalencia de los cambios efectuados en MerkeMail (`local_modified = 1` y marca temporal `updated_at`) conservando siempre la versión más reciente y dejando en segundo lugar lo almacenado en servidores remotos.
+    - Registro de exclusión permanente para elementos eliminados en la aplicación (`deleted_emails`, `deleted_events`, `deleted_contacts`) evitando su reimportación en futuras sincronizaciones y propagando el cambio al servidor remoto.
+    - Soporte completo para creación, actualización, alternancia y eliminación de tareas en Google Tasks API y eventos en Google Calendar API respetando las modificaciones locales más recientes.
+  - **Sincronización 100% en Segundo Plano:**
+    - Desacopladas las operaciones de sincronización remota en hilos `daemon` en segundo plano tanto en lecturas (`GET /api/emails`, `GET /api/labels`), inicio del servidor (`on_startup`), OAuth callback, como en escrituras locales (lectura, destacados, etiquetas, archivo, papelera, eventos y tareas).
+  - **Optimización de Listas de Correo, Sincronización e IAs:**
+    - Índices compuestos B-Tree en SQLite (`idx_emails_folder_date`, `idx_emails_acc_folder_date`, `idx_emails_date_id`, `idx_emails_read_folder`) y ordenamiento directo `ORDER BY emails.date DESC, emails.id DESC` (< 7 ms).
+    - Carga paralela en `frontend/js/app.js` y renderizado inmediato sin bloqueos visuales en `frontend/js/email.js`.
+    - Cliente `genai.Client` singleton con pool de conexiones reutilizable, `ThinkingConfig(thinking_level="MINIMAL")`, failover instantáneo ante errores 503/429 y ruta rápida de 1 solo roundtrip para consultas en `AntigravityMailAgent` (~2.3 s).
+  - **Alcance Universal de Búsquedas y Acciones de las IAs:**
+    - Tanto Elio (`buscar_correos`, `gestionar_correos`, `eliminar_correos`) como el Depurador IA (`cleanup_preview` y `analyze_cleanup_by_prompt`) operan sobre todo correo, toda carpeta y toda etiqueta de todas las cuentas activas, excluyendo estrictamente Papelera (`TRASH`), Borradores (`DRAFT`/`DRAFTS`) y Spam (`SPAM`) a menos que el usuario lo solicite explícitamente.

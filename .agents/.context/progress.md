@@ -2,6 +2,19 @@
 
 ## Historial de Hitos Completados
 
+- [x] **Fase 110: Selector de Etiquetas en Primer Plano y Apertura de Correo desde el Principio sin Auto-Enfoque:**
+  - Menú desplegable de etiquetas montado en `document.body` con `position: fixed; z-index: 9999` sobre el `iframe` y sin barras de scroll en `#email-top-actions-right`.
+  - Ocultación inicial de `#inline-reply-container` y eliminación de `InlineReply.focusTop()` al abrir un correo, garantizando `scrollTop = 0` para leer desde el inicio.
+  - Activación, scroll y posicionamiento del cursor en el editor únicamente al pulsar el botón **Responder** (`prepareReply`) o **Responder con IA** (`replyWithAI`).
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 109: Simplificación del Menú de Barra de Tareas, Sección "Otras Apps" y Pie "Desarrollado por Merke":**
+  - Menú contextual de barra de tareas y bandeja simplificado a **Ocultar Aplicación** y **Cerrar** (`SingleMainWindow=true`, `StartupWMClass=MerkeMail`, `--hide` y `closeEvent`).
+  - Encabezado **Otras Apps** y botón de sincronización forzada de Calendario y Contactos (`UI.syncOtherApps`) en la barra lateral izquierda.
+  - Pie **Desarrollado por** con logos adaptativos claro (`merke-2022.svg`) y oscuro (`merke-blanco-2022.svg`) enlazados a `https://merke.net`.
+  - Corrección de `overflow-visible` en `#email-top-actions-right` para visualización íntegra del menú desplegable de etiquetas.
+  - Sincronización exitosa con `install_desktop.sh`.
+
 - [x] **Fase 108: Depuración Inteligente por Prompt Multicuenta y Multi-carpeta Global:**
   - Alcance total: evaluación en absolutamente todos los correos activos de todas las cuentas conectadas y todas las carpetas (excluyendo únicamente papelera `TRASH`).
   - Optimización concurrente de Gemini mediante `ThreadPoolExecutor` para analizar cientos de correos en lotes en menos de 3 segundos.
@@ -639,3 +652,9 @@
 
 
 
+
+- [x] **Fase 71: Prioridad de Sincronización Local, Ejecución en Segundo Plano, Optimización de Rendimiento y Alcance Universal de IAs:**
+  - **Prioridad 1 (Cambios Locales y Versión Más Reciente):** Añadidos `updated_at`, `local_modified`, `deleted_emails` y `deleted_events` en [backend/database.py](file:///home/perry/Desarrollo/MerkeMail/backend/database.py), garantizando que los cambios hechos en MerkeMail y la versión más reciente prevalezcan en Correo, Contactos, Tareas y Calendario ([backend/google_oauth.py](file:///home/perry/Desarrollo/MerkeMail/backend/google_oauth.py), [backend/calendar_service.py](file:///home/perry/Desarrollo/MerkeMail/backend/calendar_service.py), [backend/contacts_service.py](file:///home/perry/Desarrollo/MerkeMail/backend/contacts_service.py), [backend/email_service.py](file:///home/perry/Desarrollo/MerkeMail/backend/email_service.py)).
+  - **Sincronización en Segundo Plano:** Eliminados los bloqueos de red en `GET /api/emails`, `GET /api/labels`, `on_startup` y en todas las acciones sobre correos, etiquetas, eventos y tareas en [backend/main.py](file:///home/perry/Desarrollo/MerkeMail/backend/main.py) y [backend/calendar_service.py](file:///home/perry/Desarrollo/MerkeMail/backend/calendar_service.py).
+  - **Velocidad de Listas, Sincronización e IAs:** Carga paralela en [frontend/js/app.js](file:///home/perry/Desarrollo/MerkeMail/frontend/js/app.js) y [frontend/js/email.js](file:///home/perry/Desarrollo/MerkeMail/frontend/js/email.js), índices compuestos en SQLite (~6 ms por listado), caché de etiquetas y cliente Gemini persistente con failover instantáneo y `thinking_level="MINIMAL"` en [backend/gemini_service.py](file:///home/perry/Desarrollo/MerkeMail/backend/gemini_service.py) y [backend/antigravity_agent.py](file:///home/perry/Desarrollo/MerkeMail/backend/antigravity_agent.py) (~2.3 s por consulta).
+  - **Búsquedas y Acciones IA en Todo Correo, Carpeta y Etiqueta (Sin Papelera, Borradores ni Spam por defecto):** Configurado en [backend/antigravity_agent.py](file:///home/perry/Desarrollo/MerkeMail/backend/antigravity_agent.py), [backend/gemini_service.py](file:///home/perry/Desarrollo/MerkeMail/backend/gemini_service.py) y [backend/main.py](file:///home/perry/Desarrollo/MerkeMail/backend/main.py).

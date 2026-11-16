@@ -86,9 +86,12 @@ class ContactsService:
     @classmethod
     def sync_contacts(cls, force: bool = False) -> Dict[str, Any]:
         """
-        Sincroniza y extrae contactos de todas las cuentas y correos del sistema.
-        Respeta las eliminaciones previas del usuario (deleted_contacts) y no
-        sobreescribe datos de contactos personalizados (is_customized = 1).
+        Sincroniza y extrae contactos de todas las cuentas y correos del sistema en memoria.
+        Prioridad 1: Los cambios de MerkeMail (contactos personalizados is_customized = 1 y
+        eliminaciones en deleted_contacts) prevalecen siempre.
+        Prioridad 2: Entre las versiones extraídas, prevalece el nombre y metadatos más
+        recientes (según fecha del correo) y finalmente los datos del servidor.
+        No toma en cuenta Papelera, Borradores ni Spam.
         """
         cls.init_table()
         conn = get_db()
@@ -98,63 +101,95 @@ class ContactsService:
         deleted_rows = cursor.execute("SELECT email FROM deleted_contacts").fetchall()
         deleted_set = {r["email"].lower().strip() for r in deleted_rows if r["email"]}
 
-        # 2. Cargar set de contactos personalizados para no sobreescribir sus atributos
-        customized_rows = cursor.execute("SELECT email FROM contacts WHERE is_customized = 1").fetchall()
-        customized_set = {r["email"].lower().strip() for r in customized_rows if r["email"]}
+        # 2. Cargar contactos existentes para respetar prioridades (is_customized, updated_at, last_interacted_at)
+        existing_rows = cursor.execute("SELECT email, name, is_customized, updated_at, last_interacted_at FROM contacts").fetchall()
+        existing_map = {r["email"].lower().strip(): dict(r) for r in existing_rows if r["email"]}
 
-        # 3. Obtener todos los remitentes y destinatarios de la tabla emails
-        rows = cursor.execute("SELECT account_id, sender, recipient, date FROM emails").fetchall()
+        # 3. Obtener remitentes y destinatarios excluyendo Papelera, Borradores y Spam
+        rows = cursor.execute("""
+            SELECT account_id, sender, recipient, date 
+            FROM emails 
+            WHERE UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'DRAFT', 'DRAFTS', 'BORRADORES', 'SPAM', 'JUNK')
+            ORDER BY date ASC
+        """).fetchall()
         
-        synced_count = 0
+        # Agregar en memoria en una sola pasada: {address: {name, acc_id, count, last_date}}
+        aggregated: Dict[str, Dict[str, Any]] = {}
         for r in rows:
             acc_id = r["account_id"]
-            date_str = r["date"] or ""
+            date_str = str(r["date"] or "")
             for field in (r["sender"], r["recipient"]):
                 if not field:
                     continue
-                # Manejar múltiples destinatarios separados por coma
                 for part in str(field).split(","):
                     realname, address = email.utils.parseaddr(part.strip())
                     address = address.lower().strip()
                     if not address or "@" not in address or "." not in address:
                         continue
-                    
-                    # Omitir contactos eliminados por el usuario
                     if address in deleted_set:
                         continue
 
-                    clean_name = realname.strip("\"' ") or address.split("@")[0]
+                    raw_clean_name = realname.strip("\"' ")
+                    fallback_name = address.split("@")[0]
+                    clean_name = raw_clean_name or fallback_name
 
-                    # Si el contacto fue personalizado por el usuario, solo actualizar interacciones
-                    if address in customized_set:
-                        cursor.execute("""
-                            UPDATE contacts SET
-                                interaction_count = interaction_count + 1,
-                                last_interacted_at = MAX(COALESCE(last_interacted_at, ''), COALESCE(?, ''))
-                            WHERE email = ?
-                        """, (date_str, address))
+                    if address not in aggregated:
+                        aggregated[address] = {
+                            "name": clean_name,
+                            "has_real_name": bool(raw_clean_name and "via" not in raw_clean_name.lower()),
+                            "account_id": acc_id,
+                            "count": 1,
+                            "last_date": date_str
+                        }
                     else:
-                        cursor.execute("""
-                            INSERT INTO contacts (name, email, account_id, interaction_count, last_interacted_at, source)
-                            VALUES (?, ?, ?, 1, ?, 'emails')
-                            ON CONFLICT(email) DO UPDATE SET
-                                interaction_count = contacts.interaction_count + 1,
-                                name = CASE 
-                                    WHEN LENGTH(?) > LENGTH(contacts.name) AND ? NOT LIKE '%via%' THEN ? 
-                                    WHEN contacts.name IS NULL OR contacts.name = '' THEN ?
-                                    ELSE contacts.name 
-                                END,
-                                last_interacted_at = MAX(COALESCE(contacts.last_interacted_at, ''), COALESCE(?, ''))
-                        """, (clean_name, address, acc_id, date_str, clean_name, clean_name, clean_name, clean_name, date_str))
-                    synced_count += 1
+                        entry = aggregated[address]
+                        entry["count"] += 1
+                        is_newer = date_str >= (entry["last_date"] or "")
+                        is_valid_real = bool(raw_clean_name and "via" not in raw_clean_name.lower())
+                        # Conservar la versión más reciente del nombre si es un nombre real válido
+                        if is_valid_real and (is_newer or not entry["has_real_name"]):
+                            entry["name"] = raw_clean_name
+                            entry["has_real_name"] = True
+                        if is_newer and date_str:
+                            entry["last_date"] = date_str
+                            entry["account_id"] = acc_id
+
+        synced_count = 0
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        for address, info in aggregated.items():
+            existing = existing_map.get(address)
+            if existing:
+                if existing.get("is_customized") == 1:
+                    # Prioridad absoluta a los cambios hechos en MerkeMail: solo actualizar conteo/fecha de interacción
+                    cursor.execute("""
+                        UPDATE contacts SET
+                            interaction_count = MAX(COALESCE(interaction_count, 1), ?),
+                            last_interacted_at = MAX(COALESCE(last_interacted_at, ''), COALESCE(?, ''))
+                        WHERE email = ?
+                    """, (info["count"], info["last_date"], address))
+                else:
+                    # Conservar el nombre de la versión más reciente
+                    ext_last = str(existing.get("last_interacted_at") or "")
+                    best_name = info["name"] if (info["last_date"] >= ext_last and info["has_real_name"]) else (existing.get("name") or info["name"])
+                    cursor.execute("""
+                        UPDATE contacts SET
+                            name = ?,
+                            interaction_count = ?,
+                            last_interacted_at = MAX(COALESCE(last_interacted_at, ''), COALESCE(?, ''))
+                        WHERE email = ?
+                    """, (best_name, info["count"], info["last_date"], address))
+            else:
+                cursor.execute("""
+                    INSERT INTO contacts (name, email, account_id, interaction_count, last_interacted_at, source, updated_at)
+                    VALUES (?, ?, ?, ?, ?, 'emails', ?)
+                """, (info["name"], address, info["account_id"], info["count"], info["last_date"], now_iso))
+            synced_count += 1
 
         conn.commit()
-
-        # Obtener total de contactos almacenados
         total = cursor.execute("SELECT COUNT(*) as c FROM contacts").fetchone()["c"]
         conn.close()
 
-        # Registrar timestamp de última sincronización
         set_setting("last_contacts_sync", datetime.now().isoformat())
 
         return {
@@ -166,13 +201,14 @@ class ContactsService:
 
     @classmethod
     def add_contact(cls, name: str, email_addr: str, phone: str = "", company: str = "", job_title: str = "", address: str = "", notes: str = "", account_id: Optional[int] = None) -> Dict[str, Any]:
-        """Añade un contacto manualmente a la libreta de direcciones."""
+        """Añade un contacto manualmente a la libreta de direcciones con prioridad local."""
         cls.init_table()
         clean_email = email_addr.lower().strip()
         if not clean_email or "@" not in clean_email:
             raise ValueError("Dirección de correo electrónico inválida")
 
         clean_name = name.strip() or clean_email.split("@")[0]
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         conn = get_db()
         cursor = conn.cursor()
 
@@ -180,8 +216,8 @@ class ContactsService:
         cursor.execute("DELETE FROM deleted_contacts WHERE email = ?", (clean_email,))
 
         cursor.execute("""
-            INSERT INTO contacts (name, email, phone, company, job_title, address, notes, account_id, source, is_customized, interaction_count, last_interacted_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual', 1, 1, CURRENT_TIMESTAMP)
+            INSERT INTO contacts (name, email, phone, company, job_title, address, notes, account_id, source, is_customized, interaction_count, last_interacted_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual', 1, 1, CURRENT_TIMESTAMP, ?)
             ON CONFLICT(email) DO UPDATE SET
                 name = excluded.name,
                 phone = COALESCE(excluded.phone, phone),
@@ -189,16 +225,18 @@ class ContactsService:
                 job_title = COALESCE(excluded.job_title, job_title),
                 address = COALESCE(excluded.address, address),
                 notes = COALESCE(excluded.notes, notes),
-                is_customized = 1
-        """, (clean_name, clean_email, phone, company, job_title, address, notes, account_id))
+                is_customized = 1,
+                updated_at = excluded.updated_at
+        """, (clean_name, clean_email, phone, company, job_title, address, notes, account_id, now_iso))
         conn.commit()
-        contact_id = cursor.lastrowid
+        row = cursor.execute("SELECT id FROM contacts WHERE email = ?", (clean_email,)).fetchone()
+        contact_id = row["id"] if row else cursor.lastrowid
         conn.close()
         return {"success": True, "id": contact_id, "name": clean_name, "email": clean_email}
 
     @classmethod
     def update_contact(cls, contact_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Actualiza la información de un contacto existente y lo marca como personalizado."""
+        """Actualiza la información de un contacto existente y lo marca como personalizado con timestamp reciente."""
         cls.init_table()
         conn = get_db()
         cursor = conn.cursor()
@@ -228,6 +266,7 @@ class ContactsService:
         job_title = data.get("job_title") if data.get("job_title") is not None else existing["job_title"]
         address = data.get("address") if data.get("address") is not None else existing["address"]
         notes = data.get("notes") if data.get("notes") is not None else existing["notes"]
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
         cursor.execute("""
             UPDATE contacts SET
@@ -238,9 +277,10 @@ class ContactsService:
                 job_title = ?,
                 address = ?,
                 notes = ?,
-                is_customized = 1
+                is_customized = 1,
+                updated_at = ?
             WHERE id = ?
-        """, (new_name.strip(), new_email, phone, company, job_title, address, notes, contact_id))
+        """, (new_name.strip(), new_email, phone, company, job_title, address, notes, now_iso, contact_id))
         conn.commit()
 
         updated = cursor.execute("""

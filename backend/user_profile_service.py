@@ -38,11 +38,12 @@ class UserProfileService:
         signatures = conn.execute("SELECT id, name, content, account_id, is_default FROM signatures").fetchall()
         signatures_data = [dict(s) for s in signatures]
 
-        # 3. Muestra de correos enviados y redactados por el usuario
+        # 3. Muestra de correos enviados y redactados por el usuario (excluyendo Papelera, Borradores y Spam)
         sent_emails = conn.execute("""
             SELECT id, sender, recipient, subject, date, snippet, body_text 
             FROM emails 
-            WHERE folder = 'SENT' OR sender LIKE '%daniels%' OR sender LIKE '%merke%'
+            WHERE (folder = 'SENT' OR sender LIKE '%daniels%' OR sender LIKE '%merke%')
+              AND UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'DRAFT', 'DRAFTS', 'BORRADORES', 'SPAM', 'JUNK')
             ORDER BY date DESC LIMIT 25
         """).fetchall()
         emails_sample = []

@@ -121,12 +121,17 @@ class GoogleOAuthService:
         conn.commit()
         conn.close()
 
-        # Sincronizar correos y eventos de Google Calendar en segundo plano
-        try:
-            cls.sync_gmail(acc_id, max_results=20)
-            cls.sync_google_calendar(acc_id)
-        except Exception as e:
-            print(f"Error sincronización inicial Google: {e}")
+        # Sincronizar correos, calendario y tareas en segundo plano sin bloquear el callback OAuth
+        import threading
+        def _bg_initial_sync():
+            try:
+                cls.sync_gmail(acc_id, max_results=20)
+                cls.sync_google_calendar(acc_id)
+                cls.sync_google_tasks(acc_id)
+            except Exception as e:
+                print(f"Error sincronización inicial Google en background: {e}")
+
+        threading.Thread(target=_bg_initial_sync, daemon=True).start()
 
         return {
             "success": True,
@@ -231,15 +236,41 @@ class GoogleOAuthService:
                 if existing_primary:
                     calendar_map["primary"] = existing_primary["id"]
 
+            # Cargar registro de eventos eliminados en MerkeMail para que prevalezcan siempre
+            del_rows = cursor.execute("SELECT external_id FROM deleted_events WHERE account_id = ?", (account_id,)).fetchall()
+            deleted_ext_ids = {r["external_id"] for r in del_rows if r["external_id"]}
+
             # 2. Rango de sincronización de eventos: desde hace 60 días hasta 180 días adelante
             time_min = (datetime.utcnow() - timedelta(days=60)).isoformat() + "Z"
             time_max = (datetime.utcnow() + timedelta(days=180)).isoformat() + "Z"
 
             total_synced = 0
 
-            # 3. Iterar por TODOS los calendarios para descargar sus eventos
+            # 3. Iterar por TODOS los calendarios para sincronizar eventos con prioridad local
             for ext_id, local_cal_id in calendar_map.items():
                 try:
+                    # 3a. Subir primero cualquier evento creado localmente aún no sincronizado (external_id IS NULL)
+                    unsynced_locals = cursor.execute(
+                        "SELECT * FROM events WHERE calendar_id = ? AND (external_id IS NULL OR external_id = '') AND (is_task = 0 OR is_task IS NULL)",
+                        (local_cal_id,)
+                    ).fetchall()
+                    for u_ev in unsynced_locals:
+                        new_ext = cls.create_google_event(
+                            account_id=account_id,
+                            ext_calendar_id=ext_id,
+                            event_data={
+                                "title": u_ev["title"],
+                                "description": u_ev["description"],
+                                "location": u_ev["location"],
+                                "start_time": u_ev["start_time"],
+                                "end_time": u_ev["end_time"],
+                                "all_day": u_ev["all_day"]
+                            }
+                        )
+                        if new_ext:
+                            cursor.execute("UPDATE events SET external_id = ? WHERE id = ?", (new_ext, u_ev["id"]))
+                    conn.commit()
+
                     events_result = cal_service.events().list(
                         calendarId=ext_id,
                         timeMin=time_min,
@@ -252,15 +283,28 @@ class GoogleOAuthService:
                     events = events_result.get("items", [])
                     for ev in events:
                         ext_ev_id = ev.get("id")
+                        # Si fue eliminado en MerkeMail, prevalece la eliminación local y se borra en servidor si sigue activo
+                        if ext_ev_id and ext_ev_id in deleted_ext_ids:
+                            if ev.get("status") != "cancelled":
+                                try:
+                                    cal_service.events().delete(calendarId=ext_id, eventId=ext_ev_id).execute()
+                                except Exception:
+                                    pass
+                            continue
+
                         # Si el evento fue cancelado/borrado en Google
                         if ev.get("status") == "cancelled":
                             if ext_ev_id:
-                                cursor.execute("DELETE FROM events WHERE calendar_id = ? AND external_id = ?", (local_cal_id, ext_ev_id))
+                                cursor.execute(
+                                    "DELETE FROM events WHERE calendar_id = ? AND external_id = ? AND (local_modified = 0 OR local_modified IS NULL)",
+                                    (local_cal_id, ext_ev_id)
+                                )
                             continue
 
                         title = ev.get("summary") or "(Sin título)"
                         description = ev.get("description", "") or ""
                         location = ev.get("location", "") or ""
+                        remote_updated = ev.get("updated") or ""
 
                         start_dict = ev.get("start", {})
                         end_dict = ev.get("end", {})
@@ -277,26 +321,50 @@ class GoogleOAuthService:
                         existing_ev = None
                         if ext_ev_id:
                             existing_ev = cursor.execute(
-                                "SELECT id FROM events WHERE calendar_id = ? AND external_id = ?",
+                                "SELECT * FROM events WHERE calendar_id = ? AND external_id = ?",
                                 (local_cal_id, ext_ev_id)
                             ).fetchone()
                         if not existing_ev:
                             existing_ev = cursor.execute(
-                                "SELECT id FROM events WHERE calendar_id = ? AND title = ? AND start_time = ?",
+                                "SELECT * FROM events WHERE calendar_id = ? AND title = ? AND start_time = ?",
                                 (local_cal_id, title, start)
                             ).fetchone()
 
                         if existing_ev:
-                            cursor.execute('''
-                                UPDATE events 
-                                SET title = ?, description = ?, location = ?, start_time = ?, end_time = ?, all_day = ?, external_id = ?
-                                WHERE id = ?
-                            ''', (title, description, location, start, end, is_all_day, ext_ev_id, existing_ev["id"]))
+                            local_mod = existing_ev["local_modified"] or 0
+                            local_upd = str(existing_ev["updated_at"] or "")
+                            # Prioridad 1: Cambios en MerkeMail o versión local más reciente prevalecen
+                            if local_mod == 1 and (not remote_updated or local_upd >= remote_updated[:20]):
+                                # Si difiere del servidor, empujar la versión de MerkeMail al servidor
+                                if (existing_ev["title"] != title or existing_ev["start_time"] != start or existing_ev["description"] != description):
+                                    cls.update_google_event(
+                                        account_id=account_id,
+                                        ext_calendar_id=ext_id,
+                                        ext_event_id=ext_ev_id,
+                                        event_data={
+                                            "title": existing_ev["title"],
+                                            "description": existing_ev["description"],
+                                            "location": existing_ev["location"],
+                                            "start_time": existing_ev["start_time"],
+                                            "end_time": existing_ev["end_time"],
+                                            "all_day": existing_ev["all_day"]
+                                        }
+                                    )
+                                if not existing_ev["external_id"] and ext_ev_id:
+                                    cursor.execute("UPDATE events SET external_id = ? WHERE id = ?", (ext_ev_id, existing_ev["id"]))
+                            else:
+                                # Prioridad 2: Versión más reciente del servidor
+                                cursor.execute('''
+                                    UPDATE events 
+                                    SET title = ?, description = ?, location = ?, start_time = ?, end_time = ?,
+                                        all_day = ?, external_id = ?, updated_at = COALESCE(?, updated_at), local_modified = 0
+                                    WHERE id = ?
+                                ''', (title, description, location, start, end, is_all_day, ext_ev_id, remote_updated, existing_ev["id"]))
                         else:
                             cursor.execute('''
-                                INSERT INTO events (calendar_id, title, description, location, start_time, end_time, all_day, external_id)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            ''', (local_cal_id, title, description, location, start, end, is_all_day, ext_ev_id))
+                                INSERT INTO events (calendar_id, title, description, location, start_time, end_time, all_day, external_id, updated_at, local_modified)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                            ''', (local_cal_id, title, description, location, start, end, is_all_day, ext_ev_id, remote_updated))
                             total_synced += 1
 
                     conn.commit()
@@ -432,6 +500,10 @@ class GoogleOAuthService:
             acc_color = (acc_row["color"] if acc_row else None) or "#3b82f6"
             acc_email = acc_row["email"] if acc_row else ""
 
+            # Cargar registro de tareas eliminadas en MerkeMail para prevalecer sobre el servidor
+            del_rows = cursor.execute("SELECT external_id FROM deleted_events WHERE account_id = ?", (account_id,)).fetchall()
+            deleted_ext_ids = {r["external_id"] for r in del_rows if r["external_id"]}
+
             total_synced = 0
 
             for tl in tasklists:
@@ -458,38 +530,89 @@ class GoogleOAuthService:
                     )
                     local_cal_id = cursor.lastrowid
 
+                # Subir primero tareas locales nuevas sin external_id asignadas a esta lista
+                unsynced_tasks = cursor.execute(
+                    "SELECT * FROM events WHERE calendar_id = ? AND (external_id IS NULL OR external_id = '') AND is_task = 1",
+                    (local_cal_id,)
+                ).fetchall()
+                for ut in unsynced_tasks:
+                    new_tid = cls.create_google_task(
+                        account_id=account_id,
+                        tasklist_id=tl_id,
+                        task_data={
+                            "title": (ut["title"] or "").replace("[Tarea]", "").strip() or ut["title"],
+                            "notes": ut["description"] or "",
+                            "due": ut["start_time"] or "",
+                            "is_completed": bool(ut["is_completed"] == 1)
+                        }
+                    )
+                    if new_tid:
+                        cursor.execute("UPDATE events SET external_id = ? WHERE id = ?", (new_tid, ut["id"]))
+                conn.commit()
+
                 # Descargar tareas de esta lista
                 tasks_res = tasks_service.tasks().list(tasklist=tl_id, showCompleted=True, showHidden=True, maxResults=100).execute()
                 items = tasks_res.get("items", [])
 
                 for item in items:
                     task_id = item.get("id")
+                    if task_id and task_id in deleted_ext_ids:
+                        if not item.get("deleted"):
+                            try:
+                                tasks_service.tasks().delete(tasklist=tl_id, task=task_id).execute()
+                            except Exception:
+                                pass
+                        continue
+
                     if not task_id or item.get("deleted"):
                         if task_id:
-                            cursor.execute("DELETE FROM events WHERE calendar_id = ? AND external_id = ?", (local_cal_id, task_id))
+                            cursor.execute(
+                                "DELETE FROM events WHERE calendar_id = ? AND external_id = ? AND (local_modified = 0 OR local_modified IS NULL)",
+                                (local_cal_id, task_id)
+                            )
                         continue
 
                     title = item.get("title") or "(Tarea sin título)"
                     notes = item.get("notes") or ""
                     due = item.get("due") or ""
                     is_completed = 1 if item.get("status") == "completed" else 0
+                    remote_updated = item.get("updated") or ""
 
                     existing_task = cursor.execute(
-                        "SELECT id FROM events WHERE calendar_id = ? AND external_id = ?",
+                        "SELECT * FROM events WHERE calendar_id = ? AND external_id = ?",
                         (local_cal_id, task_id)
                     ).fetchone()
 
                     if existing_task:
-                        cursor.execute('''
-                            UPDATE events
-                            SET title = ?, description = ?, start_time = ?, end_time = ?, is_completed = ?, is_task = 1
-                            WHERE id = ?
-                        ''', (title, notes, due, due, is_completed, existing_task["id"]))
+                        local_mod = existing_task["local_modified"] or 0
+                        local_upd = str(existing_task["updated_at"] or "")
+                        # Prioridad 1: Los cambios en MerkeMail o la versión más reciente prevalecen
+                        if local_mod == 1 and (not remote_updated or local_upd >= remote_updated[:20]):
+                            if (existing_task["is_completed"] != is_completed or existing_task["title"].replace("[Tarea]", "").strip() != title.replace("[Tarea]", "").strip()):
+                                cls.update_google_task(
+                                    account_id=account_id,
+                                    tasklist_id=tl_id,
+                                    ext_task_id=task_id,
+                                    task_data={
+                                        "title": existing_task["title"].replace("[Tarea]", "").strip() or existing_task["title"],
+                                        "notes": existing_task["description"] or "",
+                                        "due": existing_task["start_time"] or "",
+                                        "is_completed": bool(existing_task["is_completed"] == 1)
+                                    }
+                                )
+                        else:
+                            # Prioridad 2: Versión más reciente del servidor
+                            cursor.execute('''
+                                UPDATE events
+                                SET title = ?, description = ?, start_time = ?, end_time = ?, is_completed = ?,
+                                    is_task = 1, updated_at = COALESCE(?, updated_at), local_modified = 0
+                                WHERE id = ?
+                            ''', (title, notes, due, due, is_completed, remote_updated, existing_task["id"]))
                     else:
                         cursor.execute('''
-                            INSERT INTO events (calendar_id, title, description, start_time, end_time, is_completed, is_task, account_id, external_id)
-                            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-                        ''', (local_cal_id, title, notes, due, due, is_completed, account_id, task_id))
+                            INSERT INTO events (calendar_id, title, description, start_time, end_time, is_completed, is_task, account_id, external_id, updated_at, local_modified)
+                            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 0)
+                        ''', (local_cal_id, title, notes, due, due, is_completed, account_id, task_id, remote_updated))
                         total_synced += 1
 
                 conn.commit()
@@ -515,6 +638,77 @@ class GoogleOAuthService:
             }
 
     @classmethod
+    def create_google_task(cls, account_id: int, tasklist_id: str, task_data: Dict[str, Any]) -> Optional[str]:
+        """Crea una tarea en Google Tasks y devuelve su ID externo."""
+        try:
+            creds = cls.get_valid_credentials(account_id)
+            if not creds:
+                return None
+            tasks_service = build("tasks", "v1", credentials=creds)
+            body: Dict[str, Any] = {
+                "title": task_data.get("title", "(Tarea)"),
+                "notes": task_data.get("notes", "") or "",
+                "status": "completed" if task_data.get("is_completed") else "needsAction"
+            }
+            due = (task_data.get("due") or "").strip()
+            if due:
+                if "T" not in due:
+                    due = f"{due[:10]}T00:00:00.000Z"
+                elif not due.endswith("Z") and "+" not in due:
+                    due = f"{due}Z"
+                body["due"] = due
+            tl = tasklist_id if tasklist_id else "@default"
+            created = tasks_service.tasks().insert(tasklist=tl, body=body).execute()
+            return created.get("id")
+        except Exception as e:
+            print(f"[Google Tasks] Error creando tarea en Google: {e}")
+            return None
+
+    @classmethod
+    def update_google_task(cls, account_id: int, tasklist_id: str, ext_task_id: str, task_data: Dict[str, Any]) -> bool:
+        """Actualiza una tarea existente en Google Tasks."""
+        try:
+            creds = cls.get_valid_credentials(account_id)
+            if not creds or not ext_task_id:
+                return False
+            tasks_service = build("tasks", "v1", credentials=creds)
+            body: Dict[str, Any] = {}
+            if "title" in task_data and task_data["title"] is not None:
+                body["title"] = task_data["title"]
+            if "notes" in task_data and task_data["notes"] is not None:
+                body["notes"] = task_data["notes"]
+            if "is_completed" in task_data and task_data["is_completed"] is not None:
+                body["status"] = "completed" if task_data["is_completed"] else "needsAction"
+            due = (task_data.get("due") or "").strip()
+            if due:
+                if "T" not in due:
+                    due = f"{due[:10]}T00:00:00.000Z"
+                elif not due.endswith("Z") and "+" not in due:
+                    due = f"{due}Z"
+                body["due"] = due
+            tl = tasklist_id if tasklist_id else "@default"
+            tasks_service.tasks().patch(tasklist=tl, task=ext_task_id, body=body).execute()
+            return True
+        except Exception as e:
+            print(f"[Google Tasks] Error actualizando tarea en Google: {e}")
+            return False
+
+    @classmethod
+    def delete_google_task(cls, account_id: int, tasklist_id: str, ext_task_id: str) -> bool:
+        """Elimina una tarea de Google Tasks."""
+        try:
+            creds = cls.get_valid_credentials(account_id)
+            if not creds or not ext_task_id:
+                return False
+            tasks_service = build("tasks", "v1", credentials=creds)
+            tl = tasklist_id if tasklist_id else "@default"
+            tasks_service.tasks().delete(tasklist=tl, task=ext_task_id).execute()
+            return True
+        except Exception as e:
+            print(f"[Google Tasks] Error eliminando tarea en Google: {e}")
+            return False
+
+    @classmethod
     def toggle_google_task(cls, account_id: int, tasklist_id: str, ext_task_id: str, is_completed: bool) -> bool:
         """Marca una tarea en Google Tasks como completada o pendiente."""
         try:
@@ -530,9 +724,20 @@ class GoogleOAuthService:
             print(f"[Google Tasks] Error actualizando estado de tarea en Google: {e}")
             return False
 
+    _last_labels_sync_by_acc: Dict[int, float] = {}
+
     @classmethod
-    def sync_gmail_labels(cls, account_id: int) -> List[Dict[str, Any]]:
+    def sync_gmail_labels(cls, account_id: int, force: bool = True) -> List[Dict[str, Any]]:
         """Sincroniza todas las etiquetas (labels) de la cuenta de Gmail a la base de datos local."""
+        import time
+        now_ts = time.time()
+        if not force and (now_ts - cls._last_labels_sync_by_acc.get(account_id, 0) < 300):
+            conn = get_db()
+            rows = conn.execute("SELECT id, remote_id, name, color, account_id FROM labels WHERE account_id = ?", (account_id,)).fetchall()
+            conn.close()
+            if rows:
+                return [dict(r) for r in rows]
+
         try:
             creds = cls.get_valid_credentials(account_id)
             service = build("gmail", "v1", credentials=creds)
@@ -564,15 +769,24 @@ class GoogleOAuthService:
                     color = palette[abs(hash(name)) % len(palette)]
 
                 existing = cursor.execute(
-                    "SELECT id FROM labels WHERE account_id = ? AND (remote_id = ? OR name = ?)",
+                    "SELECT id, name, color, local_modified FROM labels WHERE account_id = ? AND (remote_id = ? OR name = ?)",
                     (account_id, remote_id, name)
                 ).fetchone()
 
                 if existing:
-                    cursor.execute(
-                        "UPDATE labels SET name = ?, color = ?, remote_id = ?, type = ? WHERE id = ?",
-                        (name, color, remote_id, lbl_type, existing["id"])
-                    )
+                    # Respetar nombre y color personalizados en MerkeMail si local_modified == 1
+                    if existing["local_modified"] == 1:
+                        cursor.execute(
+                            "UPDATE labels SET remote_id = ?, type = ? WHERE id = ?",
+                            (remote_id, lbl_type, existing["id"])
+                        )
+                        name = existing["name"]
+                        color = existing["color"]
+                    else:
+                        cursor.execute(
+                            "UPDATE labels SET name = ?, color = ?, remote_id = ?, type = ? WHERE id = ?",
+                            (name, color, remote_id, lbl_type, existing["id"])
+                        )
                     label_id = existing["id"]
                 else:
                     cursor.execute(
@@ -591,6 +805,7 @@ class GoogleOAuthService:
 
             conn.commit()
             conn.close()
+            cls._last_labels_sync_by_acc[account_id] = now_ts
             return saved_labels
         except Exception as e:
             print(f"Error sincronizando etiquetas Gmail: {e}")
@@ -598,16 +813,20 @@ class GoogleOAuthService:
 
     @classmethod
     def sync_gmail(cls, account_id: int, folder: Optional[str] = None, label_id: Optional[int] = None, max_results: int = 30, all_pages: bool = False, max_pages: int = 100) -> Dict[str, Any]:
-        """Sincroniza correos usando la Gmail REST API oficial (OAuth2), admitiendo filtro por carpeta o etiqueta y paginación completa."""
+        """Sincroniza correos usando la Gmail REST API oficial (OAuth2), prevaleciendo siempre los cambios locales de MerkeMail."""
         creds = cls.get_valid_credentials(account_id)
         service = build("gmail", "v1", credentials=creds)
 
-        # 1. Sincronizar etiquetas primero
-        cls.sync_gmail_labels(account_id)
+        # 1. Sincronizar etiquetas con caché de 5 min para máxima velocidad
+        cls.sync_gmail_labels(account_id, force=False)
 
         conn = get_db()
         acc = conn.execute("SELECT email FROM accounts WHERE id = ?", (account_id,)).fetchone()
         user_email = acc["email"] if acc else ""
+
+        # Cargar UIDs eliminados en MerkeMail para jamás re-importarlos
+        del_rows = conn.execute("SELECT uid FROM deleted_emails WHERE account_id = ?", (account_id,)).fetchall()
+        deleted_uids = {r["uid"] for r in del_rows if r["uid"]}
 
         # Mapeo de remote_id a local_id para etiquetas
         lbl_rows = conn.execute("SELECT id, remote_id FROM labels WHERE account_id = ? AND remote_id IS NOT NULL", (account_id,)).fetchall()
@@ -678,14 +897,19 @@ class GoogleOAuthService:
             conn.close()
             return {"success": True, "synced_count": 0}
 
-        msg_ids = [m["id"] for m in messages]
+        msg_ids = [m["id"] for m in messages if m.get("id") and m["id"] not in deleted_uids]
+        if not msg_ids:
+            conn.commit()
+            conn.close()
+            return {"success": True, "synced_count": 0}
+
         existing_rows = []
         chunk_size = 500
         for i in range(0, len(msg_ids), chunk_size):
             chunk = msg_ids[i:i + chunk_size]
             ph = ",".join("?" for _ in chunk)
             rows = conn.execute(
-                f"SELECT id, uid, folder, is_read, is_starred FROM emails WHERE account_id = ? AND uid IN ({ph})",
+                f"SELECT id, uid, folder, is_read, is_starred, local_modified, updated_at FROM emails WHERE account_id = ? AND uid IN ({ph})",
                 [account_id] + chunk
             ).fetchall()
             existing_rows.extend(rows)
@@ -704,7 +928,7 @@ class GoogleOAuthService:
                 thread_local.service = build("gmail", "v1", credentials=creds)
             return thread_local.service
 
-        # 1. Descarga concurrente de mensajes nuevos con ThreadPoolExecutor
+        # 1. Descarga concurrente de mensajes nuevos con ThreadPoolExecutor (hasta 12 hilos)
         full_messages = {}
         if new_msg_ids:
             import concurrent.futures
@@ -712,10 +936,10 @@ class GoogleOAuthService:
                 try:
                     s = get_thread_service()
                     return mid, s.users().messages().get(userId="me", id=mid, format="full").execute()
-                except Exception as e:
+                except Exception:
                     return mid, None
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(new_msg_ids), 8)) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(new_msg_ids), 12)) as executor:
                 futures = [executor.submit(fetch_full, mid) for mid in new_msg_ids]
                 for fut in concurrent.futures.as_completed(futures):
                     mid, data = fut.result()
@@ -730,10 +954,10 @@ class GoogleOAuthService:
                 try:
                     s = get_thread_service()
                     return mid, s.users().messages().get(userId="me", id=mid, fields="id,labelIds").execute()
-                except Exception as e:
+                except Exception:
                     return mid, None
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(existing_msg_ids), 8)) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(existing_msg_ids), 12)) as executor:
                 futures = [executor.submit(fetch_min, mid) for mid in existing_msg_ids]
                 for fut in concurrent.futures.as_completed(futures):
                     mid, data = fut.result()
@@ -815,11 +1039,11 @@ class GoogleOAuthService:
                 cursor.execute('''
                     INSERT INTO emails (
                         account_id, uid, folder, sender, recipient, subject,
-                        snippet, body_text, body_html, date, is_read, is_starred, has_attachments
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        snippet, body_text, body_html, date, is_read, is_starred, has_attachments, updated_at, local_modified
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                 ''', (
                     account_id, msg_id, msg_folder, sender, recipient, subject,
-                    snippet, body_text, body_html, date_val, is_read, is_starred, has_attachments
+                    snippet, body_text, body_html, date_val, is_read, is_starred, has_attachments, date_val
                 ))
                 email_db_id = cursor.lastrowid
                 synced_count += 1
@@ -844,12 +1068,13 @@ class GoogleOAuthService:
                 print(f"Error procesando mensaje nuevo {msg_id}: {item_err}")
                 continue
 
-        # Procesar actualizaciones ligeras de mensajes existentes (solo si cambiaron sus etiquetas)
+        # Procesar actualizaciones de mensajes existentes respetando Prioridad 1 (cambios en MerkeMail prevalecen)
         for msg_id in existing_msg_ids:
             min_data = minimal_messages.get(msg_id)
             if not min_data:
                 continue
 
+            existing = existing_by_uid[msg_id]
             msg_label_ids = min_data.get("labelIds", [])
             is_starred = 1 if "STARRED" in msg_label_ids else 0
             is_read = 0 if "UNREAD" in msg_label_ids else 1
@@ -873,8 +1098,46 @@ class GoogleOAuthService:
             else:
                 msg_folder = "INBOX"
 
-            existing = existing_by_uid[msg_id]
-            # Solo actualizar si hubo un cambio real de estado
+            # Si el correo fue modificado en MerkeMail (local_modified == 1), prevalece el estado local
+            if existing.get("local_modified") == 1:
+                add_lbls = []
+                rem_lbls = []
+                if existing["is_read"] != is_read:
+                    if existing["is_read"] == 1:
+                        rem_lbls.append("UNREAD")
+                    else:
+                        add_lbls.append("UNREAD")
+                if existing["is_starred"] != is_starred:
+                    if existing["is_starred"] == 1:
+                        add_lbls.append("STARRED")
+                    else:
+                        rem_lbls.append("STARRED")
+                if existing["folder"] != msg_folder:
+                    if existing["folder"] == "TRASH":
+                        add_lbls.append("TRASH")
+                        if "INBOX" in msg_label_ids:
+                            rem_lbls.append("INBOX")
+                    elif existing["folder"] == "SPAM":
+                        add_lbls.append("SPAM")
+                        if "INBOX" in msg_label_ids:
+                            rem_lbls.append("INBOX")
+                    elif existing["folder"] == "ARCHIVE":
+                        if "INBOX" in msg_label_ids:
+                            rem_lbls.append("INBOX")
+                    elif existing["folder"] == "INBOX":
+                        add_lbls.append("INBOX")
+                        for sys_rm in ("TRASH", "SPAM"):
+                            if sys_rm in msg_label_ids:
+                                rem_lbls.append(sys_rm)
+                if add_lbls or rem_lbls:
+                    threading.Thread(
+                        target=cls.modify_message_labels,
+                        args=(account_id, msg_id, add_lbls, rem_lbls),
+                        daemon=True
+                    ).start()
+                continue
+
+            # Prioridad 2: Si no fue modificado localmente, adoptar cambios del servidor
             if (existing["folder"] != msg_folder or 
                 existing["is_read"] != is_read or 
                 existing["is_starred"] != is_starred):
@@ -884,7 +1147,6 @@ class GoogleOAuthService:
                     (msg_folder, is_read, is_starred, existing["id"])
                 )
 
-            # Sincronizar etiquetas de usuario asociadas
             if remote_to_local_label:
                 conn.execute("DELETE FROM email_labels WHERE email_id = ?", (existing["id"],))
                 for remote_lbl in msg_label_ids:

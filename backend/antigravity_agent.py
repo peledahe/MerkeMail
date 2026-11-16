@@ -35,30 +35,44 @@ def _get_active_account(cuenta_hint: str = "") -> Dict[str, Any]:
                 return dict(r)
     return dict(rows[0])
 
+def _detect_explicit_excluded_folders(text: str) -> Dict[str, bool]:
+    """Detecta si el texto pide explícitamente Papelera, Borradores o Spam."""
+    import re
+    lower = (text or "").lower()
+    return {
+        "trash": bool(re.search(r'\b(papelera|trash|eliminados?|borrados?)\b', lower)),
+        "draft": bool(re.search(r'\b(borrador|borradores|drafts?)\b', lower)),
+        "spam": bool(re.search(r'\b(spam|no deseados?|correo basura|junk)\b', lower)),
+    }
+
 def buscar_correos(
     consulta: str = "",
     fecha: str = "",
-    carpeta: str = "RECIBIDOS",
+    carpeta: str = "TODOS",
+    etiqueta: str = "",
     solo_no_leidos: bool = False,
-    limite: int = 15
+    limite: int = 20
 ) -> str:
-    """Busca correos en la base de datos de MerkeMail por texto, fecha, carpeta o estado de lectura.
-    Busca TANTO correos leídos como no leídos por defecto en la bandeja de recibidos.
+    """Busca correos en TODAS las cuentas, TODAS las carpetas y TODAS las etiquetas de MerkeMail.
+    Por regla general NO incluye Papelera (TRASH), Borradores (DRAFT) ni Spam (SPAM) a menos que se indique explícitamente.
+    Busca TANTO correos leídos como no leídos por defecto.
     
     Args:
-        consulta: Término de búsqueda de texto, asunto, remitente o palabra clave (ej. 'Platzi', 'factura', 'seguridad'). Dejar vacío si solo se busca por fecha o generales.
-        fecha: Fecha a consultar: puede ser 'ayer', 'hoy', 'antier', una fecha en formato 'YYYY-MM-DD' (ej. '2026-11-14') o dejar vacío.
-        carpeta: Carpeta donde buscar: 'RECIBIDOS' (predeterminado, incluye bandeja de entrada y categorías como actualizaciones o promociones), 'TODOS', 'SENT' (enviados), 'SPAM', 'TRASH' (papelera).
-        solo_no_leidos: Si es False (predeterminado), busca TANTO correos leídos como no leídos. Si es True, filtra únicamente los no leídos.
-        limite: Número máximo de resultados a devolver (predeterminado 15).
+        consulta: Término de búsqueda de texto, asunto, remitente, destinatario, carpeta, etiqueta o palabra clave. Dejar vacío si solo se busca por fecha o carpeta/etiqueta.
+        fecha: Fecha a consultar: 'ayer', 'hoy', 'antier', 'YYYY-MM-DD' o vacío.
+        carpeta: 'TODOS' (predeterminado: abarca todo correo, toda carpeta y toda etiqueta excepto Papelera, Borradores y Spam), 'RECIBIDOS'/'INBOX', 'SENT', 'ARCHIVE', 'STARRED', o explícitamente 'TRASH', 'DRAFT', 'SPAM'.
+        etiqueta: Nombre de etiqueta o carpeta específica si el usuario la menciona (ej. 'Trabajo', 'Facturación', 'Proyectos').
+        solo_no_leidos: Si es False (predeterminado), busca leídos y no leídos. Si es True, solo no leídos.
+        limite: Número máximo de resultados (predeterminado 20).
     """
     global _current_discovered_emails
     import re
-    from datetime import datetime, timedelta, timedelta
+    from datetime import datetime, timedelta
 
     now = datetime.now()
     target_date_str = None
-    raw_combined = f"{consulta or ''} {fecha or ''}".lower()
+    raw_combined = f"{consulta or ''} {fecha or ''} {carpeta or ''} {etiqueta or ''}".lower()
+    explicit_flags = _detect_explicit_excluded_folders(raw_combined)
 
     # Detección inteligente de fechas relativas o específicas
     if "ayer" in raw_combined or "yesterday" in raw_combined:
@@ -85,7 +99,7 @@ def buscar_correos(
         "quiero", "por favor", "correos", "correo", "emails", "email", "mensajes", 
         "mensaje", "de ayer", "ayer", "de hoy", "hoy", "antier", "anteayer", 
         "recibidos", "recibido", "leidos", "leídos", "leido", "leído", "sin leer", 
-        "no leidos", "no leídos", "no leido", "no leído",
+        "no leidos", "no leídos", "no leido", "no leído", "todos", "todas", "carpeta", "etiqueta",
         "los", "las", "el", "la", "un", "una", "unos", "unas", "de", "del", "en", "que", "para"
     ]
     for tw in stop_words:
@@ -94,54 +108,83 @@ def buscar_correos(
 
     conn = get_db()
     sql = """
-        SELECT id, folder, sender, subject, snippet, date, is_read 
-        FROM emails 
+        SELECT DISTINCT e.id, e.folder, e.sender, e.recipient, e.subject, e.snippet, e.date, e.is_read, e.is_starred
+        FROM emails e
+        LEFT JOIN email_labels el ON e.id = el.email_id
+        LEFT JOIN labels l ON el.label_id = l.id
         WHERE 1=1
     """
-    params = []
+    params: List[Any] = []
 
-    # Filtrado por carpeta (por defecto 'RECIBIDOS' agrupa INBOX y todas las subcategorías de entrada)
-    carp = (carpeta or "RECIBIDOS").upper().strip()
-    if carp in ("RECIBIDOS", "INBOX"):
-        sql += " AND folder IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS')"
-    elif carp == "SENT":
-        sql += " AND folder = 'SENT'"
-    elif carp == "SPAM":
-        sql += " AND folder = 'SPAM'"
-    elif carp == "TRASH":
-        sql += " AND folder = 'TRASH'"
-    elif carp == "TODOS":
-        sql += " AND folder NOT IN ('TRASH', 'SPAM')"
-    elif carp:
-        sql += " AND folder = ?"
-        params.append(carpeta)
+    carp = (carpeta or "TODOS").upper().strip()
 
-    # Filtrado por estado de lectura: si solo_no_leidos es False, incluye leídos y no leídos
+    # Regla 4: Abarcar todo correo, toda carpeta y toda etiqueta, excluyendo Papelera, Borradores y Spam salvo petición explícita
+    if carp in ("TRASH", "PAPELERA") or explicit_flags["trash"]:
+        sql += " AND UPPER(COALESCE(e.folder, '')) IN ('TRASH', 'PAPELERA')"
+        clean_query = re.sub(r'\b(papelera|trash|eliminados?|borrados?)\b', '', clean_query, flags=re.IGNORECASE).strip()
+    elif carp in ("DRAFT", "DRAFTS", "BORRADORES", "BORRADOR") or explicit_flags["draft"]:
+        sql += " AND UPPER(COALESCE(e.folder, '')) IN ('DRAFT', 'DRAFTS', 'BORRADORES')"
+        clean_query = re.sub(r'\b(borrador|borradores|drafts?)\b', '', clean_query, flags=re.IGNORECASE).strip()
+    elif carp in ("SPAM", "JUNK") or explicit_flags["spam"]:
+        sql += " AND UPPER(COALESCE(e.folder, '')) IN ('SPAM', 'JUNK')"
+        clean_query = re.sub(r'\b(spam|no deseados?|correo basura|junk)\b', '', clean_query, flags=re.IGNORECASE).strip()
+    else:
+        # Exclusión estricta por defecto de Papelera, Borradores y Spam
+        sql += " AND UPPER(COALESCE(e.folder, '')) NOT IN ('TRASH', 'PAPELERA', 'DRAFT', 'DRAFTS', 'BORRADORES', 'SPAM', 'JUNK')"
+        if carp in ("SENT", "ENVIADOS"):
+            sql += " AND UPPER(e.folder) = 'SENT'"
+        elif carp in ("STARRED", "DESTACADOS"):
+            sql += " AND e.is_starred = 1"
+        elif carp in ("ARCHIVE", "ARCHIVO", "ARCHIVADOS"):
+            sql += " AND UPPER(e.folder) = 'ARCHIVE'"
+        elif carp not in ("TODOS", "ALL", "TODAS", "GLOBAL", "RECIBIDOS", "INBOX", ""):
+            # Si especificó el nombre de una carpeta o etiqueta personalizada
+            sql += " AND (UPPER(e.folder) = ? OR LOWER(l.name) LIKE ?)"
+            params.extend([carp, f"%{carpeta.strip().lower()}%"])
+
+    if etiqueta and etiqueta.strip():
+        lbl_q = f"%{etiqueta.strip()}%"
+        sql += " AND (l.name LIKE ? OR e.folder LIKE ?)"
+        params.extend([lbl_q, lbl_q])
+
     if solo_no_leidos:
-        sql += " AND is_read = 0"
+        sql += " AND e.is_read = 0"
 
-    # Filtrado por fecha
     if target_date_str:
-        sql += " AND date LIKE ?"
+        sql += " AND e.date LIKE ?"
         params.append(f"{target_date_str}%")
 
-    # Filtrado por texto en asunto, remitente o resumen
     if clean_query:
-        sql += " AND (subject LIKE ? OR sender LIKE ? OR snippet LIKE ?)"
         p = f"%{clean_query}%"
-        params.extend([p, p, p])
+        sql += " AND (e.subject LIKE ? OR e.sender LIKE ? OR e.recipient LIKE ? OR e.snippet LIKE ? OR e.body_text LIKE ? OR e.folder LIKE ? OR l.name LIKE ?)"
+        params.extend([p, p, p, p, p, p, p])
 
-    sql += " ORDER BY date DESC LIMIT ?"
+    sql += " ORDER BY e.date DESC, e.id DESC LIMIT ?"
     params.append(max(1, min(int(limite), 50)))
 
     rows = conn.execute(sql, params).fetchall()
+
+    # Obtener etiquetas de los correos encontrados
+    labels_by_eid: Dict[int, List[str]] = {}
+    if rows:
+        eids = [r["id"] for r in rows]
+        ph = ",".join("?" for _ in eids)
+        lrows = conn.execute(f"""
+            SELECT el.email_id, l.name
+            FROM email_labels el
+            JOIN labels l ON el.label_id = l.id
+            WHERE el.email_id IN ({ph})
+        """, eids).fetchall()
+        for lr in lrows:
+            labels_by_eid.setdefault(lr["email_id"], []).append(lr["name"])
+
     conn.close()
 
     fecha_desc = f" con fecha {target_date_str}" if target_date_str else ""
     texto_desc = f" que coincidan con '{clean_query}'" if clean_query else ""
 
     if not rows:
-        return f"No se encontraron correos en {carp}{fecha_desc}{texto_desc}."
+        return f"No se encontraron correos{fecha_desc}{texto_desc} (buscando en todas las carpetas y etiquetas, excluyendo Papelera, Borradores y Spam)."
 
     results = []
     for r in rows:
@@ -151,8 +194,10 @@ def buscar_correos(
             "sender": r["sender"] or ""
         })
         estado = "Leído" if r["is_read"] else "No leído"
+        lbls = labels_by_eid.get(r["id"], [])
+        lbls_str = f" | Etiquetas: {', '.join(lbls)}" if lbls else ""
         results.append(
-            f"Correo ID {r['id']} | [{estado}] | De: {r['sender']} | Asunto: {r['subject']} | Fecha: {r['date']}\n"
+            f"Correo ID {r['id']} | [{estado}] | Carpeta: {r['folder']}{lbls_str} | De: {r['sender']} | Asunto: {r['subject']} | Fecha: {r['date']}\n"
             f"ENLACE_OBLIGATORIO_MARKDOWN: [✉️ Abrir correo #{r['id']}: {r['subject']}](email:{r['id']})\n"
             f"Resumen: {r['snippet']}"
         )
@@ -303,27 +348,53 @@ def responder_correo(id_correo: int, respuesta_cuerpo: str) -> str:
     )
 
 def eliminar_correos(ids_correos: str, permanente: bool = False) -> str:
-    """Mueve a la papelera (o elimina permanentemente) uno o varios correos por sus IDs numéricos.
+    """Mueve a la papelera (o elimina permanentemente) uno o varios correos por sus IDs numéricos en cualquier carpeta o etiqueta.
     
     Args:
         ids_correos: Lista de IDs numéricos separados por comas (ej. '100, 115' o '142').
         permanente: True para borrar definitivamente; False (predeterminado) para mover a la papelera (TRASH).
     """
-    import re
+    import re, threading
     ids = [int(n) for n in re.findall(r'\b\d+\b', str(ids_correos))]
     if not ids:
         return "No se especificaron IDs de correos válidos para eliminar."
 
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
     placeholders = ",".join("?" for _ in ids)
+    target_rows = conn.execute(f"SELECT id, account_id, uid FROM emails WHERE id IN ({placeholders})", ids).fetchall()
+    targets = [dict(r) for r in target_rows]
+
     if permanente:
+        for t in targets:
+            if t.get("uid"):
+                conn.execute(
+                    "INSERT OR REPLACE INTO deleted_emails (account_id, uid, deleted_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                    (t["account_id"], t["uid"])
+                )
         conn.execute(f"DELETE FROM emails WHERE id IN ({placeholders})", ids)
         action_desc = "eliminado permanentemente"
     else:
-        conn.execute(f"UPDATE emails SET folder = 'TRASH' WHERE id IN ({placeholders})", ids)
+        conn.execute(
+            f"UPDATE emails SET folder = 'TRASH', updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
+            [now_iso] + ids
+        )
         action_desc = "movido a la papelera"
     conn.commit()
     conn.close()
+
+    # Sincronizar en segundo plano con el servidor remoto
+    def _bg_sync_del():
+        try:
+            from backend.google_oauth import GoogleOAuthService
+            for t in targets:
+                if t.get("uid") and t.get("account_id"):
+                    GoogleOAuthService.modify_message_labels(
+                        t["account_id"], t["uid"], add_labels=["TRASH"], remove_labels=["INBOX"]
+                    )
+        except Exception:
+            pass
+    threading.Thread(target=_bg_sync_del, daemon=True).start()
 
     del_data = {
         "ids": ids,
@@ -336,6 +407,111 @@ def eliminar_correos(ids_correos: str, permanente: bool = False) -> str:
         f"[ACCION_ELIMINACION:{del_b64}]\n"
         f"✔ Se han {action_desc} exitosamente {len(ids)} correo(s) (IDs: {', '.join(map(str, ids))})."
     )
+
+def gestionar_correos(ids_correos: str, accion: str, destino: str = "") -> str:
+    """Realiza acciones sobre uno o varios correos de cualquier cuenta, carpeta o etiqueta.
+    
+    Args:
+        ids_correos: IDs numéricos de los correos separados por coma (ej. '105, 112').
+        accion: Acción a ejecutar: 'archivar', 'marcar_leido', 'marcar_no_leido', 'destacar', 'quitar_destacado', 'agregar_etiqueta', 'quitar_etiqueta', 'mover_carpeta', 'spam', 'no_spam'.
+        destino: Nombre de la etiqueta o carpeta si la acción es 'agregar_etiqueta', 'quitar_etiqueta' o 'mover_carpeta'.
+    """
+    import re, threading
+    ids = [int(n) for n in re.findall(r'\b\d+\b', str(ids_correos))]
+    if not ids:
+        return "No se especificaron IDs de correos válidos."
+
+    act = (accion or "").strip().lower()
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn = get_db()
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(f"SELECT id, account_id, uid, folder FROM emails WHERE id IN ({placeholders})", ids).fetchall()
+    targets = [dict(r) for r in rows]
+    if not targets:
+        conn.close()
+        return "No se encontraron los correos indicados."
+
+    add_remote_lbls: List[str] = []
+    rem_remote_lbls: List[str] = []
+    desc = ""
+
+    if act in ("archivar", "archive"):
+        conn.execute(
+            f"UPDATE emails SET folder = 'ARCHIVE', updated_at = ?, local_modified = 1 WHERE id IN ({placeholders}) AND UPPER(COALESCE(folder, '')) NOT IN ('SPAM', 'TRASH', 'DRAFT', 'DRAFTS')",
+            [now_iso] + ids
+        )
+        rem_remote_lbls.append("INBOX")
+        desc = "archivados"
+    elif act in ("marcar_leido", "leido", "read", "mark_read"):
+        conn.execute(f"UPDATE emails SET is_read = 1, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + ids)
+        rem_remote_lbls.append("UNREAD")
+        desc = "marcados como leídos"
+    elif act in ("marcar_no_leido", "no_leido", "unread", "mark_unread"):
+        conn.execute(f"UPDATE emails SET is_read = 0, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + ids)
+        add_remote_lbls.append("UNREAD")
+        desc = "marcados como no leídos"
+    elif act in ("destacar", "star"):
+        conn.execute(f"UPDATE emails SET is_starred = 1, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + ids)
+        add_remote_lbls.append("STARRED")
+        desc = "destacados con estrella"
+    elif act in ("quitar_destacado", "unstar"):
+        conn.execute(f"UPDATE emails SET is_starred = 0, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + ids)
+        rem_remote_lbls.append("STARRED")
+        desc = "retirados de destacados"
+    elif act == "spam":
+        conn.execute(f"UPDATE emails SET folder = 'SPAM', updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + ids)
+        add_remote_lbls.append("SPAM")
+        rem_remote_lbls.append("INBOX")
+        desc = "movidos a Spam"
+    elif act in ("no_spam", "not_spam"):
+        conn.execute(f"UPDATE emails SET folder = 'INBOX', updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + ids)
+        add_remote_lbls.append("INBOX")
+        rem_remote_lbls.append("SPAM")
+        desc = "restaurados a Recibidos (No es spam)"
+    elif act in ("mover_carpeta", "move_folder") and destino.strip():
+        target_f = destino.strip().upper()
+        conn.execute(f"UPDATE emails SET folder = ?, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [target_f, now_iso] + ids)
+        desc = f"movidos a la carpeta {target_f}"
+    elif act in ("agregar_etiqueta", "add_label", "quitar_etiqueta", "remove_label") and destino.strip():
+        lbl_row = conn.execute("SELECT id, name, remote_id FROM labels WHERE LOWER(name) LIKE ?", (f"%{destino.strip().lower()}%",)).fetchone()
+        if not lbl_row:
+            conn.close()
+            return f"No se encontró la etiqueta '{destino}'."
+        if "agregar" in act or "add" in act:
+            for eid in ids:
+                conn.execute("INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)", (eid, lbl_row["id"]))
+            conn.execute(f"UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + ids)
+            if lbl_row["remote_id"]:
+                add_remote_lbls.append(lbl_row["remote_id"])
+            desc = f"etiquetados con '{lbl_row['name']}'"
+        else:
+            conn.execute(f"DELETE FROM email_labels WHERE label_id = ? AND email_id IN ({placeholders})", [lbl_row["id"]] + ids)
+            conn.execute(f"UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + ids)
+            if lbl_row["remote_id"]:
+                rem_remote_lbls.append(lbl_row["remote_id"])
+            desc = f"desetiquetados de '{lbl_row['name']}'"
+    else:
+        conn.close()
+        return f"Acción '{accion}' no reconocida."
+
+    conn.commit()
+    conn.close()
+
+    if add_remote_lbls or rem_remote_lbls:
+        def _bg_mod():
+            try:
+                from backend.google_oauth import GoogleOAuthService
+                for t in targets:
+                    if t.get("uid") and t.get("account_id"):
+                        GoogleOAuthService.modify_message_labels(
+                            t["account_id"], t["uid"], add_labels=add_remote_lbls or None, remove_labels=rem_remote_lbls or None
+                        )
+            except Exception:
+                pass
+        threading.Thread(target=_bg_mod, daemon=True).start()
+
+    del_b64 = base64.b64encode(json.dumps({"ids": ids, "count": len(ids), "action": act}).encode('utf-8')).decode('utf-8')
+    return f"[ACCION_ELIMINACION:{del_b64}]\n✔ {len(ids)} correo(s) han sido {desc} exitosamente."
 
 def agendar_evento_calendario(titulo: str, fecha_inicio: str, fecha_fin: str, lugar: str = "", notas: str = "", calendario_id: int = 0, videollamada: str = "", invitados: str = "", todo_el_dia: int = 0) -> str:
     """Crea una cita, evento o tarea en el Calendario de MerkeMail con soporte para videollamadas, invitados y recurrencia. Se programa por defecto en el calendario configurado por el usuario, salvo que se especifique otro.
@@ -461,7 +637,7 @@ class AntigravityMailAgent:
                 "tools_used": []
             }
 
-        model_name = get_setting("gemini_model", "gemini-3.1-flash-lite")
+        model_name = get_setting("gemini_model", "gemini-3.5-flash-lite")
 
         now = datetime.now()
         hoy_str = now.strftime("%Y-%m-%d (%d de %B de %Y)")
@@ -470,32 +646,27 @@ class AntigravityMailAgent:
         system_instruction = (
             f"Eres Elio, el asistente inteligente y copiloto autónomo integrado en MerkeMail. "
             f"El usuario puede interactuar contigo directamente o invocarte escribiendo @elio. "
-            f"Tienes acceso a herramientas en tiempo real para buscar correos, leer correos, preparar borradores, enviar correos, responder correos, eliminar correos, agendar citas en {cals_str} y listar eventos. "
+            f"Tienes acceso a herramientas en tiempo real para buscar correos, leer correos, gestionar correos (archivar, etiquetar, mover carpetas, marcar visto/no leído, destacar), preparar borradores, enviar correos, responder correos, eliminar correos, agendar citas en {cals_str} y listar eventos. "
             f"Las cuentas y servicios que el usuario REALMENTE tiene conectados son: {services_str} y {cals_str}. "
-            f"REGLA CRÍTICA DE FECHAS Y BÚSQUEDA DE CORREOS:\n"
+            f"REGLA CRÍTICA DE ALCANCE UNIVERSAL (TODO CORREO, TODA CARPETA Y TODA ETIQUETA):\n"
             f"- La fecha actual del sistema es {hoy_str} y ayer fue {ayer_str}.\n"
-            f"- Tu herramienta `buscar_correos` busca TANTO correos leídos como no leídos en la bandeja de recibidos (INBOX y subcategorías de entrada).\n"
-            f"- Cuando el usuario te pida buscar correos de ayer, de hoy o de cualquier fecha (ej. 'busca correos de ayer', 'qué correos llegaron ayer', 'correos de hoy'), "
-            f"ejecuta de inmediato `buscar_correos(fecha='ayer')` o la fecha indicada. Media vez estén en la carpeta de recibidos (leídos o no leídos), los encontrarás y debes mostrarlos al usuario.\n"
-            f"- NUNCA afirmes que no hay correos sin antes haber llamado a la herramienta `buscar_correos` con los parámetros correspondientes.\n"
+            f"- Todas tus búsquedas (`buscar_correos`) y acciones (`gestionar_correos`, `eliminar_correos`) afectan a TODO correo, TODA carpeta (Recibidos, Enviados, Archivo, Destacados, categorías, carpetas personalizadas) y TODA etiqueta de todas las cuentas activas.\n"
+            f"- NUNCA tomes en cuenta Papelera (TRASH), Borradores (DRAFT/DRAFTS) ni Spam (SPAM) a menos que el usuario lo indique explícitamente en su instrucción.\n"
+            f"- Cuando el usuario te pida buscar correos de cualquier fecha, remitente, carpeta o etiqueta, ejecuta de inmediato `buscar_correos`. NUNCA afirmes que no hay correos sin antes haber llamado a `buscar_correos`.\n"
             f"REGLA CRÍTICA DE PROVEEDORES: Habla ÚNICAMENTE de los servicios que el usuario tiene realmente conectados ({services_str}, {cals_str}). "
             f"NUNCA menciones ProtonMail u otros servicios si el usuario no los tiene conectados. "
-            f"REGLA CRÍTICA DE REDACCIÓN, ENVÍO Y RESPUESTA DE CORREOS:\n"
-            f"- Tienes herramientas completas para redactar, enviar, responder y borrar correos.\n"
-            f"- Cuando el usuario te pida redactar o enviar un correo (ej. 'envía un correo a...', 'redacta un mensaje para...', 'avísale a...'), "
-            f"NUNCA lo envíes de golpe sin autorización. Utiliza SIEMPRE primero la herramienta `preparar_borrador_correo` para estructurarlo y mostrarle el borrador al usuario, pidiéndole amablemente confirmación antes del envío.\n"
-            f"- Si el usuario te confirma expresamente (ej: 'sí, envíalo', 'confirmo', 'adelante', 'procede') o te pide explícitamente enviar de inmediato sin preguntar, ejecuta la herramienta `enviar_correo`.\n"
-            f"- Cuando el usuario te pida responder a un correo (ej: 'responde al correo #X diciendo...'), usa `responder_correo` o `preparar_borrador_correo` para presentarle el borrador de respuesta y solicitar confirmación.\n"
-            f"- Cuando el usuario te pida borrar o eliminar correos (ej: 'borra los correos de spam', 'elimina el correo #100', 'limpia los correos viejos'), "
-            f"utiliza la herramienta `eliminar_correos` para procesar la eliminación o moverlos a la papelera.\n"
+            f"REGLA CRÍTICA DE REDACCIÓN, ENVÍO, RESPUESTA Y GESTIÓN DE CORREOS:\n"
+            f"- Cuando el usuario te pida redactar o enviar un correo, NUNCA lo envíes de golpe sin autorización. Utiliza SIEMPRE primero `preparar_borrador_correo` para mostrarle el borrador y pedir confirmación.\n"
+            f"- Si el usuario confirma expresamente (ej: 'sí, envíalo', 'confirmo', 'adelante', 'procede') o pide enviar de inmediato sin preguntar, ejecuta `enviar_correo`.\n"
+            f"- Cuando el usuario pida responder a un correo, usa `responder_correo` o `preparar_borrador_correo`.\n"
+            f"- Cuando el usuario pida borrar o eliminar correos, utiliza `eliminar_correos`.\n"
+            f"- Cuando el usuario pida archivar, marcar como leído/no leído, destacar, mover de carpeta o asignar/quitar etiquetas, utiliza `gestionar_correos`.\n"
             f"REGLA DE ENLACES INTERACTIVOS (MUY IMPORTANTE): Siempre que menciones, encuentres o listes correos en tu respuesta, incluye un enlace interactivo en formato markdown con el ID numérico del correo: [✉️ Abrir correo #{'{id}'}: {'{asunto}'}](email:{'{id}'}) para que el usuario pueda hacer clic y abrirlo directamente en el visor de correo. "
             f"Siempre que menciones o listes citas del calendario, incluye un enlace con el ID del evento: [📅 Ver cita #{'{id}'}: {'{titulo}'}](event:{'{id}'}) para que el usuario pueda hacer clic y abrirla directamente en el calendario. "
-            f"REGLA DE AGENDAMIENTO RESPONSABLE: Cuando el usuario quiera agendar una cita o reunión (especialmente desde el botón rápido de agendar o si no especifica fecha/hora exacta), NUNCA inventes ni asignes una fecha u hora al azar. "
-            f"Consulta SIEMPRE primero tus herramientas de calendario (listar_proximos_eventos), revisa los compromisos existentes, y PREGUNTA amablemente al usuario qué título, fecha y hora prefiere según la disponibilidad para agendarla con exactitud. "
-            f"Al crear citas, reuniones o tareas en el calendario, prográmalas automáticamente en el calendario configurado por defecto del usuario mediante `agendar_evento_calendario`, a menos que el usuario solicite expresamente guardarlo en otro calendario específico. "
+            f"REGLA DE AGENDAMIENTO RESPONSABLE: Cuando el usuario quiera agendar una cita o reunión y no especifique fecha/hora exacta, NUNCA inventes ni asignes una fecha u hora al azar. "
+            f"Consulta SIEMPRE primero `listar_proximos_eventos`, revisa los compromisos existentes, y PREGUNTA amablemente al usuario qué título, fecha y hora prefiere según la disponibilidad. "
             f"Sé conciso, empático, cordial, sumamente eficiente y responde siempre en español. "
-            f"Tu nombre es Elio. Preséntate siempre como Elio si te preguntan quién eres. "
-            f"Cuando el usuario te pida buscar, redactar, enviar, borrar o agendar, utiliza inmediatamente tus herramientas correspondientes.\n"
+            f"Tu nombre es Elio. Preséntate siempre como Elio si te preguntan quién eres.\n"
         )
 
         try:
@@ -560,74 +731,122 @@ class AntigravityMailAgent:
 
             return text
 
-        if not ANTIGRAVITY_AVAILABLE:
-            try:
-                from google import genai
-                client = genai.Client(api_key=api_key)
-                resp = client.models.generate_content(
-                    model=model_name,
-                    contents=cleaned_message,
-                    config={"system_instruction": system_instruction}
-                )
-                return {
-                    "success": True,
-                    "response": enrich_response_with_links(resp.text),
-                    "model": model_name
-                }
-            except Exception as e:
-                return {
-                    "success": False,
-                    "response": f"Hola, soy Elio. Encontré una dificultad al procesar tu solicitud: {str(e)}",
-                    "error": str(e)
-                }
+        agent_tools = [
+            buscar_correos,
+            leer_correo,
+            buscar_contactos,
+            obtener_perfil_usuario,
+            preparar_borrador_correo,
+            enviar_correo,
+            responder_correo,
+            eliminar_correos,
+            gestionar_correos,
+            agendar_evento_calendario,
+            listar_proximos_eventos
+        ]
 
-        config = LocalAgentConfig(
-            api_key=api_key,
-            model=model_name,
-            system_instructions=system_instruction,
-            tools=[
-                buscar_correos,
-                leer_correo,
-                buscar_contactos,
-                obtener_perfil_usuario,
-                preparar_borrador_correo,
-                enviar_correo,
-                responder_correo,
-                eliminar_correos,
-                agendar_evento_calendario,
-                listar_proximos_eventos
+        # Ejecución ultrarrápida con pre-consulta indexada para búsquedas (1 solo roundtrip ~2s) y failover inmediato
+        import asyncio, re
+        def _run_fast_chat():
+            from google.genai import types
+            from backend.gemini_service import GeminiService
+            client = GeminiService.get_client(api_key=api_key)
+
+            lower_msg = cleaned_message.lower()
+            is_action_intent = bool(re.search(
+                r'\b(borra|borrar|elimina|eliminar|env[ií]a|enviar|redacta|redactar|escribe|escribir|'
+                r'responde|responder|contesta|contestar|archiva|archivar|etiqueta|etiquetar|'
+                r'mueve|mover|marca|marcar|destaca|destacar|agenda|agendar|programa|programar|'
+                r'crea|crear|confirmo|procede|adelante)\b|#\d+',
+                lower_msg
+            ))
+
+            # Ruta rápida de 1 solo roundtrip para consultas/búsquedas de correos y agenda
+            if not is_action_intent:
+                email_ctx = buscar_correos(consulta=cleaned_message, limite=15)
+                cal_ctx = listar_proximos_eventos() if any(w in lower_msg for w in ("cita", "evento", "agenda", "calendario", "reuni")) else ""
+                combined_prompt = (
+                    f"Solicitud del usuario: {cleaned_message}\n\n"
+                    f"Resultados en tiempo real de correos (todas las carpetas y etiquetas, sin Papelera/Borradores/Spam salvo indicación explícita):\n"
+                    f"{email_ctx}\n"
+                )
+                if cal_ctx:
+                    combined_prompt += f"\nPróximos eventos del calendario:\n{cal_ctx}\n"
+                resp = GeminiService._generate_with_fallback(
+                    client=client,
+                    preferred_model=model_name,
+                    contents=combined_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.2
+                    )
+                )
+                return model_name, (resp.text or "")
+
+            candidate_models = [
+                "gemini-3.5-flash-lite",
+                model_name,
+                "gemini-3.1-flash-lite",
+                "gemini-3.6-flash",
+                "gemini-3.5-flash",
+                "gemini-3.8-flash"
             ]
-        )
+            seen = set()
+            models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
+            last_err = None
+            for m in models:
+                try:
+                    cfg_kwargs: Dict[str, Any] = {
+                        "system_instruction": system_instruction,
+                        "tools": agent_tools,
+                        "temperature": 0.2,
+                        "automatic_function_calling": types.AutomaticFunctionCallingConfig(maximum_remote_calls=2),
+                    }
+                    if "gemini-3" in m:
+                        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="MINIMAL")
+                    chat_session = client.chats.create(
+                        model=m,
+                        config=types.GenerateContentConfig(**cfg_kwargs)
+                    )
+                    resp = chat_session.send_message(cleaned_message)
+                    return m, (resp.text or "")
+                except Exception as err:
+                    last_err = err
+                    err_str = str(err).upper()
+                    if any(tok in err_str for tok in ("429", "RESOURCE_EXHAUSTED", "404", "NOT_FOUND", "503", "UNAVAILABLE", "500", "502", "504", "DEADLINE", "TIMEOUT", "INVALID_ARGUMENT")):
+                        continue
+                    break
+            raise last_err
 
         try:
-            async with Agent(config) as agent:
-                resp = await agent.chat(cleaned_message)
-                text = await resp.text()
-                return {
-                    "success": True,
-                    "response": enrich_response_with_links(text),
-                    "model": model_name
-                }
-        except Exception as e:
-            # Fallback transparente con google.genai si falla Agent
-            try:
-                from google import genai
-                client = genai.Client(api_key=api_key)
-                resp = client.models.generate_content(
-                    model=model_name,
-                    contents=cleaned_message,
-                    config={"system_instruction": system_instruction}
-                )
-                return {
-                    "success": True,
-                    "response": enrich_response_with_links(resp.text),
-                    "model": model_name
-                }
-            except Exception:
-                pass
+            used_model, text = await asyncio.to_thread(_run_fast_chat)
+            return {
+                "success": True,
+                "response": enrich_response_with_links(text),
+                "model": used_model
+            }
+        except Exception as fast_err:
+            if ANTIGRAVITY_AVAILABLE:
+                try:
+                    config = LocalAgentConfig(
+                        api_key=api_key,
+                        model="gemini-3.5-flash-lite",
+                        system_instructions=system_instruction,
+                        tools=agent_tools
+                    )
+                    async with Agent(config) as agent:
+                        resp = await agent.chat(cleaned_message)
+                        text = await resp.text()
+                        return {
+                            "success": True,
+                            "response": enrich_response_with_links(text),
+                            "model": "gemini-3.5-flash-lite"
+                        }
+                except Exception:
+                    pass
 
             return {
                 "success": False,
                 "response": "Hola, soy Elio. No pude procesar tu solicitud en este momento. Parece que se interrumpió la conexión o el servicio está ocupado.",
-                "error": str(e)
+                "error": str(fast_err)
             }

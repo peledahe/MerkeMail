@@ -1297,6 +1297,8 @@ const EmailManager = {
                 body: JSON.stringify({ label_id: labelId })
             });
             if (!res.ok) throw new Error('Error al asociar etiqueta');
+            this.emailDetailCache.delete(emailId);
+            document.querySelectorAll('[id^="email-label-dropdown"]').forEach(el => el.classList.add('hidden'));
             UI.showStickyToast('Etiqueta Asignada', 'Se ha asignado la etiqueta al correo', 'success');
             await this.openEmailDetail(emailId);
             await this.loadEmails(false);
@@ -1313,6 +1315,8 @@ const EmailManager = {
                 method: 'DELETE'
             });
             if (!res.ok) throw new Error('Error al desasociar etiqueta');
+            this.emailDetailCache.delete(emailId);
+            document.querySelectorAll('[id^="email-label-dropdown"]').forEach(el => el.classList.add('hidden'));
             UI.showStickyToast('Etiqueta Removida', 'Se quitó la etiqueta del correo actual', 'info');
             await this.openEmailDetail(emailId);
             await this.loadEmails(false);
@@ -1435,14 +1439,40 @@ const EmailManager = {
         if (e) e.stopPropagation();
         const drop = document.getElementById(`email-label-dropdown-top-${emailId}`) || document.getElementById(`email-label-dropdown-${emailId}`);
         if (!drop) return;
-        drop.classList.toggle('hidden');
+
+        const isHidden = drop.classList.contains('hidden');
+        document.querySelectorAll('[id^="email-label-dropdown"]').forEach(el => {
+            if (el !== drop) el.classList.add('hidden');
+        });
+
+        if (!isHidden) {
+            drop.classList.add('hidden');
+            return;
+        }
+
+        // Montar en document.body con position: fixed y z-index máximo para flotar sobre el iframe y evitar scrollbars en la barra
+        const btn = document.getElementById(`btn-toggle-email-labels-top-${emailId}`) || (e && e.currentTarget);
+        if (drop.parentElement !== document.body) {
+            document.body.appendChild(drop);
+        }
+
+        if (btn && btn.getBoundingClientRect) {
+            const rect = btn.getBoundingClientRect();
+            drop.style.position = 'fixed';
+            drop.style.top = `${Math.round(rect.bottom + 6)}px`;
+            drop.style.right = `${Math.max(12, Math.round(window.innerWidth - rect.right))}px`;
+            drop.style.left = 'auto';
+            drop.style.zIndex = '9999';
+        }
+
+        drop.classList.remove('hidden');
     },
 
     async loadEmails(showLoading = true) {
         const listContainer = document.getElementById('emails-split-list');
         if (!listContainer) return;
 
-        if (showLoading) {
+        if (showLoading && (!this.emails || this.emails.length === 0)) {
             listContainer.innerHTML = `<div class="py-12 text-center text-slate-400 text-xs">Cargando correos...</div>`;
         }
 
@@ -1530,6 +1560,13 @@ const EmailManager = {
             this.renderEmailsTable();
             this.renderPagination();
             this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
+
+            // Si el backend lanzó una sincronización en segundo plano para poblar una carpeta vacía, refrescar silenciosamente
+            if (data.background_sync) {
+                setTimeout(() => {
+                    this.loadEmails(false);
+                }, 2200);
+            }
 
             // Actualizar la descripción de bienvenida del asistente Elio
             if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
@@ -1806,10 +1843,13 @@ const EmailManager = {
                 </div>
             `;
 
+            // Limpiar cualquier dropdown de etiquetas previo montado en body para evitar duplicados
+            document.querySelectorAll('body > [id^="email-label-dropdown-top-"]').forEach(el => el.remove());
+
             detailPanel.innerHTML = `
                 <div class="h-full flex flex-col min-w-0 bg-white dark:bg-slate-950 overflow-hidden select-text">
                     <!-- Top Action Bar del Correo -->
-                    <div class="email-top-action-bar h-12 px-3 md:px-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-900/60 shrink-0 min-w-0">
+                    <div class="email-top-action-bar relative z-40 h-12 px-3 md:px-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-900/60 shrink-0 min-w-0 overflow-visible">
                         <!-- Sección Izquierda: Botón Volver + Slot Superior de Etiquetas -->
                         <div class="flex items-center min-w-0 flex-1 mr-2 sm:mr-3 overflow-hidden">
                             <!-- Volver (visible en móviles y vistas estrechas) -->
@@ -1850,7 +1890,7 @@ const EmailManager = {
                         </div>
 
                         <!-- Acciones Rápidas Superior Derecha (Gestión Individual & Redacción) -->
-                        <div id="email-top-actions-right" class="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap overflow-x-auto no-scrollbar">
+                        <div id="email-top-actions-right" class="relative z-40 flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end overflow-visible">
                             <!-- 1. Botón Archivar / Almacenar (Oculto en Papelera, Spam y Borradores) -->
                             ${!isTrashOrSpamOrDraft ? `
                                 <button onclick="EmailManager.archiveCurrentEmail(${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Archivar correo (quitar de Recibidos)">
@@ -1877,12 +1917,12 @@ const EmailManager = {
                                 `}
                             </button>
 
-                            <!-- 5. Botón Asignar Etiquetas (Individual) con menú desplegable -->
+                            <!-- 5. Botón Asignar Etiquetas (Individual) con menú desplegable en primer plano -->
                             <div class="relative inline-block shrink-0">
                                 <button id="btn-toggle-email-labels-top-${email.id}" onclick="EmailManager.toggleAssignLabelDropdown(${email.id}, event, 'top')" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Asignar o quitar etiquetas a este correo">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
                                 </button>
-                                <div id="email-label-dropdown-top-${email.id}" class="hidden absolute right-0 top-full mt-1.5 w-64 max-h-80 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-40 py-1.5 text-xs backdrop-blur-md">
+                                <div id="email-label-dropdown-top-${email.id}" class="hidden fixed w-64 max-h-80 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-[9999] py-1.5 text-xs backdrop-blur-md">
                                     ${labelsDropdownContent}
                                 </div>
                             </div>
@@ -1971,7 +2011,7 @@ const EmailManager = {
                     </div>
 
                     <!-- Cuerpo del Correo en Scroll Independiente Contenido Aislado -->
-                    <div class="flex-1 p-4 md:p-8 overflow-y-auto overflow-x-hidden min-w-0 leading-relaxed text-sm text-slate-800 dark:text-slate-200">
+                    <div id="email-detail-scroll-container" class="flex-1 p-4 md:p-8 overflow-y-auto overflow-x-hidden min-w-0 leading-relaxed text-sm text-slate-800 dark:text-slate-200">
                         ${isSpam ? `
                             <!-- Banner de Advertencia de Spam y Control de Imágenes -->
                             <div id="spam-warning-banner-${email.id}" class="max-w-4xl w-full mx-auto mb-4 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs min-w-0">
@@ -2060,8 +2100,8 @@ const EmailManager = {
                             </div>
                         ` : ''}
 
-                        <!-- CAJA DE RESPUESTA EN LÍNEA (INLINE QUICK REPLY) ESTILO GMAIL -->
-                        <div id="inline-reply-container" class="max-w-4xl w-full mx-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden min-w-0 transition-all focus-within:ring-2 focus-within:ring-indigo-500/40 focus-within:border-indigo-500">
+                        <!-- CAJA DE RESPUESTA EN LÍNEA (INLINE QUICK REPLY) - Oculta hasta dar clic en Responder -->
+                        <div id="inline-reply-container" class="hidden max-w-4xl w-full mx-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden min-w-0 transition-all focus-within:ring-2 focus-within:ring-indigo-500/40 focus-within:border-indigo-500">
                             
                             <!-- Encabezado de la Caja de Respuesta -->
                             <div class="px-4 py-2.5 bg-slate-50/70 dark:bg-slate-850/80 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between text-xs min-w-0">
@@ -2251,11 +2291,19 @@ const EmailManager = {
                 </div>
             `;
 
+            // Asegurar que la vista del correo inicie siempre desde el principio (arriba)
+            const scrollContainer = document.getElementById('email-detail-scroll-container');
+            if (scrollContainer) {
+                scrollContainer.scrollTop = 0;
+            }
+
             // Montar iframe aislado para visualización segura y fidedigna del correo
             this.mountEmailBodyFrame(email);
 
-            // Configurar el editor de respuesta en línea y aplicar firma inicial
+            // Configurar el editor de respuesta en línea y aplicar firma inicial (sin auto-enfocar ni hacer scroll)
             setTimeout(async () => {
+                const sc = document.getElementById('email-detail-scroll-container');
+                if (sc) sc.scrollTop = 0;
                 const inlineEditor = document.getElementById('inline-reply-editor');
                 if (inlineEditor) {
                     inlineEditor.addEventListener('input', () => {
@@ -2289,7 +2337,7 @@ const EmailManager = {
                         }
                     });
 
-                    // Aplicar firma por defecto si existe debajo del correo
+                    // Aplicar firma por defecto lista para cuando el usuario decida responder (sin enfocar el cursor)
                     if (window.SignatureManager && window.InlineReply) {
                         const defaultSig = await SignatureManager.getDefaultSignatureForAccount(email.account_id);
                         if (defaultSig && defaultSig.content) {
@@ -2297,8 +2345,6 @@ const EmailManager = {
                         } else {
                             InlineReply.updatePlaceholderState();
                         }
-                        // Colocar el cursor para editar en la parte de arriba
-                        InlineReply.focusTop();
                     }
 
                     // Establecer por defecto el tono configurado globalmente en Ajustes
@@ -2513,8 +2559,9 @@ const EmailManager = {
             doc.close();
 
             // Interceptar todos los clics en enlaces del correo para abrirlos según el entorno
-            // (Navegador predeterminado en modo instalado y PWA; pestaña nueva en modo web navegador)
+            // y cerrar cualquier menú desplegable de etiquetas abierto al hacer clic dentro del iframe
             doc.addEventListener('click', (e) => {
+                document.querySelectorAll('[id^="email-label-dropdown"]').forEach(el => el.classList.add('hidden'));
                 const link = e.target.closest('a');
                 if (!link || !link.href) return;
                 const href = link.href;
@@ -2735,6 +2782,7 @@ const EmailManager = {
         this.cancelReadTimer();
         this.selectedEmailId = null;
         this.currentOpenedEmail = null;
+        document.querySelectorAll('body > [id^="email-label-dropdown-top-"]').forEach(el => el.remove());
         const detailPanel = document.getElementById('email-detail-container');
         if (!detailPanel) return;
 
@@ -2962,16 +3010,19 @@ const EmailManager = {
         sender = sender || '';
         subject = subject || '';
 
-        // Si la caja de respuesta en línea existe en pantalla (estilo Gmail), hacer scroll y enfocarla en la parte superior
+        // Mostrar el formulario de respuesta en línea al hacer clic en Responder, desplazar y posicionar el cursor
         const inlineContainer = document.getElementById('inline-reply-container');
         const inlineEditor = document.getElementById('inline-reply-editor');
         if (inlineContainer && inlineEditor) {
-            inlineContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            if (window.InlineReply) {
-                InlineReply.focusTop();
-            } else {
-                inlineEditor.focus();
-            }
+            inlineContainer.classList.remove('hidden');
+            setTimeout(() => {
+                inlineContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                if (window.InlineReply) {
+                    InlineReply.focusTop();
+                } else {
+                    inlineEditor.focus();
+                }
+            }, 30);
             return;
         }
 
@@ -3039,7 +3090,12 @@ const EmailManager = {
         const inlineEditor = document.getElementById('inline-reply-editor');
         if (inlineEditor && window.InlineReply) {
             const inlineContainer = document.getElementById('inline-reply-container');
-            if (inlineContainer) inlineContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            if (inlineContainer) {
+                inlineContainer.classList.remove('hidden');
+                setTimeout(() => {
+                    inlineContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 30);
+            }
             return InlineReply.replyWithAI(emailId);
         }
 

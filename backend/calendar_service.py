@@ -199,7 +199,8 @@ class CalendarService:
 
     @staticmethod
     def toggle_task(task_id: int) -> Optional[Dict[str, Any]]:
-        """Marca una tarea como completada o pendiente."""
+        """Marca una tarea como completada o pendiente de inmediato localmente y sincroniza en segundo plano."""
+        import threading
         conn = get_db()
         row = conn.execute('''
             SELECT e.is_completed, e.external_id, c.account_id, c.external_id as cal_ext_id 
@@ -212,19 +213,28 @@ class CalendarService:
             return None
         current_val = row["is_completed"] or 0
         new_val = 0 if current_val == 1 else 1
-        conn.execute("UPDATE events SET is_completed = ? WHERE id = ?", (new_val, task_id))
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            "UPDATE events SET is_completed = ?, updated_at = ?, local_modified = 1 WHERE id = ?",
+            (new_val, now_iso, task_id)
+        )
         conn.commit()
-
-        # Si pertenece a Google Tasks, propagar el cambio
-        if row["external_id"] and row["cal_ext_id"] and str(row["cal_ext_id"]).startswith("tasks_list_") and row["account_id"]:
-            try:
-                from backend.google_oauth import GoogleOAuthService
-                tl_id = str(row["cal_ext_id"]).replace("tasks_list_", "")
-                GoogleOAuthService.toggle_google_task(row["account_id"], tl_id, row["external_id"], bool(new_val == 1))
-            except Exception as e:
-                print(f"[CalendarService] Error notificando toggle a Google Tasks: {e}")
-
+        ext_id = row["external_id"]
+        cal_ext_id = row["cal_ext_id"]
+        acc_id = row["account_id"]
         conn.close()
+
+        # Si pertenece a Google Tasks, propagar el cambio en segundo plano
+        if ext_id and cal_ext_id and str(cal_ext_id).startswith("tasks_list_") and acc_id:
+            def _bg_toggle():
+                try:
+                    from backend.google_oauth import GoogleOAuthService
+                    tl_id = str(cal_ext_id).replace("tasks_list_", "")
+                    GoogleOAuthService.toggle_google_task(acc_id, tl_id, ext_id, bool(new_val == 1))
+                except Exception as e:
+                    print(f"[CalendarService] Error notificando toggle a Google Tasks en background: {e}")
+            threading.Thread(target=_bg_toggle, daemon=True).start()
+
         return CalendarService.get_event_by_id(task_id)
 
     @staticmethod
@@ -247,6 +257,7 @@ class CalendarService:
         availability: Optional[str] = "busy",
         visibility: Optional[str] = "default"
     ) -> Dict[str, Any]:
+        import threading
         active_cals = CalendarService.get_calendars()
         valid_ids = [c["id"] for c in active_cals]
         default_id = CalendarService.get_default_calendar_id()
@@ -264,44 +275,70 @@ class CalendarService:
 
         conn = get_db()
         cursor = conn.cursor()
-
-        # Si el calendario pertenece a Google, propagar la creación en vivo a Google Calendar
         cal_meta = cursor.execute("SELECT provider, account_id, external_id FROM calendars WHERE id = ?", (target_cal_id,)).fetchone()
-        ext_ev_id = None
-        if cal_meta and cal_meta["provider"] == "google" and cal_meta["account_id"]:
-            try:
-                from backend.google_oauth import GoogleOAuthService
-                ext_ev_id = GoogleOAuthService.create_google_event(
-                    account_id=cal_meta["account_id"],
-                    ext_calendar_id=cal_meta["external_id"],
-                    event_data={
-                        "title": title,
-                        "description": description,
-                        "location": location,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "all_day": all_day
-                    }
-                )
-            except Exception as e:
-                print(f"[CalendarService] Aviso propagando evento a Google Calendar: {e}")
+        cal_provider = cal_meta["provider"] if cal_meta else None
+        cal_acc_id = cal_meta["account_id"] if cal_meta else account_id
+        cal_ext_id = cal_meta["external_id"] if cal_meta else None
+
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
         cursor.execute('''
             INSERT INTO events (
                 calendar_id, title, description, location, start_time, end_time, 
                 all_day, origin_email_id, is_task, account_id, meeting_url, color,
-                recurrence, notification_minutes, attendees, availability, visibility, external_id
+                recurrence, notification_minutes, attendees, availability, visibility,
+                external_id, updated_at, local_modified
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 1)
         ''', (
             target_cal_id, title, description or "", location or "", start_time, end_time, 
-            all_day, origin_email_id, is_task, account_id, meeting_url or "", color or "",
+            all_day, origin_email_id, is_task, account_id or cal_acc_id, meeting_url or "", color or "",
             recurrence or "none", notification_minutes if notification_minutes is not None else 10,
-            attendees or "", availability or "busy", visibility or "default", ext_ev_id
+            attendees or "", availability or "busy", visibility or "default", now_iso
         ))
         event_id = cursor.lastrowid
         conn.commit()
         conn.close()
+
+        # Propagar en segundo plano a Google Calendar o Google Tasks sin bloquear la respuesta
+        if cal_provider == "google" and cal_acc_id:
+            def _bg_create():
+                try:
+                    from backend.google_oauth import GoogleOAuthService
+                    ext_ev_id = None
+                    if is_task or (cal_ext_id and str(cal_ext_id).startswith("tasks_")):
+                        tl_id = str(cal_ext_id).replace("tasks_list_", "") if (cal_ext_id and str(cal_ext_id).startswith("tasks_list_")) else "@default"
+                        ext_ev_id = GoogleOAuthService.create_google_task(
+                            account_id=cal_acc_id,
+                            tasklist_id=tl_id,
+                            task_data={
+                                "title": title.replace("[Tarea]", "").strip() or title,
+                                "notes": description,
+                                "due": start_time
+                            }
+                        )
+                    else:
+                        ext_ev_id = GoogleOAuthService.create_google_event(
+                            account_id=cal_acc_id,
+                            ext_calendar_id=cal_ext_id,
+                            event_data={
+                                "title": title,
+                                "description": description,
+                                "location": location,
+                                "start_time": start_time,
+                                "end_time": end_time,
+                                "all_day": all_day
+                            }
+                        )
+                    if ext_ev_id:
+                        bg_conn = get_db()
+                        bg_conn.execute("UPDATE events SET external_id = ? WHERE id = ?", (ext_ev_id, event_id))
+                        bg_conn.commit()
+                        bg_conn.close()
+                except Exception as e:
+                    print(f"[CalendarService] Aviso propagando creación en background: {e}")
+
+            threading.Thread(target=_bg_create, daemon=True).start()
         
         return CalendarService.get_event_by_id(event_id)
 
@@ -325,6 +362,7 @@ class CalendarService:
         availability: Optional[str] = None,
         visibility: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
+        import threading
         conn = get_db()
         cursor = conn.cursor()
         row = cursor.execute('''
@@ -337,29 +375,11 @@ class CalendarService:
             conn.close()
             return None
 
-        # Si el evento está sincronizado con Google Calendar, propagar la actualización
-        if row["cal_provider"] == "google" and row["external_id"] and row["cal_account_id"]:
-            try:
-                from backend.google_oauth import GoogleOAuthService
-                up_data = {}
-                if title is not None: up_data["title"] = title
-                if description is not None: up_data["description"] = description
-                if location is not None: up_data["location"] = location
-                if start_time is not None: up_data["start_time"] = start_time
-                if end_time is not None: up_data["end_time"] = end_time
-                if all_day is not None: up_data["all_day"] = all_day
-                GoogleOAuthService.update_google_event(
-                    account_id=row["cal_account_id"],
-                    ext_calendar_id=row["cal_external_id"],
-                    ext_event_id=row["external_id"],
-                    event_data=up_data
-                )
-            except Exception as e:
-                print(f"[CalendarService] Aviso actualizando evento en Google Calendar: {e}")
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        # Construir campos a actualizar
-        updates = []
-        params = []
+        # Construir campos a actualizar con prioridad local (local_modified = 1)
+        updates = ["updated_at = ?", "local_modified = 1"]
+        params = [now_iso]
         fields = {
             "calendar_id": calendar_id,
             "title": title,
@@ -384,12 +404,50 @@ class CalendarService:
                 updates.append(f"{k} = ?")
                 params.append(v)
 
-        if updates:
-            params.append(event_id)
-            query = f"UPDATE events SET {', '.join(updates)} WHERE id = ?"
-            cursor.execute(query, params)
-            conn.commit()
+        params.append(event_id)
+        query = f"UPDATE events SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(query, params)
+        conn.commit()
+        row_dict = dict(row)
         conn.close()
+
+        # Propagar actualización en segundo plano a Google Calendar / Tasks
+        if row_dict.get("cal_provider") == "google" and row_dict.get("external_id") and row_dict.get("cal_account_id"):
+            def _bg_update():
+                try:
+                    from backend.google_oauth import GoogleOAuthService
+                    cal_ext = str(row_dict.get("cal_external_id") or "")
+                    if row_dict.get("is_task") or cal_ext.startswith("tasks_"):
+                        tl_id = cal_ext.replace("tasks_list_", "") if cal_ext.startswith("tasks_list_") else "@default"
+                        GoogleOAuthService.update_google_task(
+                            account_id=row_dict["cal_account_id"],
+                            tasklist_id=tl_id,
+                            ext_task_id=row_dict["external_id"],
+                            task_data={
+                                "title": (title if title is not None else row_dict.get("title", "")).replace("[Tarea]", "").strip(),
+                                "notes": description if description is not None else row_dict.get("description", ""),
+                                "due": start_time if start_time is not None else row_dict.get("start_time", "")
+                            }
+                        )
+                    else:
+                        up_data = {}
+                        if title is not None: up_data["title"] = title
+                        if description is not None: up_data["description"] = description
+                        if location is not None: up_data["location"] = location
+                        if start_time is not None: up_data["start_time"] = start_time
+                        if end_time is not None: up_data["end_time"] = end_time
+                        if all_day is not None: up_data["all_day"] = all_day
+                        GoogleOAuthService.update_google_event(
+                            account_id=row_dict["cal_account_id"],
+                            ext_calendar_id=row_dict["cal_external_id"],
+                            ext_event_id=row_dict["external_id"],
+                            event_data=up_data
+                        )
+                except Exception as e:
+                    print(f"[CalendarService] Aviso actualizando evento/tarea en background: {e}")
+
+            threading.Thread(target=_bg_update, daemon=True).start()
+
         return CalendarService.get_event_by_id(event_id)
 
     @staticmethod
@@ -414,30 +472,55 @@ class CalendarService:
 
     @staticmethod
     def delete_event(event_id: int) -> bool:
+        import threading
         conn = get_db()
         cursor = conn.cursor()
         ev_meta = cursor.execute('''
-            SELECT e.external_id, c.provider as cal_provider, c.account_id as cal_account_id, c.external_id as cal_external_id 
+            SELECT e.external_id, e.is_task, e.account_id as ev_acc_id,
+                   c.provider as cal_provider, c.account_id as cal_account_id, c.external_id as cal_external_id 
             FROM events e
             LEFT JOIN calendars c ON e.calendar_id = c.id
             WHERE e.id = ?
         ''', (event_id,)).fetchone()
 
-        if ev_meta and ev_meta["cal_provider"] == "google" and ev_meta["external_id"] and ev_meta["cal_account_id"]:
-            try:
-                from backend.google_oauth import GoogleOAuthService
-                GoogleOAuthService.delete_google_event(
-                    account_id=ev_meta["cal_account_id"],
-                    ext_calendar_id=ev_meta["cal_external_id"],
-                    ext_event_id=ev_meta["external_id"]
-                )
-            except Exception as e:
-                print(f"[CalendarService] Aviso eliminando evento de Google Calendar: {e}")
+        meta_dict = dict(ev_meta) if ev_meta else None
+        if meta_dict and meta_dict.get("external_id"):
+            acc_id = meta_dict.get("cal_account_id") or meta_dict.get("ev_acc_id") or 0
+            # Registrar en deleted_events para que la eliminación local prevalezca siempre sobre el servidor
+            cursor.execute('''
+                INSERT INTO deleted_events (account_id, external_id, deleted_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(account_id, external_id) DO UPDATE SET deleted_at = CURRENT_TIMESTAMP
+            ''', (acc_id, meta_dict["external_id"]))
 
         cursor.execute("DELETE FROM events WHERE id = ?", (event_id,))
         deleted = cursor.rowcount > 0
         conn.commit()
         conn.close()
+
+        if meta_dict and meta_dict.get("cal_provider") == "google" and meta_dict.get("external_id") and meta_dict.get("cal_account_id"):
+            def _bg_delete():
+                try:
+                    from backend.google_oauth import GoogleOAuthService
+                    cal_ext = str(meta_dict.get("cal_external_id") or "")
+                    if meta_dict.get("is_task") or cal_ext.startswith("tasks_"):
+                        tl_id = cal_ext.replace("tasks_list_", "") if cal_ext.startswith("tasks_list_") else "@default"
+                        GoogleOAuthService.delete_google_task(
+                            account_id=meta_dict["cal_account_id"],
+                            tasklist_id=tl_id,
+                            ext_task_id=meta_dict["external_id"]
+                        )
+                    else:
+                        GoogleOAuthService.delete_google_event(
+                            account_id=meta_dict["cal_account_id"],
+                            ext_calendar_id=meta_dict["cal_external_id"],
+                            ext_event_id=meta_dict["external_id"]
+                        )
+                except Exception as e:
+                    print(f"[CalendarService] Aviso eliminando evento/tarea en background: {e}")
+
+            threading.Thread(target=_bg_delete, daemon=True).start()
+
         return deleted
 
     @staticmethod

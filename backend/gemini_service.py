@@ -20,19 +20,43 @@ def get_tone_description(tone: str) -> str:
     return TONE_DESCRIPTIONS.get(key, tone)
 
 class GeminiService:
-    @staticmethod
-    def get_client(api_key: Optional[str] = None) -> genai.Client:
+    _client_cache: Dict[str, genai.Client] = {}
+    _models_cache: Dict[str, List[Dict[str, Any]]] = {}
+
+    @classmethod
+    def get_client(cls, api_key: Optional[str] = None) -> genai.Client:
         if not api_key:
             gemini_enabled = get_setting("gemini_enabled", "true").strip().lower() in ("true", "1", "yes")
             if not gemini_enabled:
                 raise ValueError("El servicio de IA de Elio (@elio) está desactivado en los Ajustes.")
-        key = api_key or get_setting("gemini_api_key") or os.getenv("GEMINI_API_KEY")
+        key = (api_key or get_setting("gemini_api_key") or os.getenv("GEMINI_API_KEY") or "").strip()
         if not key:
             raise ValueError("No se ha configurado la API Key de Gemini. Ingrésala en Ajustes.")
-        return genai.Client(api_key=key)
+        if key not in cls._client_cache:
+            cls._client_cache[key] = genai.Client(
+                api_key=key,
+                http_options=types.HttpOptions(
+                    timeout=18000,
+                    retry_options=types.HttpRetryOptions(attempts=1)
+                )
+            )
+        return cls._client_cache[key]
 
     @classmethod
-    def test_and_list_models(cls, api_key: str) -> Dict[str, Any]:
+    def list_models_fast(cls, api_key: str) -> Dict[str, Any]:
+        """Devuelve la lista de modelos autorizados usando caché en memoria sin llamada de prueba extra."""
+        clean_key = (api_key or "").strip()
+        if not clean_key:
+            return {"success": False, "error": "La API Key está vacía", "models": []}
+        if clean_key in cls._models_cache and cls._models_cache[clean_key]:
+            models = cls._models_cache[clean_key]
+            current_pref = get_setting("gemini_model") or "gemini-3.5-flash-lite"
+            chosen = current_pref if any(m["id"] == current_pref for m in models) else models[0]["id"]
+            return {"success": True, "models": models, "selected_model": chosen}
+        return cls.test_and_list_models(clean_key, skip_test_generation=True)
+
+    @classmethod
+    def test_and_list_models(cls, api_key: str, skip_test_generation: bool = False) -> Dict[str, Any]:
         """
         Prueba la API Key consultando la lista real de modelos disponibles
         directamente desde los servidores de Google para esta cuenta.
@@ -42,7 +66,7 @@ class GeminiService:
         
         clean_key = api_key.strip()
         try:
-            client = genai.Client(api_key=clean_key)
+            client = cls.get_client(api_key=clean_key)
             
             # Consultar modelos reales devueltos por la API conectada
             available_models = []
@@ -50,9 +74,9 @@ class GeminiService:
                 raw_name = m.name or ""
                 model_id = raw_name.replace("models/", "")
                 
-                # Filtrar modelos de texto / chat (excluir embedding, aqa, etc.)
+                # Filtrar modelos de texto / chat (excluir embedding, aqa, imagen, etc.)
                 lower_id = model_id.lower()
-                if "gemini" in lower_id and "embedding" not in lower_id and "imagen" not in lower_id:
+                if "gemini" in lower_id and "embedding" not in lower_id and "imagen" not in lower_id and "image" not in lower_id:
                     display = m.display_name or model_id
                     available_models.append({
                         "id": model_id,
@@ -67,25 +91,28 @@ class GeminiService:
                     "models": []
                 }
 
-            # Probar generación con el primer modelo disponible o el actual
-            current_pref = get_setting("gemini_model")
+            cls._models_cache[clean_key] = available_models
+
+            # Preferir gemini-3.5-flash-lite o el modelo configurado
+            current_pref = get_setting("gemini_model") or "gemini-3.5-flash-lite"
             chosen_model = current_pref if any(m["id"] == current_pref for m in available_models) else available_models[0]["id"]
 
-            try:
-                resp = client.models.generate_content(
-                    model=chosen_model,
-                    contents="Responde únicamente: OK",
-                )
-                test_output = resp.text.strip()
-            except Exception as gen_err:
-                # Si el modelo específico falla, intentar con el primero de la lista
-                fallback_m = available_models[0]["id"]
-                resp = client.models.generate_content(
-                    model=fallback_m,
-                    contents="Responde únicamente: OK",
-                )
-                chosen_model = fallback_m
-                test_output = resp.text.strip()
+            if skip_test_generation:
+                return {
+                    "success": True,
+                    "message": f"Se detectaron {len(available_models)} modelos autorizados.",
+                    "models": available_models,
+                    "selected_model": chosen_model,
+                    "response": "OK"
+                }
+
+            resp = cls._generate_with_fallback(
+                client=client,
+                preferred_model=chosen_model,
+                contents="Responde únicamente: OK",
+                config=types.GenerateContentConfig(temperature=0.1)
+            )
+            test_output = (resp.text or "OK").strip()
 
             return {
                 "success": True,
@@ -99,32 +126,40 @@ class GeminiService:
 
     @classmethod
     def test_api_key(cls, api_key: str) -> Dict[str, Any]:
-        return cls.test_and_list_models(api_key)
+        return cls.test_and_list_models(api_key, skip_test_generation=False)
 
     @classmethod
     def _generate_with_fallback(cls, client: genai.Client, preferred_model: str, contents: Any, config: Any):
-        """Ejecuta generate_content probando modelos de fallback si el principal agota cuota (429) o no existe (404)."""
+        """Ejecuta generate_content priorizando baja latencia y alternando de inmediato ante 503, 429 o 404."""
         candidate_models = [
+            "gemini-3.5-flash-lite",
             preferred_model,
             "gemini-3.1-flash-lite",
-            "gemini-3.5-flash-lite",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
             "gemini-3.8-flash"
         ]
         seen = set()
-        models = [m for m in candidate_models if not (m in seen or seen.add(m))]
+        models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
 
         last_error = None
         for m in models:
             try:
+                effective_config = config
+                if isinstance(config, types.GenerateContentConfig) and getattr(config, "thinking_config", None) is None and "gemini-3" in m:
+                    try:
+                        effective_config = config.model_copy(update={"thinking_config": types.ThinkingConfig(thinking_level="MINIMAL")})
+                    except Exception:
+                        effective_config = config
                 return client.models.generate_content(
                     model=m,
                     contents=contents,
-                    config=config
+                    config=effective_config
                 )
             except Exception as e:
-                err_str = str(e)
+                err_str = str(e).upper()
                 last_error = e
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "404" in err_str or "NOT_FOUND" in err_str:
+                if any(tok in err_str for tok in ("429", "RESOURCE_EXHAUSTED", "404", "NOT_FOUND", "503", "UNAVAILABLE", "500", "502", "504", "DEADLINE", "TIMEOUT", "INVALID_ARGUMENT")):
                     continue
                 raise e
         raise last_error
@@ -297,27 +332,29 @@ class GeminiService:
     @classmethod
     def analyze_cleanup_by_prompt(cls, prompt: str, emails_metadata: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Analiza exhaustivamente correos de todas las cuentas y determina cuáles
-        coinciden con el prompt de depuración del usuario usando procesamiento concurrente de lotes.
+        Analiza exhaustivamente correos de todas las cuentas, carpetas y etiquetas,
+        determinando cuáles coinciden con el prompt de depuración del usuario usando
+        procesamiento concurrente de lotes y failover instantáneo de modelos.
         """
         if not emails_metadata:
             return {"candidates": []}
 
         client = cls.get_client()
-        model_name = get_setting("gemini_model", "gemini-3.8-flash")
+        model_name = get_setting("gemini_model", "gemini-3.5-flash-lite")
 
         system_instruction = (
             "Eres un evaluador inteligente de correos para depuración y limpieza multicuenta de bandejas de correo. "
-            "Tu misión es analizar rigurosamente la lista de correos provista e identificar TODOS los correos que cumplen "
+            "Tu misión es analizar rigurosamente la lista de correos provista (incluyendo su cuenta 'acc', carpeta 'f', "
+            "etiquetas 'lbls', remitente 's', asunto 'sub' y resumen 'snip') e identificar TODOS los correos que cumplen "
             "con el criterio o instrucción en lenguaje natural solicitado por el usuario (por ejemplo: redes sociales "
             "como LinkedIn, TikTok, Facebook, Instagram, Twitter/X, Pinterest, YouTube; boletines informativos o newsletters; "
-            "ofertas o promociones; notificaciones automáticas o transaccionales; mensajes no leídos antiguos; etc.). "
+            "ofertas o promociones; notificaciones automáticas o transaccionales; correos de cierta carpeta o etiqueta; etc.). "
             "Devuelve ÚNICAMENTE un objeto JSON con la clave 'candidates', donde cada elemento es un objeto con: "
             "'id' (número entero identificador del correo), 'reason' (explicación breve, concisa y justificada en español "
             "de por qué cumple el criterio)."
         )
 
-        chunk_size = 140
+        chunk_size = 200
         chunks = [emails_metadata[i:i + chunk_size] for i in range(0, len(emails_metadata), chunk_size)]
 
         def process_chunk(chunk):
@@ -326,6 +363,7 @@ class GeminiService:
                     "id": m.get("id"),
                     "acc": m.get("account_email") or f"Cuenta #{m.get('account_id')}",
                     "f": m.get("folder", ""),
+                    "lbls": m.get("labels", []),
                     "s": (m.get("sender") or "")[:70],
                     "sub": (m.get("subject") or "")[:90],
                     "snip": (m.get("snippet") or "")[:110]
@@ -343,8 +381,9 @@ class GeminiService:
             Si ninguno cumple, devuelve {{"candidates": []}}.
             """
             try:
-                response = client.models.generate_content(
-                    model=model_name,
+                response = cls._generate_with_fallback(
+                    client=client,
+                    preferred_model=model_name,
                     contents=content,
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,
@@ -362,7 +401,7 @@ class GeminiService:
         if len(chunks) == 1:
             raw_candidates = process_chunk(chunks[0])
         else:
-            with ThreadPoolExecutor(max_workers=min(5, len(chunks))) as executor:
+            with ThreadPoolExecutor(max_workers=min(8, len(chunks))) as executor:
                 futures = [executor.submit(process_chunk, c) for c in chunks]
                 for f in as_completed(futures):
                     raw_candidates.extend(f.result())
@@ -386,6 +425,7 @@ class GeminiService:
                     "sender": m.get("sender") or "",
                     "account": m.get("account_email") or f"Cuenta #{m.get('account_id')}",
                     "folder": m.get("folder") or "Bandeja",
+                    "labels": m.get("labels", []),
                     "date": str(m.get("date") or "")[:19],
                     "reason": raw_candidates_map[mid]
                 })
@@ -396,7 +436,7 @@ class GeminiService:
     def extract_calendar_event(cls, subject: str, sender: str, body: str) -> Optional[Dict[str, Any]]:
         """Extrae detalles de un evento de calendario a partir del contenido de un correo."""
         client = cls.get_client()
-        model_name = get_setting("gemini_model", "gemini-3.8-flash")
+        model_name = get_setting("gemini_model", "gemini-3.5-flash-lite")
 
         system_instruction = (
             "Analiza el correo electrónico y extrae información sobre una reunión, cita o evento si existe. "
@@ -407,8 +447,9 @@ class GeminiService:
 
         content = f"Asunto: {subject}\nRemitente: {sender}\nCuerpo:\n{body[:2500]}"
 
-        response = client.models.generate_content(
-            model=model_name,
+        response = cls._generate_with_fallback(
+            client=client,
+            preferred_model=model_name,
             contents=content,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,

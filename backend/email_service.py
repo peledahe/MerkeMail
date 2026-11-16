@@ -166,16 +166,16 @@ class EmailService:
                 selected_ids = list(mail_ids[-max_emails:])
             selected_ids.reverse()
 
+            # Cargar en una sola consulta los UIDs ya existentes o eliminados en MerkeMail
+            del_rows = conn.execute("SELECT uid FROM deleted_emails WHERE account_id = ?", (account_id,)).fetchall()
+            deleted_uids = {r["uid"] for r in del_rows if r["uid"]}
+            ex_rows = conn.execute("SELECT uid FROM emails WHERE account_id = ? AND folder = ?", (account_id, folder)).fetchall()
+            existing_uids = {r["uid"] for r in ex_rows if r["uid"]} | deleted_uids
+
             synced_count = 0
             for uid_bytes in selected_ids:
                 uid_str = uid_bytes.decode()
-                # Verificar si ya existe en caché
-                existing = conn.execute(
-                    "SELECT id FROM emails WHERE account_id = ? AND folder = ? AND uid = ?",
-                    (account_id, folder, uid_str)
-                ).fetchone()
-
-                if existing:
+                if uid_str in existing_uids:
                     continue
 
                 res, msg_data = mail.fetch(uid_bytes, "(RFC822)")

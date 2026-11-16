@@ -188,8 +188,12 @@ def run_pyqt_window():
         if flag not in sys.argv:
             sys.argv.append(flag)
 
+    # Asegurar que WM_CLASS coincida con merkemail.desktop en X11/GNOME
+    if sys.argv:
+        sys.argv[0] = "merkemail"
+
     app = QApplication(sys.argv)
-    app.setApplicationName("MerkeMail")
+    app.setApplicationName("merkemail")
     app.setApplicationDisplayName("MerkeMail")
     app.setDesktopFileName("merkemail")
 
@@ -197,10 +201,12 @@ def run_pyqt_window():
     SOCKET_NAME = "merkemail_desktop_single_instance_sock"
     IPC_SOCK_PATH = "/tmp/merkemail_window_ipc.sock"
 
-    # Verificar si el usuario invocó con comando especial (--toggle, --quit, etc.)
+    # Verificar si el usuario invocó con comando especial (--toggle, --hide, --quit, etc.)
     cmd_to_send = b"SHOW\n"
     if "--toggle" in sys.argv:
         cmd_to_send = b"TOGGLE\n"
+    elif "--hide" in sys.argv:
+        cmd_to_send = b"HIDE\n"
     elif "--show" in sys.argv:
         cmd_to_send = b"SHOW\n"
     elif "--quit" in sys.argv or "--close" in sys.argv:
@@ -472,6 +478,21 @@ def run_pyqt_window():
             else:
                 self.show_window()
 
+        def showEvent(self, event):
+            super().showEvent(event)
+            if hasattr(self, "_on_visibility_changed") and callable(self._on_visibility_changed):
+                self._on_visibility_changed(True)
+
+        def hideEvent(self, event):
+            super().hideEvent(event)
+            if hasattr(self, "_on_visibility_changed") and callable(self._on_visibility_changed):
+                self._on_visibility_changed(False)
+
+        def closeEvent(self, event):
+            # Cuando el gestor de ventanas o la barra de tareas solicita cerrar la ventana, cerrar la aplicación
+            event.accept()
+            self.quit_app()
+
         def quit_app(self):
             global uvicorn_process
             # Limpiar socket IPC al salir
@@ -502,6 +523,8 @@ def run_pyqt_window():
                         raw = client_conn.readAll().data().decode("utf-8", errors="ignore")
                         if "TOGGLE" in raw:
                             window.toggle_visibility()
+                        elif "HIDE" in raw:
+                            window.hide()
                         elif "QUIT" in raw:
                             window.quit_app()
                         else:
@@ -593,15 +616,17 @@ def run_pyqt_window():
         else:
             tray_icon.setToolTip("MerkeMail - Todo al día (0 sin leer)")
 
-        # Menú simplificado: SOLO Mostrar la aplicación y Cerrar
+        # Menú simplificado: SOLO Ocultar Aplicación (o Mostrar Aplicación) y Cerrar
         menu = QMenu()
-        toggle_action = QAction("Mostrar la aplicación", menu)
-        def update_menu_toggle_text():
-            if window.isVisible() and not window.isMinimized():
-                toggle_action.setText("Ocultar la aplicación")
+        toggle_action = QAction("Ocultar Aplicación", menu)
+        def update_menu_toggle_text(is_vis=None):
+            vis = is_vis if is_vis is not None else (window.isVisible() and not window.isMinimized())
+            if vis:
+                toggle_action.setText("Ocultar Aplicación")
             else:
-                toggle_action.setText("Mostrar la aplicación")
+                toggle_action.setText("Mostrar Aplicación")
 
+        window._on_visibility_changed = update_menu_toggle_text
         toggle_action.triggered.connect(window.toggle_visibility)
         menu.addAction(toggle_action)
 
@@ -609,7 +634,7 @@ def run_pyqt_window():
         quit_action.triggered.connect(window.quit_app)
         menu.addAction(quit_action)
 
-        menu.aboutToShow.connect(update_menu_toggle_text)
+        menu.aboutToShow.connect(lambda: update_menu_toggle_text())
         tray_icon.setContextMenu(menu)
 
         tray_icon.activated.connect(lambda reason: (

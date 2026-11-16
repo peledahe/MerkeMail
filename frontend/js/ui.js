@@ -276,6 +276,61 @@ const UI = {
         if (backdrop) backdrop.classList.add('hidden');
     },
 
+    // Forzar sincronización unificada de Otras Apps (Calendario, Tareas y Contactos)
+    async syncOtherApps(btnEl) {
+        const btn = btnEl || document.getElementById('btn-sync-other-apps');
+        const icon = btn ? btn.querySelector('svg') : null;
+        if (btn && btn.disabled) return;
+        if (btn) btn.disabled = true;
+        if (icon) icon.classList.add('animate-spin', 'text-indigo-600', 'dark:text-indigo-400');
+
+        this.showStickyToast('Sincronizando Otras Apps', 'Sincronizando Calendario, Tareas y Contactos en segundo plano...', 'info', 2500);
+
+        try {
+            const [calRes, contactsRes] = await Promise.all([
+                fetch('/api/calendars/sync', { method: 'POST' }).then(r => r.json()).catch(() => ({})),
+                fetch('/api/contacts/sync', { method: 'POST' }).then(r => r.json()).catch(() => ({}))
+            ]);
+
+            if (typeof CalendarManager !== 'undefined') {
+                await Promise.all([
+                    CalendarManager.loadCalendars(),
+                    CalendarManager.loadEvents(),
+                    CalendarManager.loadTasks()
+                ]).catch(() => {});
+                CalendarManager.renderCalendarSidebarList();
+                CalendarManager.renderCurrentView();
+                CalendarManager.renderUpcomingList();
+                CalendarManager.renderTasks();
+                setTimeout(async () => {
+                    try {
+                        await Promise.all([
+                            CalendarManager.loadCalendars(),
+                            CalendarManager.loadEvents(),
+                            CalendarManager.loadTasks()
+                        ]);
+                        CalendarManager.renderCalendarSidebarList();
+                        CalendarManager.renderCurrentView();
+                        CalendarManager.renderUpcomingList();
+                        CalendarManager.renderTasks();
+                    } catch (_) {}
+                }, 2800);
+            }
+
+            if (typeof ContactsManager !== 'undefined') {
+                await ContactsManager.loadContacts().catch(() => {});
+            }
+
+            const totalContacts = contactsRes && contactsRes.total_contacts !== undefined ? ` (${contactsRes.total_contacts} contactos)` : '';
+            this.showStickyToast('Sincronización Completada', `Calendario, Tareas y Contactos actualizados correctamente${totalContacts}.`, 'success', 3500);
+        } catch (e) {
+            this.showStickyToast('Error', 'No se pudo completar la sincronización de Calendario y Contactos', 'error');
+        } finally {
+            if (btn) btn.disabled = false;
+            if (icon) icon.classList.remove('animate-spin', 'text-indigo-600', 'dark:text-indigo-400');
+        }
+    },
+
     // Inicializar Redimensionador y Estado de Barra Lateral
     initSidebar() {
         const sidebar = document.getElementById('sidebar-container');

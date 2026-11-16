@@ -12,6 +12,9 @@ def get_db():
     conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA cache_size=-32000")
+    conn.execute("PRAGMA mmap_size=268435456")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -63,7 +66,15 @@ def init_db():
         "ALTER TABLE contacts ADD COLUMN company TEXT",
         "ALTER TABLE contacts ADD COLUMN job_title TEXT",
         "ALTER TABLE contacts ADD COLUMN address TEXT",
-        "ALTER TABLE contacts ADD COLUMN is_customized INTEGER DEFAULT 0"
+        "ALTER TABLE contacts ADD COLUMN is_customized INTEGER DEFAULT 0",
+        "ALTER TABLE contacts ADD COLUMN updated_at TIMESTAMP",
+        "ALTER TABLE emails ADD COLUMN updated_at TIMESTAMP",
+        "ALTER TABLE emails ADD COLUMN local_modified INTEGER DEFAULT 0",
+        "ALTER TABLE events ADD COLUMN updated_at TIMESTAMP",
+        "ALTER TABLE events ADD COLUMN local_modified INTEGER DEFAULT 0",
+        "ALTER TABLE calendars ADD COLUMN updated_at TIMESTAMP",
+        "ALTER TABLE labels ADD COLUMN updated_at TIMESTAMP",
+        "ALTER TABLE labels ADD COLUMN local_modified INTEGER DEFAULT 0"
     ]
     for m in migrations:
         try:
@@ -231,6 +242,26 @@ def init_db():
         )
     ''')
 
+    # Registro de Correos Eliminados en MerkeMail para que nunca se reimporten desde servidores
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS deleted_emails (
+            account_id INTEGER NOT NULL,
+            uid TEXT NOT NULL,
+            deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (account_id, uid)
+        )
+    ''')
+
+    # Registro de Eventos y Tareas Eliminados en MerkeMail para prevalecer sobre servidores
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS deleted_events (
+            account_id INTEGER NOT NULL,
+            external_id TEXT NOT NULL,
+            deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (account_id, external_id)
+        )
+    ''')
+
     # Tabla de Perfil del Usuario Analizado por IA
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS user_ai_profile (
@@ -254,20 +285,33 @@ def init_db():
     # Índices de alto rendimiento para acelerar listados, búsquedas, filtros y contadores
     indexes = [
         "CREATE INDEX IF NOT EXISTS idx_emails_acc_folder ON emails(account_id, folder)",
+        "CREATE INDEX IF NOT EXISTS idx_emails_folder_date ON emails(folder, date DESC, id DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_emails_acc_folder_date ON emails(account_id, folder, date DESC, id DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_emails_date_id ON emails(date DESC, id DESC)",
         "CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date DESC)",
         "CREATE INDEX IF NOT EXISTS idx_emails_read ON emails(is_read)",
+        "CREATE INDEX IF NOT EXISTS idx_emails_read_folder ON emails(is_read, folder, account_id)",
         "CREATE INDEX IF NOT EXISTS idx_emails_starred ON emails(is_starred)",
         "CREATE INDEX IF NOT EXISTS idx_emails_uid ON emails(account_id, uid)",
         "CREATE INDEX IF NOT EXISTS idx_email_labels_eid ON email_labels(email_id, label_id)",
+        "CREATE INDEX IF NOT EXISTS idx_email_labels_lid ON email_labels(label_id, email_id)",
         "CREATE INDEX IF NOT EXISTS idx_attachments_eid ON attachments(email_id)",
         "CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)",
-        "CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name)"
+        "CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name)",
+        "CREATE INDEX IF NOT EXISTS idx_events_cal_ext ON events(calendar_id, external_id)",
+        "CREATE INDEX IF NOT EXISTS idx_events_start ON events(start_time)"
     ]
     for idx in indexes:
         try:
             cursor.execute(idx)
         except Exception:
             pass
+
+    # Normalizar fechas existentes en emails para formato ISO uniforme y rápido ordenamiento por índice
+    try:
+        cursor.execute("UPDATE emails SET date = REPLACE(date, ' ', 'T') || 'Z' WHERE date IS NOT NULL AND date NOT LIKE '%T%' AND LENGTH(date) = 19")
+    except Exception:
+        pass
     
     conn.commit()
 
@@ -287,7 +331,7 @@ def init_db():
     # Inicializar configuraciones por defecto si no existen
     default_settings = {
         "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
-        "gemini_model": "gemini-3.8-flash",
+        "gemini_model": "gemini-3.5-flash-lite",
         "theme": "dark",
         "ai_prompt_tone": "formal",
         "default_calendar_id": "1",
@@ -296,8 +340,8 @@ def init_db():
     for k, v in default_settings.items():
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
     
-    # Migrar modelo legacy a gemini-3.8-flash si estuviera en 2.5
-    cursor.execute("UPDATE settings SET value = 'gemini-3.8-flash' WHERE key = 'gemini_model' AND value LIKE '%2.5%'")
+    # Migrar modelos legacy o con alta latencia a gemini-3.5-flash-lite para respuesta ultrarrápida
+    cursor.execute("UPDATE settings SET value = 'gemini-3.5-flash-lite' WHERE key = 'gemini_model' AND (value LIKE '%2.5%' OR value = 'gemini-3.1-flash-lite' OR value = 'gemini-3.8-flash')")
     
     # Asegurar que al menos una cuenta tenga is_default = 1 si existen cuentas
     try:

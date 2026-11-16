@@ -1028,16 +1028,19 @@ const InlineReply = {
             editor.innerHTML = '<p><br></p>';
         }
         this.clearAttachments();
-        // Re-aplicar firma por defecto si existe
+        // Re-aplicar firma por defecto lista para la próxima vez que se abra
         if (window.EmailManager && EmailManager.currentOpenedEmail && window.SignatureManager) {
             const defSig = await SignatureManager.getDefaultSignatureForAccount(EmailManager.currentOpenedEmail.account_id);
             if (defSig && defSig.content) {
                 this.insertSignature(defSig.content);
             }
         }
-        this.focusTop();
+        const inlineContainer = document.getElementById('inline-reply-container');
+        if (inlineContainer) {
+            inlineContainer.classList.add('hidden');
+        }
         if (window.UI) {
-            UI.showStickyToast('Borrador restablecido', 'El área de redacción se ha limpiado y está lista para escribir', 'info', 2000);
+            UI.showStickyToast('Borrador descartado', 'Se cerró y limpió el formulario de respuesta', 'info', 2000);
         }
     },
 
@@ -1199,6 +1202,8 @@ const InlineReply = {
                 const editor = document.getElementById('inline-reply-editor');
                 if (editor) editor.innerHTML = '';
                 this.clearAttachments();
+                const inlineContainer = document.getElementById('inline-reply-container');
+                if (inlineContainer) inlineContainer.classList.add('hidden');
 
                 // Si estamos en la vista de enviados, recargar
                 if (EmailManager.currentFolder === 'SENT') {

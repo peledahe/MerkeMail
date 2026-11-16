@@ -28,20 +28,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         DesktopBridge.init();
     }
 
-    // Inicializar Módulos de forma independiente y tolerante a fallos
-    try { await EmailManager.loadAccounts(); } catch (e) { console.warn("Fallo cargando cuentas:", e); }
-    try { await EmailManager.loadLabels(); } catch (e) { console.warn("Fallo cargando etiquetas:", e); }
-    try { await EmailManager.loadEmails(); } catch (e) { console.warn("Fallo cargando correos:", e); }
-    try { await CalendarManager.init(); } catch (e) { console.warn("Fallo cargando calendario:", e); }
-    try { await GeminiAI.initSettings(); } catch (e) { console.warn("Fallo cargando IA:", e); }
-    try { await SignatureManager.init(); } catch (e) { console.warn("Fallo cargando firmas:", e); }
-    try { if (window.ContactsManager) await ContactsManager.init(); } catch (e) { console.warn("Fallo cargando contactos:", e); }
-    try { if (window.UserProfileAI) await UserProfileAI.init(); } catch (e) { console.warn("Fallo cargando perfil usuario:", e); }
+    // Inicializar Event Listeners de inmediato para máxima capacidad de respuesta
+    setupEventListeners();
+
+    // 1. Prioridad máxima: cargar correos, cuentas y etiquetas en paralelo para mostrar la bandeja al instante
+    await Promise.allSettled([
+        EmailManager.loadEmails(),
+        EmailManager.loadAccounts(),
+        EmailManager.loadLabels()
+    ]);
+
     try { if (window.AntigravityCopilot) AntigravityCopilot.initResizer(); } catch (e) { console.warn("Fallo resizer Elio:", e); }
     try { EmailManager.initAutoSyncScheduler(); } catch (e) { console.warn("Fallo scheduler:", e); }
 
-    // Inicializar Event Listeners
-    setupEventListeners();
+    // 2. Inicializar módulos secundarios en segundo plano sin bloquear la interfaz principal
+    Promise.allSettled([
+        (async () => { try { await GeminiAI.initSettings(); } catch (e) { console.warn("Fallo cargando IA:", e); } })(),
+        (async () => { try { await CalendarManager.init(); } catch (e) { console.warn("Fallo cargando calendario:", e); } })(),
+        (async () => { try { await SignatureManager.init(); } catch (e) { console.warn("Fallo cargando firmas:", e); } })(),
+        (async () => { try { if (window.ContactsManager) await ContactsManager.init(); } catch (e) { console.warn("Fallo cargando contactos:", e); } })(),
+        (async () => { try { if (window.UserProfileAI) await UserProfileAI.init(); } catch (e) { console.warn("Fallo cargando perfil usuario:", e); } })()
+    ]);
 });
 
 function setupEventListeners() {

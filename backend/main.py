@@ -226,8 +226,8 @@ async def _periodic_background_sync_loop():
     2. Correos: según el intervalo configurado de cada cuenta activa (mínimo 5 min por defecto).
     """
     global _last_calendar_sync, _last_email_sync
-    # Espera inicial para permitir arranque ágil del backend
-    await asyncio.sleep(15)
+    # Espera inicial breve para arranque ágil del backend
+    await asyncio.sleep(3)
     
     while True:
         try:
@@ -288,10 +288,7 @@ async def _periodic_background_sync_loop():
 @app.on_event("startup")
 async def on_startup():
     init_db()
-    try:
-        ContactsService.sync_contacts()
-    except Exception as e:
-        print(f"[Contacts] Error en sincronización inicial: {e}")
+    asyncio.create_task(asyncio.to_thread(ContactsService.sync_contacts))
     asyncio.create_task(_periodic_contacts_sync())
     asyncio.create_task(_periodic_background_sync_loop())
 
@@ -419,7 +416,7 @@ def test_gemini_key(data: Dict[str, str] = Body(...)):
 @app.post("/api/settings/models")
 def get_available_models(data: Dict[str, str] = Body(...)):
     key = data.get("api_key", "")
-    return GeminiService.test_and_list_models(key)
+    return GeminiService.list_models_fast(key)
 
 # --- ENDPOINTS DE APLICACIÓN DE ESCRITORIO (LINUX / UBUNTU) ---
 _desktop_window_callbacks = {
@@ -966,33 +963,28 @@ def get_unread_counts(account_id: Optional[int] = None):
     acc_filter = " AND account_id = ?" if account_id else ""
     acc_param = (account_id,) if account_id else ()
 
-    # 1. Conteo de INBOX (incluye INBOX y categorías estándar según vista Gmail)
-    inbox_row = conn.execute(
-        f"SELECT COUNT(*) as cnt FROM emails WHERE is_read = 0 AND folder IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS'){acc_filter}",
-        acc_param
-    ).fetchone()
-    inbox_cnt = inbox_row["cnt"] if inbox_row else 0
-
-    # 2. Conteo de Destacados (STARRED)
-    starred_row = conn.execute(
-        f"SELECT COUNT(*) as cnt FROM emails WHERE is_read = 0 AND is_starred = 1{acc_filter}",
-        acc_param
-    ).fetchone()
-    starred_cnt = starred_row["cnt"] if starred_row else 0
-
-    # 3. Conteo de Todos (ALL)
-    all_row = conn.execute(
-        f"SELECT COUNT(*) as cnt FROM emails WHERE is_read = 0{acc_filter}",
-        acc_param
-    ).fetchone()
-    all_cnt = all_row["cnt"] if all_row else 0
-
-    # 4. Conteos de carpetas directas
-    folder_rows = conn.execute(
-        f"SELECT folder, COUNT(*) as cnt FROM emails WHERE is_read = 0{acc_filter} GROUP BY folder",
+    # Consulta única agrupada por carpeta y destacado para máxima velocidad
+    grouped_rows = conn.execute(
+        f"SELECT folder, is_starred, COUNT(*) as cnt FROM emails WHERE is_read = 0{acc_filter} GROUP BY folder, is_starred",
         acc_param
     ).fetchall()
-    
+
+    inbox_folders = {"INBOX", "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS"}
+    inbox_cnt = 0
+    starred_cnt = 0
+    all_cnt = 0
+    folder_totals: Dict[str, int] = {}
+
+    for r in grouped_rows:
+        f = r["folder"] or "INBOX"
+        c = r["cnt"] or 0
+        all_cnt += c
+        if r["is_starred"]:
+            starred_cnt += c
+        if f in inbox_folders:
+            inbox_cnt += c
+        folder_totals[f] = folder_totals.get(f, 0) + c
+
     folders_dict = {
         "INBOX": inbox_cnt,
         "STARRED": starred_cnt,
@@ -1007,11 +999,11 @@ def get_unread_counts(account_id: Optional[int] = None):
         "CATEGORY_UPDATES": 0,
         "CATEGORY_FORUMS": 0
     }
-    for r in folder_rows:
-        if r["folder"] != "INBOX":
-            folders_dict[r["folder"]] = r["cnt"]
+    for f_name, f_cnt in folder_totals.items():
+        if f_name != "INBOX":
+            folders_dict[f_name] = f_cnt
 
-    # 5. Conteos por etiquetas (labels)
+    # Conteos por etiquetas (labels)
     acc_label_filter = " AND e.account_id = ?" if account_id else ""
     label_rows = conn.execute(
         f"""SELECT el.label_id, COUNT(DISTINCT e.id) as cnt 
@@ -1182,8 +1174,9 @@ def get_emails(
     # Total de registros
     total_records = conn.execute(count_query, params).fetchone()["total"]
 
-    # Si no hay registros y auto_sync está habilitado (y no es una búsqueda manual), intentar sincronizar la carpeta o etiqueta
+    # Si no hay registros y auto_sync está habilitado (y no es una búsqueda manual), lanzar sincronización en segundo plano sin bloquear la lista
     has_advanced = bool(search or sender or recipient or subject or date_from or date_to or label_ids or has_attachments is not None or is_starred is not None or read_status or ai_urgency)
+    bg_sync_triggered = False
     if total_records == 0 and auto_sync and not has_advanced:
         try:
             if account_id:
@@ -1192,18 +1185,25 @@ def get_emails(
                 acc_rows = conn.execute("SELECT id FROM accounts WHERE is_active = 1").fetchall()
                 sync_accs = [r["id"] for r in acc_rows]
 
-            for s_id in sync_accs:
-                if label_id:
-                    EmailService.sync_mailbox(s_id, folder=None, label_id=label_id, max_emails=25)
-                elif folder:
-                    EmailService.sync_mailbox(s_id, folder=folder, label_id=None, max_emails=25)
-            total_records = conn.execute(count_query, params).fetchone()["total"]
+            if sync_accs:
+                bg_sync_triggered = True
+                def _bg_empty_folder_sync(accs, f_val, l_val):
+                    for s_id in accs:
+                        try:
+                            if l_val:
+                                EmailService.sync_mailbox(s_id, folder=None, label_id=l_val, max_emails=25)
+                            elif f_val:
+                                EmailService.sync_mailbox(s_id, folder=f_val, label_id=None, max_emails=25)
+                        except Exception as sync_err:
+                            print(f"Auto-sync background aviso: {sync_err}")
+
+                threading.Thread(target=_bg_empty_folder_sync, args=(sync_accs, folder, label_id), daemon=True).start()
         except Exception as sync_err:
             print(f"Auto-sync aviso: {sync_err}")
 
-    # Paginación (orden descendente estricto por fecha y hora de recibido en el buzón: más nuevo arriba, más viejo al final)
+    # Paginación rápida respaldada por índice B-Tree (date DESC, id DESC)
     offset = (page - 1) * page_size
-    query += " ORDER BY COALESCE(datetime(emails.date), emails.date) DESC, emails.id DESC LIMIT ? OFFSET ?"
+    query += " ORDER BY emails.date DESC, emails.id DESC LIMIT ? OFFSET ?"
     query_params = params + [page_size, offset]
 
     rows = conn.execute(query, query_params).fetchall()
@@ -1236,7 +1236,8 @@ def get_emails(
         "total": total_records,
         "page": page,
         "page_size": page_size,
-        "total_pages": (total_records + page_size - 1) // page_size if total_records > 0 else 1
+        "total_pages": (total_records + page_size - 1) // page_size if total_records > 0 else 1,
+        "background_sync": bg_sync_triggered
     }
 
 @app.get("/api/emails/{email_id}")
@@ -1305,6 +1306,7 @@ def get_email_detail(email_id: int):
 
 @app.post("/api/emails/{email_id}/read")
 def mark_email_as_read(email_id: int):
+    from datetime import datetime
     conn = get_db()
     row = conn.execute("SELECT id, is_read, account_id, uid, folder FROM emails WHERE id = ?", (email_id,)).fetchone()
     if not row:
@@ -1312,22 +1314,27 @@ def mark_email_as_read(email_id: int):
         raise HTTPException(status_code=404, detail="Correo no encontrado")
     
     if not row["is_read"]:
-        conn.execute("UPDATE emails SET is_read = 1 WHERE id = ?", (email_id,))
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute("UPDATE emails SET is_read = 1, updated_at = ?, local_modified = 1 WHERE id = ?", (now_iso, email_id))
         conn.commit()
+        acc_id = row["account_id"]
+        uid = row["uid"]
+        acc = conn.execute("SELECT id, provider FROM accounts WHERE id = ?", (acc_id,)).fetchone()
+        conn.close()
 
-        try:
-            acc = conn.execute("SELECT id, provider FROM accounts WHERE id = ?", (row["account_id"],)).fetchone()
-            if acc and acc["provider"] in ("google", "gmail") and row["uid"]:
-                from backend.google_oauth import GoogleOAuthService
-                GoogleOAuthService.modify_message_labels(acc["id"], row["uid"], remove_labels=["UNREAD"])
-        except Exception as e:
-            print(f"Aviso sincronizando estado de lectura en Gmail remoto: {e}")
-
-    conn.close()
+        if acc and acc["provider"] in ("google", "gmail") and uid:
+            threading.Thread(
+                target=GoogleOAuthService.modify_message_labels,
+                args=(acc["id"], uid, None, ["UNREAD"]),
+                daemon=True
+            ).start()
+    else:
+        conn.close()
     return {"status": "ok", "email_id": email_id, "is_read": 1}
 
 @app.post("/api/emails/{email_id}/toggle-read")
 def toggle_email_read(email_id: int):
+    from datetime import datetime
     conn = get_db()
     row = conn.execute("SELECT id, is_read, account_id, uid, folder FROM emails WHERE id = ?", (email_id,)).fetchone()
     if not row:
@@ -1335,25 +1342,27 @@ def toggle_email_read(email_id: int):
         raise HTTPException(status_code=404, detail="Correo no encontrado")
     
     new_read = 0 if row["is_read"] else 1
-    conn.execute("UPDATE emails SET is_read = ? WHERE id = ?", (new_read, email_id))
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute("UPDATE emails SET is_read = ?, updated_at = ?, local_modified = 1 WHERE id = ?", (new_read, now_iso, email_id))
     conn.commit()
-
-    try:
-        acc = conn.execute("SELECT id, provider FROM accounts WHERE id = ?", (row["account_id"],)).fetchone()
-        if acc and acc["provider"] in ("google", "gmail") and row["uid"]:
-            from backend.google_oauth import GoogleOAuthService
-            if new_read:
-                GoogleOAuthService.modify_message_labels(acc["id"], row["uid"], remove_labels=["UNREAD"])
-            else:
-                GoogleOAuthService.modify_message_labels(acc["id"], row["uid"], add_labels=["UNREAD"])
-    except Exception as e:
-        print(f"Aviso sincronizando alternancia de lectura en Gmail remoto: {e}")
-
+    acc_id = row["account_id"]
+    uid = row["uid"]
+    acc = conn.execute("SELECT id, provider FROM accounts WHERE id = ?", (acc_id,)).fetchone()
     conn.close()
+
+    if acc and acc["provider"] in ("google", "gmail") and uid:
+        add_l = None if new_read else ["UNREAD"]
+        rem_l = ["UNREAD"] if new_read else None
+        threading.Thread(
+            target=GoogleOAuthService.modify_message_labels,
+            args=(acc["id"], uid, add_l, rem_l),
+            daemon=True
+        ).start()
+
     return {"status": "ok", "email_id": email_id, "is_read": new_read}
 
 @app.post("/api/emails/sync")
-def sync_emails(account_id: Optional[int] = None, folder: Optional[str] = "INBOX", label_id: Optional[int] = None):
+def sync_emails(account_id: Optional[int] = None, folder: Optional[str] = "INBOX", label_id: Optional[int] = None, background: bool = False):
     conn = get_db()
     if account_id:
         accounts = conn.execute("SELECT id FROM accounts WHERE id = ?", (account_id,)).fetchall()
@@ -1364,34 +1373,43 @@ def sync_emails(account_id: Optional[int] = None, folder: Optional[str] = "INBOX
     if not accounts:
         return {"success": False, "error": "No hay cuentas configuradas"}
 
-    total_synced = 0
-    errors = []
+    acc_ids = [acc["id"] for acc in accounts]
 
-    def sync_one(acc_id):
-        try:
-            return acc_id, EmailService.sync_mailbox(acc_id, folder=folder, label_id=label_id)
-        except Exception as e:
-            return acc_id, {"success": False, "error": str(e)}
+    def _run_sync_batch():
+        total_synced = 0
+        errors = []
 
-    import concurrent.futures
-    workers = min(len(accounts), 4)
-    if workers > 1:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(sync_one, acc["id"]) for acc in accounts]
-            for f in concurrent.futures.as_completed(futures):
-                acc_id, res = f.result()
+        def sync_one(acc_id):
+            try:
+                return acc_id, EmailService.sync_mailbox(acc_id, folder=folder, label_id=label_id)
+            except Exception as e:
+                return acc_id, {"success": False, "error": str(e)}
+
+        import concurrent.futures
+        workers = min(len(acc_ids), 4)
+        if workers > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [executor.submit(sync_one, aid) for aid in acc_ids]
+                for f in concurrent.futures.as_completed(futures):
+                    aid, res = f.result()
+                    if res.get("success"):
+                        total_synced += res.get("synced_count", 0)
+                    elif res.get("error"):
+                        errors.append(f"Cuenta {aid}: {res.get('error')}")
+        else:
+            for aid in acc_ids:
+                aid, res = sync_one(aid)
                 if res.get("success"):
                     total_synced += res.get("synced_count", 0)
                 elif res.get("error"):
-                    errors.append(f"Cuenta {acc_id}: {res.get('error')}")
-    else:
-        for acc in accounts:
-            acc_id, res = sync_one(acc["id"])
-            if res.get("success"):
-                total_synced += res.get("synced_count", 0)
-            elif res.get("error"):
-                errors.append(f"Cuenta {acc_id}: {res.get('error')}")
+                    errors.append(f"Cuenta {aid}: {res.get('error')}")
+        return total_synced, errors
 
+    if background:
+        threading.Thread(target=_run_sync_batch, daemon=True).start()
+        return {"success": True, "synced_count": 0, "background": True}
+
+    total_synced, errors = _run_sync_batch()
     return {
         "success": True,
         "synced_count": total_synced,
@@ -1417,106 +1435,200 @@ def send_email(req: EmailSendRequest):
 
 @app.post("/api/emails/{email_id}/star")
 def toggle_star(email_id: int):
+    from datetime import datetime
     conn = get_db()
-    row = conn.execute("SELECT is_starred FROM emails WHERE id = ?", (email_id,)).fetchone()
+    row = conn.execute("SELECT is_starred, account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="Correo no encontrado")
     new_status = 0 if row["is_starred"] else 1
-    conn.execute("UPDATE emails SET is_starred = ? WHERE id = ?", (new_status, email_id))
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute("UPDATE emails SET is_starred = ?, updated_at = ?, local_modified = 1 WHERE id = ?", (new_status, now_iso, email_id))
     conn.commit()
+    acc_id = row["account_id"]
+    uid = row["uid"]
     conn.close()
+
+    if acc_id and uid:
+        add_l = ["STARRED"] if new_status else None
+        rem_l = None if new_status else ["STARRED"]
+        threading.Thread(
+            target=GoogleOAuthService.modify_message_labels,
+            args=(acc_id, uid, add_l, rem_l),
+            daemon=True
+        ).start()
+
     return {"success": True, "is_starred": new_status}
 
 @app.post("/api/emails/{email_id}/not-spam")
 def mark_email_not_spam(email_id: int):
+    from datetime import datetime
     conn = get_db()
     row = conn.execute("SELECT account_id, uid, folder FROM emails WHERE id = ?", (email_id,)).fetchone()
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="Correo no encontrado")
     
-    conn.execute("UPDATE emails SET folder = 'INBOX' WHERE id = ?", (email_id,))
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute("UPDATE emails SET folder = 'INBOX', updated_at = ?, local_modified = 1 WHERE id = ?", (now_iso, email_id))
     conn.commit()
     account_id = row["account_id"]
     uid = row["uid"]
     conn.close()
 
-    try:
-        GoogleOAuthService.modify_message_labels(account_id, uid, add_labels=["INBOX"], remove_labels=["SPAM"])
-    except Exception as e:
-        print(f"Aviso modificando etiquetas en Gmail para not-spam: {e}")
+    if account_id and uid:
+        threading.Thread(
+            target=GoogleOAuthService.modify_message_labels,
+            args=(account_id, uid, ["INBOX"], ["SPAM"]),
+            daemon=True
+        ).start()
 
     return {"success": True, "message": "Correo marcado como legítimo y movido a Recibidos"}
 
 @app.delete("/api/emails/{email_id}")
 def delete_email(email_id: int):
     conn = get_db()
+    row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if row and row["uid"]:
+        conn.execute(
+            "INSERT OR REPLACE INTO deleted_emails (account_id, uid, deleted_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (row["account_id"], row["uid"])
+        )
     conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
     conn.commit()
     conn.close()
+    if row and row["account_id"] and row["uid"]:
+        threading.Thread(
+            target=GoogleOAuthService.modify_message_labels,
+            args=(row["account_id"], row["uid"], ["TRASH"], ["INBOX"]),
+            daemon=True
+        ).start()
     return {"success": True, "message": "Correo eliminado"}
 
 @app.post("/api/emails/batch-delete")
 def batch_delete_emails(req: BatchDeleteRequest):
+    from datetime import datetime
     if not req.email_ids:
         return {"success": True, "deleted_count": 0}
     conn = get_db()
     placeholders = ",".join("?" for _ in req.email_ids)
+    rows = conn.execute(f"SELECT id, account_id, uid FROM emails WHERE id IN ({placeholders})", req.email_ids).fetchall()
+    targets = [dict(r) for r in rows]
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
     if req.permanent:
+        for t in targets:
+            if t.get("uid"):
+                conn.execute(
+                    "INSERT OR REPLACE INTO deleted_emails (account_id, uid, deleted_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                    (t["account_id"], t["uid"])
+                )
         conn.execute(f"DELETE FROM emails WHERE id IN ({placeholders})", req.email_ids)
     else:
-        conn.execute(f"UPDATE emails SET folder = 'TRASH' WHERE id IN ({placeholders})", req.email_ids)
+        conn.execute(
+            f"UPDATE emails SET folder = 'TRASH', updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
+            [now_iso] + req.email_ids
+        )
     conn.commit()
     conn.close()
+
+    def _bg_batch_del():
+        for t in targets:
+            if t.get("account_id") and t.get("uid"):
+                try:
+                    GoogleOAuthService.modify_message_labels(t["account_id"], t["uid"], add_labels=["TRASH"], remove_labels=["INBOX"])
+                except Exception:
+                    pass
+    threading.Thread(target=_bg_batch_del, daemon=True).start()
+
     return {"success": True, "deleted_count": len(req.email_ids), "message": f"{len(req.email_ids)} correos procesados exitosamente"}
 
 @app.post("/api/emails/batch-action")
 def batch_action_emails(req: BatchActionRequest):
+    from datetime import datetime
     if not req.email_ids:
         return {"success": True, "count": 0, "message": "No hay correos seleccionados"}
     conn = get_db()
     placeholders = ",".join("?" for _ in req.email_ids)
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = conn.execute(f"SELECT id, account_id, uid, folder, is_read, is_starred FROM emails WHERE id IN ({placeholders})", req.email_ids).fetchall()
+    targets = [dict(r) for r in rows]
+
+    bg_label_ops = []  # list of (account_id, uid, add_labels, remove_labels)
 
     if req.action == "archive":
         # No permitir archivar o almacenar correos que están en Papelera (TRASH), Spam (SPAM) o Borradores (DRAFT/DRAFTS)
         cursor = conn.execute(
             f"""
             UPDATE emails 
-            SET folder = CASE WHEN folder = 'ARCHIVE' THEN 'INBOX' ELSE 'ARCHIVE' END 
+            SET folder = CASE WHEN folder = 'ARCHIVE' THEN 'INBOX' ELSE 'ARCHIVE' END,
+                updated_at = ?, local_modified = 1
             WHERE id IN ({placeholders}) AND UPPER(COALESCE(folder, '')) NOT IN ('SPAM', 'TRASH', 'DRAFT', 'DRAFTS')
             """,
-            req.email_ids
+            [now_iso] + req.email_ids
         )
+        for t in targets:
+            if (t.get("folder") or "").upper() not in ("SPAM", "TRASH", "DRAFT", "DRAFTS") and t.get("uid"):
+                if t.get("folder") == "ARCHIVE":
+                    bg_label_ops.append((t["account_id"], t["uid"], ["INBOX"], None))
+                else:
+                    bg_label_ops.append((t["account_id"], t["uid"], None, ["INBOX"]))
         msg = f"{cursor.rowcount} correos procesados (Archivado / Restaurar a Recibidos)"
     elif req.action == "spam":
         conn.execute(
-            f"UPDATE emails SET folder = CASE WHEN folder = 'SPAM' THEN 'INBOX' ELSE 'SPAM' END WHERE id IN ({placeholders})",
-            req.email_ids
+            f"UPDATE emails SET folder = CASE WHEN folder = 'SPAM' THEN 'INBOX' ELSE 'SPAM' END, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
+            [now_iso] + req.email_ids
         )
+        for t in targets:
+            if t.get("uid"):
+                if t.get("folder") == "SPAM":
+                    bg_label_ops.append((t["account_id"], t["uid"], ["INBOX"], ["SPAM"]))
+                else:
+                    bg_label_ops.append((t["account_id"], t["uid"], ["SPAM"], ["INBOX"]))
         msg = f"{len(req.email_ids)} correos procesados (Spam / Restaurar a Recibidos)"
     elif req.action == "trash":
         conn.execute(
-            f"UPDATE emails SET folder = CASE WHEN folder = 'TRASH' THEN 'INBOX' ELSE 'TRASH' END WHERE id IN ({placeholders})",
-            req.email_ids
+            f"UPDATE emails SET folder = CASE WHEN folder = 'TRASH' THEN 'INBOX' ELSE 'TRASH' END, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
+            [now_iso] + req.email_ids
         )
+        for t in targets:
+            if t.get("uid"):
+                if t.get("folder") == "TRASH":
+                    bg_label_ops.append((t["account_id"], t["uid"], ["INBOX"], ["TRASH"]))
+                else:
+                    bg_label_ops.append((t["account_id"], t["uid"], ["TRASH"], ["INBOX"]))
         msg = f"{len(req.email_ids)} correos procesados (Papelera / Restaurados)"
     elif req.action in ("mark_read", "mark_unread", "toggle_read"):
         conn.execute(
-            f"UPDATE emails SET is_read = CASE WHEN is_read = 1 THEN 0 ELSE 1 END WHERE id IN ({placeholders})",
-            req.email_ids
+            f"UPDATE emails SET is_read = CASE WHEN is_read = 1 THEN 0 ELSE 1 END, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
+            [now_iso] + req.email_ids
         )
+        for t in targets:
+            if t.get("uid"):
+                if t.get("is_read") == 1:
+                    bg_label_ops.append((t["account_id"], t["uid"], ["UNREAD"], None))
+                else:
+                    bg_label_ops.append((t["account_id"], t["uid"], None, ["UNREAD"]))
         msg = f"Estado de lectura alternado en {len(req.email_ids)} correos"
     elif req.action in ("star", "unstar", "toggle_star"):
         conn.execute(
-            f"UPDATE emails SET is_starred = CASE WHEN is_starred = 1 THEN 0 ELSE 1 END WHERE id IN ({placeholders})",
-            req.email_ids
+            f"UPDATE emails SET is_starred = CASE WHEN is_starred = 1 THEN 0 ELSE 1 END, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
+            [now_iso] + req.email_ids
         )
+        for t in targets:
+            if t.get("uid"):
+                if t.get("is_starred") == 1:
+                    bg_label_ops.append((t["account_id"], t["uid"], None, ["STARRED"]))
+                else:
+                    bg_label_ops.append((t["account_id"], t["uid"], ["STARRED"], None))
         msg = f"Destacado alternado en {len(req.email_ids)} correos"
     elif (req.action in ("add_label", "toggle_label")) and req.label_id:
         added = 0
         removed = 0
-        for eid in req.email_ids:
+        lbl_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (req.label_id,)).fetchone()
+        rem_lbl_id = lbl_row["remote_id"] if lbl_row else None
+        for t in targets:
+            eid = t["id"]
             exists = conn.execute(
                 "SELECT 1 FROM email_labels WHERE email_id = ? AND label_id = ?",
                 (eid, req.label_id)
@@ -1527,18 +1639,30 @@ def batch_action_emails(req: BatchActionRequest):
                     (eid, req.label_id)
                 )
                 removed += 1
+                if rem_lbl_id and t.get("uid"):
+                    bg_label_ops.append((t["account_id"], t["uid"], None, [rem_lbl_id]))
             else:
                 conn.execute(
                     "INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)",
                     (eid, req.label_id)
                 )
                 added += 1
+                if rem_lbl_id and t.get("uid"):
+                    bg_label_ops.append((t["account_id"], t["uid"], [rem_lbl_id], None))
+        conn.execute(f"UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + req.email_ids)
         msg = f"Etiqueta actualizada (+{added} asignadas, -{removed} removidas)"
     elif req.action == "remove_label" and req.label_id:
+        lbl_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (req.label_id,)).fetchone()
+        rem_lbl_id = lbl_row["remote_id"] if lbl_row else None
         conn.execute(f"DELETE FROM email_labels WHERE label_id = ? AND email_id IN ({placeholders})", [req.label_id] + req.email_ids)
+        conn.execute(f"UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + req.email_ids)
+        if rem_lbl_id:
+            for t in targets:
+                if t.get("uid"):
+                    bg_label_ops.append((t["account_id"], t["uid"], None, [rem_lbl_id]))
         msg = f"Etiqueta removida de {len(req.email_ids)} correos"
     elif req.action == "move_folder" and req.folder:
-        conn.execute(f"UPDATE emails SET folder = ? WHERE id IN ({placeholders})", [req.folder] + req.email_ids)
+        conn.execute(f"UPDATE emails SET folder = ?, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [req.folder, now_iso] + req.email_ids)
         msg = f"{len(req.email_ids)} correos movidos a {req.folder}"
     else:
         conn.close()
@@ -1546,6 +1670,16 @@ def batch_action_emails(req: BatchActionRequest):
 
     conn.commit()
     conn.close()
+
+    if bg_label_ops:
+        def _bg_apply_ops():
+            for acc_id, uid, add_l, rem_l in bg_label_ops:
+                try:
+                    GoogleOAuthService.modify_message_labels(acc_id, uid, add_labels=add_l, remove_labels=rem_l)
+                except Exception:
+                    pass
+        threading.Thread(target=_bg_apply_ops, daemon=True).start()
+
     return {"success": True, "count": len(req.email_ids), "action": req.action, "message": msg}
 
 # --- ENDPOINTS DE FIRMAS DE CORREO ---
@@ -1696,16 +1830,16 @@ def get_agent_summary():
     """Genera un resumen inteligente en tiempo real de correos sin leer, asuntos urgentes y citas próximas con recomendaciones de atención."""
     conn = get_db()
     
-    # Total de correos sin leer en carpetas principales
+    # Total de correos sin leer excluyendo Papelera, Borradores y Spam
     unread_count = conn.execute(
-        "SELECT COUNT(*) as c FROM emails WHERE is_read = 0 AND folder NOT IN ('TRASH', 'SPAM')"
+        "SELECT COUNT(*) as c FROM emails WHERE is_read = 0 AND UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'DRAFT', 'DRAFTS', 'BORRADORES', 'SPAM', 'JUNK')"
     ).fetchone()["c"]
 
     # Correos que requieren atención prioritaria (pagos, facturas, alertas de cuenta o seguridad)
     priority_rows = conn.execute("""
         SELECT id, sender, subject, date, snippet
         FROM emails
-        WHERE folder NOT IN ('TRASH', 'SPAM')
+        WHERE UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'DRAFT', 'DRAFTS', 'BORRADORES', 'SPAM', 'JUNK')
           AND (
             subject LIKE '%pago%' OR subject LIKE '%factura%' OR subject LIKE '%alerta%'
             OR subject LIKE '%suspensi%' OR subject LIKE '%urgente%' OR subject LIKE '%rechazado%'
@@ -1722,7 +1856,7 @@ def get_agent_summary():
         unread_rows = conn.execute(f"""
             SELECT id, sender, subject, date, snippet
             FROM emails
-            WHERE is_read = 0 AND folder NOT IN ('TRASH', 'SPAM') AND id NOT IN ({placeholders})
+            WHERE is_read = 0 AND UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'DRAFT', 'DRAFTS', 'BORRADORES', 'SPAM', 'JUNK') AND id NOT IN ({placeholders})
             ORDER BY date DESC LIMIT {3 - len(priority_rows)}
         """, p_ids if p_ids else []).fetchall()
 
@@ -1897,27 +2031,68 @@ def summarize_email(email_id: int):
 
 @app.post("/api/ai/cleanup-preview")
 def cleanup_preview(req: AICleanupRequest):
-    """Evalúa absolutamente todos los correos activos de todas las cuentas según el prompt y devuelve candidatos con justificación."""
+    """Evalúa todos los correos de todas las cuentas, carpetas y etiquetas según el prompt,
+    excluyendo Papelera, Borradores y Spam a menos que el usuario lo indique explícitamente."""
+    import re
+    prompt_lower = (req.prompt or "").lower()
+    folder_upper = (req.folder or "").upper().strip()
+
+    explicit_trash = folder_upper in ("TRASH", "PAPELERA") or bool(re.search(r'\b(papelera|trash|eliminados?|borrados?)\b', prompt_lower))
+    explicit_draft = folder_upper in ("DRAFT", "DRAFTS", "BORRADORES") or bool(re.search(r'\b(borrador|borradores|drafts?)\b', prompt_lower))
+    explicit_spam = folder_upper in ("SPAM", "JUNK") or bool(re.search(r'\b(spam|no deseados?|correo basura|junk)\b', prompt_lower))
+
+    excluded_folders = set()
+    if not explicit_trash:
+        excluded_folders.update(["TRASH", "PAPELERA"])
+    if not explicit_draft:
+        excluded_folders.update(["DRAFT", "DRAFTS", "BORRADORES"])
+    if not explicit_spam:
+        excluded_folders.update(["SPAM", "JUNK"])
+
     conn = get_db()
     query = """
         SELECT e.id, e.account_id, a.email as account_email, a.name as account_name,
                e.folder, e.sender, e.subject, e.snippet, e.date
         FROM emails e
         LEFT JOIN accounts a ON e.account_id = a.id
-        WHERE e.folder != 'TRASH'
+        WHERE 1=1
     """
-    params = []
+    params: List[Any] = []
+    if excluded_folders:
+        ph_ex = ",".join("?" for _ in excluded_folders)
+        query += f" AND UPPER(COALESCE(e.folder, '')) NOT IN ({ph_ex})"
+        params.extend(list(excluded_folders))
+
     if req.account_id and not req.all_accounts:
         query += " AND e.account_id = ?"
         params.append(req.account_id)
-    if req.folder and req.folder.upper() not in ('ALL', 'TODAS', 'TODOS', 'GLOBAL', ''):
-        query += " AND e.folder = ?"
-        params.append(req.folder)
-    query += " ORDER BY COALESCE(datetime(e.date), e.date) DESC, e.id DESC"
+    if folder_upper and folder_upper not in ('ALL', 'TODAS', 'TODOS', 'GLOBAL', ''):
+        query += " AND UPPER(e.folder) = ?"
+        params.append(folder_upper)
+    query += " ORDER BY e.date DESC, e.id DESC"
     rows = conn.execute(query, params).fetchall()
-    conn.close()
 
     emails_data = [dict(r) for r in rows]
+    if emails_data:
+        eids = [e["id"] for e in emails_data]
+        lbl_map: Dict[int, List[str]] = {}
+        chunk_sz = 500
+        for i in range(0, len(eids), chunk_sz):
+            ch = eids[i:i + chunk_sz]
+            ph = ",".join("?" for _ in ch)
+            lrows = conn.execute(f"""
+                SELECT el.email_id, l.name
+                FROM email_labels el
+                JOIN labels l ON el.label_id = l.id
+                WHERE el.email_id IN ({ph})
+            """, ch).fetchall()
+            for lr in lrows:
+                lbl_map.setdefault(lr["email_id"], []).append(lr["name"])
+        for e in emails_data:
+            e["labels"] = lbl_map.get(e["id"], [])
+
+    conn.close()
+
     if not emails_data:
         return {"success": True, "candidates": []}
 
@@ -2101,7 +2276,6 @@ def create_event_from_email(email_id: int, calendar_id: Optional[int] = Query(No
 def list_labels(account_id: Optional[int] = None):
     conn = get_db()
 
-    # Si hay una cuenta activa pero no tiene etiquetas sincronizadas, sincronizarlas
     effective_acc_id = account_id
     if not effective_acc_id:
         acc = conn.execute("SELECT id, auth_type FROM accounts WHERE is_active = 1 ORDER BY id ASC LIMIT 1").fetchone()
@@ -2109,16 +2283,15 @@ def list_labels(account_id: Optional[int] = None):
             effective_acc_id = acc["id"]
 
     if effective_acc_id:
-        # Verificar si ya existen etiquetas para esta cuenta
         existing_acc_labels = conn.execute("SELECT COUNT(*) as total FROM labels WHERE account_id = ?", (effective_acc_id,)).fetchone()["total"]
         if existing_acc_labels == 0:
             acc_info = conn.execute("SELECT auth_type FROM accounts WHERE id = ?", (effective_acc_id,)).fetchone()
             if acc_info and acc_info["auth_type"] == "oauth2":
-                try:
-                    from backend.google_oauth import GoogleOAuthService
-                    GoogleOAuthService.sync_gmail_labels(effective_acc_id)
-                except Exception as sync_e:
-                    print(f"Aviso sync_labels: {sync_e}")
+                threading.Thread(
+                    target=GoogleOAuthService.sync_gmail_labels,
+                    args=(effective_acc_id, True),
+                    daemon=True
+                ).start()
 
     if account_id:
         rows = conn.execute("SELECT * FROM labels WHERE account_id = ? OR account_id IS NULL ORDER BY name ASC", (account_id,)).fetchall()
@@ -2141,16 +2314,18 @@ def sync_labels(account_id: Optional[int] = None):
     conn.close()
 
     from backend.google_oauth import GoogleOAuthService
-    labels = GoogleOAuthService.sync_gmail_labels(account_id)
+    labels = GoogleOAuthService.sync_gmail_labels(account_id, force=True)
     return {"success": True, "count": len(labels), "labels": labels}
 
 @app.post("/api/labels")
 def create_label(req: LabelCreateRequest):
+    from datetime import datetime
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="El nombre de la etiqueta es obligatorio")
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO labels (name, color, account_id) VALUES (?, ?, ?)", (req.name.strip(), req.color or "#3b82f6", req.account_id))
+    cursor.execute("INSERT INTO labels (name, color, account_id, updated_at, local_modified) VALUES (?, ?, ?, ?, 1)", (req.name.strip(), req.color or "#3b82f6", req.account_id, now_iso))
     conn.commit()
     label_id = cursor.lastrowid
     conn.close()
@@ -2158,8 +2333,10 @@ def create_label(req: LabelCreateRequest):
 
 @app.put("/api/labels/{label_id}")
 def update_label(label_id: int, req: LabelCreateRequest):
+    from datetime import datetime
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
-    conn.execute("UPDATE labels SET name = ?, color = ? WHERE id = ?", (req.name.strip(), req.color, label_id))
+    conn.execute("UPDATE labels SET name = ?, color = ?, updated_at = ?, local_modified = 1 WHERE id = ?", (req.name.strip(), req.color, now_iso, label_id))
     conn.commit()
     conn.close()
     return {"success": True, "message": "Etiqueta actualizada"}
@@ -2175,45 +2352,43 @@ def delete_label(label_id: int):
 
 @app.post("/api/emails/{email_id}/labels")
 def add_label_to_email(email_id: int, req: EmailLabelRequest):
+    from datetime import datetime
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
     conn.execute("INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)", (email_id, req.label_id))
+    conn.execute("UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id = ?", (now_iso, email_id))
     conn.commit()
 
     email_row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
     label_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (req.label_id,)).fetchone()
     conn.close()
 
-    if email_row and label_row and label_row["remote_id"]:
-        try:
-            from backend.google_oauth import GoogleOAuthService
-            GoogleOAuthService.modify_message_labels(
-                account_id=email_row["account_id"],
-                message_uid=email_row["uid"],
-                add_labels=[label_row["remote_id"]]
-            )
-        except Exception as e:
-            print(f"Error sincronizando adición de etiqueta con Gmail: {e}")
+    if email_row and label_row and label_row["remote_id"] and email_row["uid"]:
+        threading.Thread(
+            target=GoogleOAuthService.modify_message_labels,
+            args=(email_row["account_id"], email_row["uid"], [label_row["remote_id"]], None),
+            daemon=True
+        ).start()
 
     return {"success": True, "message": "Etiqueta agregada al correo"}
 
 @app.delete("/api/emails/{email_id}/labels/{label_id}")
 def remove_label_from_email(email_id: int, label_id: int):
+    from datetime import datetime
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
     email_row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
     label_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (label_id,)).fetchone()
     conn.execute("DELETE FROM email_labels WHERE email_id = ? AND label_id = ?", (email_id, label_id))
+    conn.execute("UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id = ?", (now_iso, email_id))
     conn.commit()
     conn.close()
 
-    if email_row and label_row and label_row["remote_id"]:
-        try:
-            from backend.google_oauth import GoogleOAuthService
-            GoogleOAuthService.modify_message_labels(
-                account_id=email_row["account_id"],
-                message_uid=email_row["uid"],
-                remove_labels=[label_row["remote_id"]]
-            )
-        except Exception as e:
-            print(f"Error sincronizando eliminación de etiqueta con Gmail: {e}")
+    if email_row and label_row and label_row["remote_id"] and email_row["uid"]:
+        threading.Thread(
+            target=GoogleOAuthService.modify_message_labels,
+            args=(email_row["account_id"], email_row["uid"], None, [label_row["remote_id"]]),
+            daemon=True
+        ).start()
 
     return {"success": True, "message": "Etiqueta removida del correo"}
