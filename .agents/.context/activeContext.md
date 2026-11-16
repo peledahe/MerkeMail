@@ -2,6 +2,14 @@
 
 ## Estado de Desarrollo Actual
 
+- **Actualización de Plan y Hoja de Ruta (`.agents/.context/plan.md`):**
+  - Se consolidaron los hitos completados hasta la Fase 119 y se documentaron como **Pendientes** en [plan.md](file:///home/perry/Desarrollo/MerkeMail/.agents/.context/plan.md):
+    1. **Opción y Sistema de Notificaciones** (correos entrantes, recordatorios de citas/tareas y alertas sonoras opcionales en `#drawer-settings`).
+    2. **Internacionalización Multi-idioma (i18n)** (Versión en Inglés `en`, Español `es` y soporte extensible a otros idiomas con selector en Configuración).
+    3. **Instaladores Nativos Empaquetados** (Paquete `.deb` para Ubuntu/Debian y ejecutable/instalador `.exe` / `.msi` para Windows).
+    4. **Arquitectura Web Local-First Multi-OS** (Almacenamiento 100% en la máquina local del usuario en Linux, macOS y Windows al desplegar vía web).
+    5. **Mejoras de Modo Responsivo para Teléfonos y Tablets (Mobile & Tablet UX)** (Sin modificar la modalidad Desktop, Web de escritorio ni PWA; además se aplicaron mejoras táctiles y de ancho completo en `@media (max-width: 767px)` en `frontend/css/app.css` y accesos móviles a Cuentas/Firmas en `frontend/index.html`).
+
 - **Fase 119 - Selector de Cantidad de Correos por Página en Ajustes con Persistencia Permanente:**
   - **Selector en `#drawer-settings` (`frontend/index.html`):**
     - Se agregó la tarjeta **Paginación de Correos** con el selector `#settings-emails-page-size` (`10`, `12` predeterminado, `15`, `20`, `25`, `30`, `50` y `100` correos por página).

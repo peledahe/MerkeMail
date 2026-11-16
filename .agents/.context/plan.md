@@ -72,3 +72,47 @@ Construir una aplicación de gestión de correos y calendarios altamente gráfic
 - [x] Resolución de conflictos de superposición: Drawers en `z-[60]` y Modales en `z-[100]`/`z-[110]` con desenfoque de fondo.
 - [x] Botones con contraste sólido y legible en modo claro y modo oscuro.
 - [x] Navegación consistente entre carpetas y calendario.
+
+### Fase 8: Aplicación de Escritorio Nativa (PyQt6), Sincronización Bidireccional y Personalización Avanzada (Fases 8..119)
+- [x] Envoltorio nativo de escritorio (`desktop/app_window.py`) en puerto exclusivo `6524` con instancia única (`SingleMainWindow`), System Tray reactivo con contador de no leídos, controles de ventana frameless y redimensionamiento hasta formato móvil (`360x480`).
+- [x] Sincronización bidireccional en tiempo real y en segundo plano (cada 5 min) para **Google Gmail**, **Google Calendar**, **Google Tasks** y **Google Contacts**, prevaleciendo siempre la modificación más reciente y los cambios locales de MerkeMail.
+- [x] Libreta de Contactos completa, Perfil de Usuario analizado por IA (`@elio`) y Depuración inteligente multicuenta por prompt.
+- [x] Selector de **4 Diseños Visuales en Modo Claro** (*1. Minimalista*, *2. Barra Superior*, *3. Menú + Barra Superior*, *4. Menú + Barra + Lista de Correos*) + **Selector de Color Base** con generación dinámica de escala y degradé HSL.
+- [x] Minimizado por defecto de etiquetas en barra lateral, tareas con fecha/hora opcionales y selector de cantidad de correos por página (`10` a `100`) persistido en SQLite y `localStorage`.
+
+---
+
+## Pendientes (Hoja de Ruta / Próximas Fases)
+
+### Pendiente 1: Sistema y Opción de Notificaciones (Correos y Calendario)
+- [ ] Agregar en el panel de **Configuración (`#drawer-settings`)** una sección dedicada de **Notificaciones** con interruptores persistentes (`settings` en SQLite y `localStorage`):
+  - [ ] Activar/desactivar notificaciones del sistema (System Tray / OS Notifications / Web Notifications API) al recibir nuevos correos.
+  - [ ] Activar/desactivar alertas de recordatorio para eventos, citas y tareas próximas del calendario (según los minutos de antelación configurados en cada cita).
+  - [ ] Opción de sonido suave de notificación (activar/silenciar) y filtro para notificar solo correos prioritarios o de la bandeja principal.
+
+### Pendiente 2: Internacionalización Multi-idioma (Versión en Inglés y Otros Idiomas - i18n)
+- [ ] Implementar motor de traducción ligero en frontend y backend (`i18n.js` + diccionarios JSON `es`, `en`, y preparado para `pt`, `fr`, etc.).
+- [ ] Agregar selector de **Idioma de la Interfaz (Language)** en `#drawer-settings` (**Español**, **English**, etc.) con cambio instantáneo sin recargar la página y persistencia permanente en SQLite y `localStorage`.
+- [ ] Adaptar formatos de fecha/hora del calendario y respuestas automáticas de `@elio` al idioma activo seleccionado por el usuario.
+
+### Pendiente 3: Instaladores Nativos Empaquetados (`.deb` para Ubuntu y `.exe`/`.msi` para Windows)
+- [ ] **Instalador `.deb` para Ubuntu / Debian:**
+  - [ ] Empaquetar el ejecutable autónomo (vía PyInstaller o entorno embebido en `/opt/merkemail`) junto con estructura `DEBIAN/control`, `postinst`, icono en `/usr/share/icons` y lanzador `/usr/share/applications/merkemail.desktop`, compilado con `dpkg-deb --build`.
+- [ ] **Instalador para Windows (`.exe` / `.msi`):**
+  - [ ] Adaptar rutas multi-OS (`pathlib` / `%LOCALAPPDATA%\MerkeMail`) y registro de inicio automático en Windows (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
+  - [ ] Empaquetar backend FastAPI + ventana PyQt6 en un binario sin consola (`PyInstaller --noconsole`) y generar el asistente de instalación con **Inno Setup** (`.exe` con accesos directos en Escritorio, Menú Inicio y desinstalador).
+
+### Pendiente 4: Arquitectura Web "Local-First" (Almacenamiento 100% en la Máquina Local del Usuario en Linux, macOS y Windows)
+- [ ] **Opción A — Web Pura en Navegador (PWA + IndexedDB / SQLite-Wasm con OPFS):**
+  - [ ] Migrar la capa de persistencia al navegador del usuario mediante **SQLite-Wasm sobre OPFS (Origin Private File System)** o **IndexedDB (Dexie.js)** para que correos, contactos, eventos, firmas y API Keys se guarden exclusivamente en el disco local del navegador del usuario (funciona idéntico en Linux, macOS y Windows sin guardar nada en el servidor web).
+  - [ ] Conectar OAuth 2.0 y llamadas REST de Gmail, Google Calendar, Google Tasks y Gemini directamente desde el cliente web; añadir opción de exportar/importar respaldo local cifrado (`.merkemail-backup`) o sincronización con File System Access API.
+  - [ ] Para cuentas IMAP/SMTP tradicionales (que usan sockets TCP bloqueados por navegadores web), proveer un relay stateless efímero (sin base de datos en servidor) o conector local ligero.
+- [ ] **Opción B — Web UI Alojada + Agente Local Ligero Multi-OS:**
+  - [ ] Servir la interfaz desde el dominio web conectada a `http://127.0.0.1:6524` mediante el servicio local instalado en la máquina del usuario (Linux/macOS/Windows), manteniendo el 100% de la base de datos SQLite y conexiones IMAP/SMTP en el equipo del usuario.
+
+### Pendiente 5: Optimización y Experiencia Responsiva Avanzada para Teléfonos y Tablets (Mobile & Tablet UX)
+- [ ] **Adaptación Fluida Exclusiva para Móviles (`< 768px`) y Tablets (`768px – 1023px`)** *(sin alterar el diseño ni comportamiento de Desktop, Web de escritorio ni PWA de escritorio)*:
+  - [ ] Acceso completo desde el menú lateral móvil (`md:hidden`) a opciones que se compactan en la barra superior (como **Cuentas Conectadas** y **Gestor de Firmas**) con cierre automático del cajón lateral al seleccionar cualquier herramienta.
+  - [ ] Aprovechamiento del 100% del ancho de pantalla en paneles laterales (`.drawer-panel`) y modales en teléfonos (`< 640px`), eliminando márgenes muertos laterales (`pl-10`).
+  - [ ] Barra de acciones del visor de correo (`#email-top-actions-bar`) y cabecera del calendario adaptativas en pantallas táctiles pequeñas para evitar recortes horizontales de botones.
+  - [ ] Áreas táctiles optimizadas (`min-height: 40px`), gestos táctiles y navegación maestro-detalle fluida entre bandeja de entrada, lectura de correo y calendario en teléfonos y tablets.
