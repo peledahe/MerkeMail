@@ -8,6 +8,8 @@ const DesktopBridge = {
         this.detectEnvironment();
         this.initNativeBridge();
         this.initWindowDragging();
+        this.initWindowResizing();
+        this.initResponsiveResizeWatcher();
     },
 
     initNativeBridge() {
@@ -167,6 +169,111 @@ const DesktopBridge = {
 
         if (dragStrip) dragStrip.addEventListener('dblclick', onDblClick);
         if (header) header.addEventListener('dblclick', onDblClick);
+    },
+
+    initWindowResizing() {
+        if (!this.isDesktop) return;
+
+        const edges = [
+            { dir: 'n',  style: 'top:0;left:8px;right:8px;height:5px;cursor:ns-resize;' },
+            { dir: 's',  style: 'bottom:0;left:8px;right:8px;height:6px;cursor:ns-resize;' },
+            { dir: 'w',  style: 'left:0;top:8px;bottom:8px;width:6px;cursor:ew-resize;' },
+            { dir: 'e',  style: 'right:0;top:8px;bottom:8px;width:6px;cursor:ew-resize;' },
+            { dir: 'nw', style: 'top:0;left:0;width:10px;height:10px;cursor:nwse-resize;' },
+            { dir: 'ne', style: 'top:0;right:0;width:10px;height:10px;cursor:nesw-resize;' },
+            { dir: 'sw', style: 'bottom:0;left:0;width:12px;height:12px;cursor:nesw-resize;' },
+            { dir: 'se', style: 'bottom:0;right:0;width:12px;height:12px;cursor:nwse-resize;' }
+        ];
+
+        let activeEdge = null;
+        let lastX = 0;
+        let lastY = 0;
+
+        const container = document.createElement('div');
+        container.id = 'desktop-resize-handles';
+        edges.forEach(({ dir, style }) => {
+            const handle = document.createElement('div');
+            handle.dataset.resizeEdge = dir;
+            handle.style.cssText = `position:fixed;${style}z-index:9998;user-select:none;`;
+            handle.addEventListener('mousedown', (e) => {
+                if (e.button !== 0 || this.isMaximized) return;
+                e.preventDefault();
+                e.stopPropagation();
+                activeEdge = dir;
+                lastX = e.screenX;
+                lastY = e.screenY;
+                document.body.style.userSelect = 'none';
+            });
+            container.appendChild(handle);
+        });
+        document.body.appendChild(container);
+
+        window.addEventListener('mousemove', (e) => {
+            if (!activeEdge) return;
+            if (e.buttons === 0) {
+                activeEdge = null;
+                document.body.style.userSelect = '';
+                return;
+            }
+            const dx = e.screenX - lastX;
+            const dy = e.screenY - lastY;
+            if (dx === 0 && dy === 0) return;
+            lastX = e.screenX;
+            lastY = e.screenY;
+            try {
+                console.log(`__PYQT_RESIZE__:${activeEdge}:${dx}:${dy}`);
+            } catch (_) {}
+        }, { passive: true });
+
+        const stopResize = () => {
+            if (activeEdge) {
+                activeEdge = null;
+                document.body.style.userSelect = '';
+            }
+        };
+        window.addEventListener('mouseup', stopResize);
+        window.addEventListener('blur', stopResize);
+    },
+
+    initResponsiveResizeWatcher() {
+        let wasMobile = window.innerWidth < 768;
+        window.addEventListener('resize', () => {
+            const isMobile = window.innerWidth < 768;
+            if (isMobile === wasMobile) return;
+            wasMobile = isMobile;
+
+            const listPanel = document.getElementById('email-list-container');
+            const detailPanel = document.getElementById('email-detail-container');
+            const sidebar = document.getElementById('sidebar-container');
+            const backdrop = document.getElementById('sidebar-mobile-backdrop');
+
+            if (!isMobile) {
+                // Al pasar de vista móvil (< 768px) a escritorio (>= 768px), mostrar ambos paneles
+                if (listPanel) listPanel.classList.remove('hidden');
+                if (detailPanel) {
+                    detailPanel.classList.remove('hidden');
+                    detailPanel.classList.add('flex');
+                }
+                if (sidebar) sidebar.classList.remove('mobile-open');
+                if (backdrop) backdrop.classList.add('hidden');
+            } else {
+                // Al reducir la ventana a modo móvil (< 768px)
+                const hasSelectedEmail = !!(window.EmailManager && EmailManager.selectedEmailId);
+                if (hasSelectedEmail) {
+                    if (listPanel) listPanel.classList.add('hidden');
+                    if (detailPanel) {
+                        detailPanel.classList.remove('hidden');
+                        detailPanel.classList.add('flex');
+                    }
+                } else {
+                    if (listPanel) listPanel.classList.remove('hidden');
+                    if (detailPanel) {
+                        detailPanel.classList.add('hidden');
+                        detailPanel.classList.remove('flex');
+                    }
+                }
+            }
+        });
     },
 
     isActionPending: false,

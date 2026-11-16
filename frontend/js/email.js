@@ -7,7 +7,7 @@ const EmailManager = {
     labels: [],
     searchQuery: '',
     currentPage: 1,
-    pageSize: 12,
+    pageSize: parseInt(localStorage.getItem('merkemail_page_size') || '12', 10) || 12,
     selectedEmailId: null,
     selectedBatchIds: new Set(),
     authorizedSpamImages: new Set(),
@@ -70,6 +70,43 @@ const EmailManager = {
 
     accountErrors: {},
     syncSystemStatus: 'inactive', // 'active' | 'problems' | 'inactive' | 'paused'
+
+    async setPageSize(newSize, showNotification = true) {
+        const parsed = parseInt(newSize, 10);
+        const validSize = (!isNaN(parsed) && parsed >= 5 && parsed <= 200) ? parsed : 12;
+        this.pageSize = validSize;
+        this.currentPage = 1;
+
+        try {
+            localStorage.setItem('merkemail_page_size', String(validSize));
+        } catch (e) {}
+
+        const selectEl = document.getElementById('settings-emails-page-size');
+        if (selectEl && String(selectEl.value) !== String(validSize)) {
+            selectEl.value = String(validSize);
+        }
+
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ emails_page_size: String(validSize) })
+            });
+        } catch (e) {
+            console.warn('Error guardando tamaño de página en backend:', e);
+        }
+
+        await this.loadEmails();
+
+        if (showNotification && window.UI) {
+            UI.showStickyToast(
+                'Paginación Actualizada',
+                `Ahora se muestran ${validSize} correos por página en las listas.`,
+                'success',
+                2400
+            );
+        }
+    },
 
     updateSystemSyncPill(status, customTitle = null) {
         if (!status) {
@@ -1092,9 +1129,50 @@ const EmailManager = {
         if (icon) icon.classList.toggle('rotate-180', !isHidden);
     },
 
+    // Por defecto las etiquetas de la barra lateral inician ocultas/minimizadas (true)
+    sidebarLabelsMinimized: true,
+
+    toggleSidebarLabels(forceMinimized = null) {
+        const container = document.getElementById('sidebar-labels-list');
+        const btnExpand = document.getElementById('btn-expand-sidebar-labels');
+        const iconExpand = document.getElementById('icon-expand-sidebar-labels');
+        const btnCreateLabel = document.getElementById('btn-create-sidebar-label');
+        if (!container) return;
+
+        if (typeof forceMinimized === 'boolean') {
+            this.sidebarLabelsMinimized = forceMinimized;
+        } else {
+            this.sidebarLabelsMinimized = !this.sidebarLabelsMinimized;
+        }
+
+        container.classList.toggle('hidden', this.sidebarLabelsMinimized);
+        if (btnCreateLabel) {
+            btnCreateLabel.classList.toggle('hidden', this.sidebarLabelsMinimized);
+        }
+
+        const tooltipText = this.sidebarLabelsMinimized
+            ? 'Ampliar y mostrar etiquetas'
+            : 'Minimizar y ocultar etiquetas';
+        if (btnExpand) btnExpand.title = tooltipText;
+        if (iconExpand) {
+            iconExpand.innerHTML = this.sidebarLabelsMinimized
+                ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>'
+                : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/>';
+        }
+    },
+
     renderLabels() {
         const container = document.getElementById('sidebar-labels-list');
+        const countBadge = document.getElementById('sidebar-labels-count-badge');
+        const btnCreateLabel = document.getElementById('btn-create-sidebar-label');
+        if (countBadge) {
+            countBadge.textContent = (this.labels && this.labels.length) ? String(this.labels.length) : '0';
+        }
+        if (btnCreateLabel) {
+            btnCreateLabel.classList.toggle('hidden', !!this.sidebarLabelsMinimized);
+        }
         if (!container) return;
+        container.classList.toggle('hidden', !!this.sidebarLabelsMinimized);
 
         if (!this.labels || this.labels.length === 0) {
             container.innerHTML = `
@@ -2048,7 +2126,7 @@ const EmailManager = {
                             </div>
                         ` : ''}
 
-                        <div class="max-w-4xl w-full mx-auto bg-white rounded-2xl p-1.5 md:p-3 border border-slate-200 dark:border-slate-800 shadow-2xs overflow-x-auto min-w-0 mb-3 transition-all">
+                        <div class="max-w-4xl w-full mx-auto ${email.body_html ? 'bg-white' : 'bg-white dark:bg-slate-900'} rounded-2xl p-1.5 md:p-3 border border-slate-200 dark:border-slate-800 shadow-2xs overflow-x-auto min-w-0 mb-3 transition-all">
                             ${email.body_html ? `
                                 <iframe id="email-body-frame-${email.id}" class="email-body-frame w-full border-0 rounded-xl" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" scrolling="no" style="width: 100%; border: none; overflow: hidden; display: block; min-height: 30px; background-color: #ffffff;"></iframe>
                             ` : `

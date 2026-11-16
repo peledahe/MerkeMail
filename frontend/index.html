@@ -5,11 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MerkeMail - Gestor de Correos &amp; Calendario IA</title>
     
-    <!-- Script de Inicialización Inmediata de Tema (Evita parpadeos y preserva preferencia) -->
+    <!-- Script de Inicialización Inmediata de Tema y Diseño (Evita parpadeos y preserva preferencia) -->
     <script>
         (function() {
             try {
                 var theme = localStorage.getItem('theme');
+                var uiDesign = localStorage.getItem('ui_design') || 'minimal';
+                document.documentElement.setAttribute('data-ui-design', uiDesign);
                 if (theme === 'light') {
                     document.documentElement.classList.remove('dark');
                 } else {
@@ -43,6 +45,8 @@
                 extend: {
                     colors: {
                         slate: {
+                            650: '#3b495e',
+                            750: '#243044',
                             850: '#111827',
                             900: '#0f172a',
                             950: '#020617',
@@ -61,7 +65,7 @@
     </script>
 
     <!-- Estilos de la aplicación -->
-    <link rel="stylesheet" href="/static/css/app.css?v=96">
+    <link rel="stylesheet" href="/static/css/app.css?v=118">
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 h-screen flex flex-col antialiased selection:bg-indigo-500 selection:text-white overflow-hidden">
 
@@ -85,7 +89,7 @@
                 <div class="hidden sm:block">
                     <span class="font-bold text-base tracking-tight text-slate-900 dark:text-white flex items-center gap-1.5">
                         MerkeMail
-                        <span id="brand-ai-badge" class="text-[10px] px-1.5 py-0.2 rounded-full font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">AI</span>
+                        <span id="brand-ai-badge" class="text-[10px] px-1.5 py-0.2 rounded-full font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">IA</span>
                     </span>
                     <p class="text-[10px] text-slate-400 -mt-0.5 leading-none">Correo Inteligente</p>
                 </div>
@@ -101,7 +105,7 @@
         <!-- Barra de Búsqueda Estilo Píldora Gmail -->
         <div class="flex-1 max-w-2xl px-1 sm:px-3 md:px-6 min-w-0">
             <div class="relative flex items-center w-full bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/60 rounded-full shadow-inner py-1.5 px-3 sm:px-4 focus-within:ring-2 focus-within:ring-indigo-500/60 focus-within:bg-white dark:focus-within:bg-slate-800 transition-all">
-                <button type="button" onclick="window.dispatchSearchToElio ? window.dispatchSearchToElio() : null" class="cursor-pointer text-slate-400 hover:text-indigo-500 mr-2 sm:mr-3 shrink-0 transition-colors" title="Buscar o consultar a Elio">
+                <button type="button" onclick="window.dispatchSearchToElio ? window.dispatchSearchToElio() : null" class="cursor-pointer text-slate-400 hover:text-indigo-500 mr-2 sm:mr-3 shrink-0 transition-colors" title="Buscar o consultar a @Elio">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                 </button>
                 <input type="text" id="main-search-input" placeholder="Buscar correos... (o escribe @elio para invocar al asistente)" class="w-full bg-transparent text-xs md:text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none min-w-0">
@@ -141,7 +145,7 @@
             </button>
 
             <!-- Sincronizar Correos -->
-            <button onclick="EmailManager.syncCurrentView()" class="p-1.5 sm:p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs" title="Sincronizar ahora con la cuenta real">
+            <button onclick="EmailManager.syncCurrentView()" class="p-1.5 sm:p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs" title="Sincronizar correos nuevos">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
             </button>
 
@@ -166,8 +170,8 @@
                 <span id="theme-toggle-icon"></span>
             </button>
 
-            <!-- Avatar del Usuario (Cuenta del Sistema - Indicador visual) -->
-            <div id="user-header-avatar" class="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center text-white text-xs font-bold shadow-md cursor-default ml-0.5 sm:ml-1 shrink-0 overflow-hidden ring-1 ring-slate-200 dark:ring-slate-700" title="Cuenta por defecto">
+            <!-- Avatar del Usuario (Cuenta del Sistema - Indicador visual con borde limpio anti-aliased) -->
+            <div id="user-header-avatar" class="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white text-xs font-bold cursor-default ml-0.5 sm:ml-1 shrink-0 overflow-hidden select-none" style="transform: translateZ(0); -webkit-backface-visibility: hidden;" title="Cuenta por defecto">
                 P
             </div>
 
@@ -342,21 +346,27 @@
 
                     <div class="my-2 border-t border-slate-200 dark:border-slate-800/80"></div>
 
-                    <!-- Sección de Etiquetas (Labels) Gestionables estilo Gmail -->
+                    <!-- Sección de Etiquetas (Labels) Gestionables con opción de Ocultar/Minimizar (Default) y Ampliar -->
                     <div class="pt-1 pb-1 px-4 flex items-center justify-between">
-                        <span class="sidebar-section-header text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Etiquetas</span>
-                        <div class="flex items-center gap-1 sidebar-text">
-                            <button onclick="EmailManager.syncRemoteLabels()" class="text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-white p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="Sincronizar etiquetas de la cuenta">
+                        <div class="flex items-center gap-1.5">
+                            <span class="sidebar-section-header text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Etiquetas</span>
+                            <span id="sidebar-labels-count-badge" class="sidebar-text text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/80 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-semibold">0</span>
+                        </div>
+                        <div class="flex items-center gap-0.5 sidebar-text">
+                            <button type="button" id="btn-expand-sidebar-labels" onclick="EmailManager.toggleSidebarLabels()" class="text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-white p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer" title="Ampliar y mostrar etiquetas">
+                                <svg id="icon-expand-sidebar-labels" class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+                            </button>
+                            <button onclick="EmailManager.syncRemoteLabels()" class="text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-white p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer" title="Sincronizar etiquetas de la cuenta">
                                 <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                             </button>
-                            <button onclick="EmailManager.openCreateLabelModal()" class="text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-white p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="Crear nueva etiqueta">
+                            <button id="btn-create-sidebar-label" onclick="EmailManager.openCreateLabelModal()" class="hidden text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-white p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer" title="Crear nueva etiqueta">
                                 <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                             </button>
                         </div>
                     </div>
 
-                    <!-- Lista Dinámica de Etiquetas con scroll suave -->
-                    <div id="sidebar-labels-list" class="space-y-0.5 text-xs font-medium pr-2 max-h-56 overflow-y-auto">
+                    <!-- Lista Dinámica de Etiquetas (Oculta / Minimizada por defecto) -->
+                    <div id="sidebar-labels-list" class="hidden space-y-0.5 text-xs font-medium pr-2 max-h-64 overflow-y-auto transition-all">
                         <!-- Inyectado por JS -->
                     </div>
 
@@ -390,28 +400,29 @@
 
                     <!-- Herramientas de IA (Agrupadas para visibilidad condicional) -->
                     <div id="sidebar-ai-section">
-                        <div class="pt-3 pb-1 px-4">
+                        <div class="my-2 border-t border-slate-200 dark:border-slate-800/80"></div>
+                        <div class="pt-1 pb-1 px-4">
                             <p class="sidebar-section-header text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Herramientas IA</p>
                         </div>
 
-                        <button onclick="UI.openDrawer('drawer-antigravity-copilot')" class="w-full flex items-center gap-3 px-4 py-2 rounded-r-full text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors" title="Elio (@elio)">
+                        <button onclick="UI.openDrawer('drawer-antigravity-copilot')" class="w-full flex items-center gap-3 px-4 py-2 rounded-r-full text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors" title="@Elio">
                             <img src="/img/bot.png" alt="Elio" class="w-5 h-5 rounded-full object-cover shrink-0 ring-1 ring-indigo-400/40">
-                            <span class="sidebar-text truncate font-medium">Elio (@elio)</span>
+                            <span class="sidebar-text truncate font-medium">Asistente @Elio</span>
                         </button>
 
                         <button onclick="UI.openDrawer('drawer-ai-prompt')" class="w-full flex items-center gap-3 px-4 py-2 rounded-r-full text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors" title="Redactor con IA">
                             <svg class="w-4 h-4 shrink-0 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-                            <span class="sidebar-text truncate">Redactor con IA</span>
+                            <span class="sidebar-text truncate">Redactar con @Elio</span>
                         </button>
 
                         <button onclick="UI.openDrawer('drawer-cleanup-ai')" class="w-full flex items-center gap-3 px-4 py-2 rounded-r-full text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors" title="Depurar por Prompt">
                             <svg class="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                            <span class="sidebar-text truncate">Depurar por Prompt</span>
+                            <span class="sidebar-text truncate">Depurar con @Elio</span>
                         </button>
 
                         <button onclick="UserProfileAI.openDrawer()" class="w-full flex items-center gap-3 px-4 py-2 rounded-r-full text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30 transition-colors" title="Perfil del Usuario">
                             <svg class="w-4 h-4 shrink-0 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
-                            <span class="sidebar-text truncate">Perfil del Usuario</span>
+                            <span class="sidebar-text truncate">Mi perfil según @Elio</span>
                         </button>
                     </div>
                 </nav>
@@ -440,8 +451,8 @@
                 <div class="px-4 py-2.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-start">
                     <a href="https://merke.net" target="_blank" rel="noopener noreferrer" onclick="if(window.DesktopBridge && DesktopBridge.isDesktop){ event.preventDefault(); DesktopBridge.openExternalUrl('https://merke.net'); }" class="group flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors cursor-pointer" title="Desarrollado por Merke Software (https://merke.net)">
                         <span class="sidebar-text whitespace-nowrap font-medium">Desarrollado por</span>
-                        <img src="/img/merke-2022.svg" alt="Merke Software" class="h-5 w-auto object-contain block dark:hidden transition-transform group-hover:scale-105">
-                        <img src="/img/merke-blanco-2022.svg" alt="Merke Software" class="h-5 w-auto object-contain hidden dark:block transition-transform group-hover:scale-105">
+                        <img src="/img/merke-2022.svg" alt="Merke Software" class="h-3 w-auto object-contain block dark:hidden transition-transform group-hover:scale-105">
+                        <img src="/img/merke-blanco-2022.svg" alt="Merke Software" class="h-3 w-auto object-contain hidden dark:block transition-transform group-hover:scale-105">
                     </a>
                 </div>
             </div>
@@ -731,7 +742,7 @@
                     <div class="p-4 bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/40 rounded-2xl">
                         <div class="flex items-center gap-2 mb-1.5">
                             <svg class="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                            <span class="text-xs font-bold text-indigo-700 dark:text-indigo-300">Sincronización Elio (@elio)</span>
+                            <span class="text-xs font-bold text-indigo-700 dark:text-indigo-300">Sincronización @Elio</span>
                         </div>
                         <p class="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
                             Al leer cualquier correo que mencione fechas o citas, puedes hacer clic en <strong>Agendar Cita IA</strong> para convertirlo en un evento sincronizado de forma instantánea.
@@ -754,7 +765,7 @@
                 <div id="antigravity-drawer-resizer" class="hidden sm:block absolute left-0 top-0 bottom-0 w-2 hover:w-2.5 -ml-1 cursor-ew-resize hover:bg-indigo-500/40 active:bg-indigo-600 transition-colors z-30 select-none" title="Arrastrar para ajustar ancho"></div>
 
                 <!-- Header Copilot -->
-                <div class="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850 shrink-0">
+                <div class="drawer-header p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850 shrink-0">
                     <div class="flex items-center gap-2.5 min-w-0">
                         <div class="w-9 h-9 rounded-xl overflow-hidden shrink-0 shadow-sm ring-1 ring-indigo-400/40 bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
                             <img src="/img/bot.png" alt="Elio" class="w-full h-full object-cover">
@@ -829,18 +840,18 @@
         </div>
     </div>
 
-    <!-- DRAWER 1: Área de Prompt de Redacción Asistida con Elio (@elio) -->
+    <!-- DRAWER 1: Área de Prompt de Redacción Asistida con @Elio -->
     <div id="drawer-ai-prompt" class="drawer-root hidden fixed inset-0 z-[120] overflow-hidden">
         <div class="absolute inset-0 bg-slate-950/60 backdrop-blur-sm drawer-backdrop" onclick="UI.closeDrawer('drawer-ai-prompt')"></div>
         <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
             <div class="w-screen max-w-md bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col drawer-panel">
-                <div class="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850">
+                <div class="drawer-header p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850">
                     <div class="flex items-center gap-2">
                         <div class="w-7 h-7 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-500">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                         </div>
                         <div>
-                            <h3 class="font-bold text-sm text-slate-900 dark:text-white">Redacción Inteligente con Elio (@elio)</h3>
+                            <h3 class="font-bold text-sm text-slate-900 dark:text-white">Redacción Inteligente con @Elio</h3>
                             <p class="text-[11px] text-slate-400">Genera correos profesionales por instrucción</p>
                         </div>
                     </div>
@@ -876,10 +887,10 @@
 
                     <button id="btn-generate-ai-draft" onclick="GeminiAI.generateDraftFromPrompt()" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all flex items-center justify-center gap-2">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
-                        Generar Borrador con Elio (@elio)
+                        Generar Borrador con @Elio
                     </button>
 
-                    <!-- Previsualización del Resultado de Elio (@elio) -->
+                    <!-- Previsualización del Resultado de @Elio -->
                     <div id="ai-compose-result" class="hidden p-4 rounded-xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-700/60 space-y-3">
                         <div>
                             <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Asunto Sugerido:</span>
@@ -905,7 +916,7 @@
         <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
             <div class="w-screen max-w-lg bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col drawer-panel h-full">
                 <!-- Header -->
-                <div class="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850 shrink-0">
+                <div class="drawer-header p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850 shrink-0">
                     <div class="flex items-center gap-3 min-w-0">
                         <div id="user-profile-header-avatar" class="w-10 h-10 rounded-full overflow-hidden shrink-0 shadow-sm flex items-center justify-center font-bold text-white text-sm" style="background-color: #3b82f6">
                             P
@@ -928,7 +939,7 @@
                     <!-- Botón Destacado Analizar Perfil con IA -->
                     <div class="p-3.5 bg-gradient-to-r from-purple-500/10 via-indigo-500/10 to-transparent border border-purple-200 dark:border-purple-800/60 rounded-2xl flex items-center justify-between gap-3">
                         <div class="min-w-0">
-                            <h4 class="text-xs font-bold text-slate-800 dark:text-slate-200">Analizar Perfil con Elio (@elio)</h4>
+                            <h4 class="text-xs font-bold text-slate-800 dark:text-slate-200">Analizar Perfil con @Elio</h4>
                             <p class="text-[11px] text-slate-500 dark:text-slate-400">Examina tus firmas, correos enviados y cuenta por defecto para deducir tu rol y tono.</p>
                         </div>
                         <button id="btn-run-profile-analysis" type="button" onclick="UserProfileAI.runAnalysis()" class="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer">
@@ -1045,14 +1056,14 @@
         <div class="absolute inset-0 bg-slate-950/60 backdrop-blur-sm drawer-backdrop" onclick="GeminiAI.cancelAndClearCleanup()"></div>
         <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
             <div class="w-screen max-w-lg bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col drawer-panel h-full">
-                <div class="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850 shrink-0">
+                <div class="drawer-header p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850 shrink-0">
                     <div class="flex items-center gap-2">
                         <div class="w-7 h-7 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-500">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                         </div>
                         <div>
                             <h3 class="font-bold text-sm text-slate-900 dark:text-white">Depuración de Correos por Prompt</h3>
-                            <p class="text-[11px] text-slate-400">Limpieza inteligente y asistida con Elio (@elio)</p>
+                            <p class="text-[11px] text-slate-400">Limpieza inteligente y asistida con @Elio</p>
                         </div>
                     </div>
                     <button onclick="GeminiAI.cancelAndClearCleanup()" class="text-slate-400 hover:text-slate-700 dark:hover:text-white p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="Cerrar y limpiar">
@@ -1069,7 +1080,7 @@
 
                         <button id="btn-analyze-cleanup" onclick="GeminiAI.analyzeCleanupPrompt()" class="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
-                            Evaluar Buzón con Elio (@elio)
+                            Evaluar Buzón con @Elio
                         </button>
                     </div>
 
@@ -1103,7 +1114,7 @@
         <div class="fixed inset-y-0 right-0 max-w-full flex pl-6 sm:pl-10">
             <div class="w-screen max-w-lg bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col drawer-panel">
                 <!-- Cabecera -->
-                <div class="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-850">
+                <div class="drawer-header p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-850">
                     <div class="flex items-center gap-2.5">
                         <div class="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
@@ -1282,10 +1293,10 @@
 
     <!-- DRAWER 4: Ajustes y Configuración de API Key Gemini -->
     <div id="drawer-settings" class="drawer-root hidden fixed inset-0 z-[60] overflow-hidden">
-        <div class="absolute inset-0 bg-slate-950/60 backdrop-blur-sm drawer-backdrop" onclick="UI.closeDrawer('drawer-settings')"></div>
+        <div class="absolute inset-0 bg-slate-950/20 backdrop-blur-[1px] drawer-backdrop" onclick="UI.closeDrawer('drawer-settings')"></div>
         <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
             <div class="w-screen max-w-md bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col drawer-panel">
-                <div class="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850">
+                <div class="drawer-header p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850">
                     <div class="flex items-center gap-2">
                         <img src="/img/merke.svg" class="w-6 h-6" alt="Merke Logo" onerror="this.onerror=null; this.src='/img/merke.png';">
                         <h3 class="font-bold text-sm text-slate-900 dark:text-white">Ajustes &amp; Gemini</h3>
@@ -1297,6 +1308,163 @@
                 </div>
 
                 <div class="p-5 space-y-4 flex-1 overflow-y-auto">
+                    <!-- Selector de Diseño Visual de la Interfaz (Modo Claro) -->
+                    <div class="p-4 bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-700/60 rounded-2xl space-y-3 shadow-2xs">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="flex items-center gap-2">
+                                <div class="w-7 h-7 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+                                </div>
+                                <div>
+                                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">Diseño de Interfaz</h4>
+                                    <p class="text-[11px] text-slate-500 dark:text-slate-400">Aplica modo claro y colorea las áreas con alto contraste</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2.5 pt-1" id="ui-design-selector-grid">
+                            <!-- 1. Minimalista -->
+                            <button type="button" data-design-option="minimal" onclick="UI.setDesign('minimal')" class="ui-design-card group relative p-2.5 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-indigo-400 transition-all text-left cursor-pointer shadow-2xs">
+                                <div class="w-full h-12 rounded-lg border border-slate-200 overflow-hidden flex flex-col bg-white mb-2 shadow-2xs">
+                                    <div class="h-3 w-full bg-white border-b border-slate-200 flex items-center px-1.5 gap-1">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                                        <span class="h-1 w-8 rounded bg-slate-200"></span>
+                                    </div>
+                                    <div class="flex-1 flex">
+                                        <div class="w-1/4 bg-white border-r border-slate-200 p-1 space-y-1">
+                                            <div class="h-1 w-full rounded bg-indigo-100"></div>
+                                            <div class="h-1 w-3/4 rounded bg-slate-200"></div>
+                                        </div>
+                                        <div class="w-1/3 bg-white border-r border-slate-100 p-1 space-y-1">
+                                            <div class="h-1.5 w-full rounded bg-slate-100"></div>
+                                            <div class="h-1.5 w-full rounded bg-slate-100"></div>
+                                        </div>
+                                        <div class="flex-1 bg-white p-1">
+                                            <div class="h-1 w-2/3 rounded bg-slate-200"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-between gap-1">
+                                    <span class="text-xs font-bold text-slate-800 dark:text-slate-100">1. Minimalista</span>
+                                    <span class="ui-design-check hidden w-4 h-4 rounded-full bg-indigo-600 text-white text-[10px] font-bold items-center justify-center shrink-0">✓</span>
+                                </div>
+                                <span class="text-[10px] text-slate-500 dark:text-slate-400 block leading-tight mt-0.5">Clásico limpio actual</span>
+                            </button>
+
+                            <!-- 2. Barra Superior -->
+                            <button type="button" data-design-option="topbar" onclick="UI.setDesign('topbar')" class="ui-design-card group relative p-2.5 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-indigo-400 transition-all text-left cursor-pointer shadow-2xs">
+                                <div class="w-full h-12 rounded-lg border border-slate-200 overflow-hidden flex flex-col bg-white mb-2 shadow-2xs">
+                                    <div class="h-3.5 w-full flex items-center px-1.5 gap-1" style="background: linear-gradient(90deg, var(--theme-topbar-start, #1e1b4b), var(--theme-topbar-end, #3730a3));">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-white/90"></span>
+                                        <span class="h-1 w-8 rounded bg-white/80"></span>
+                                    </div>
+                                    <div class="flex-1 flex">
+                                        <div class="w-1/4 bg-white border-r border-slate-200 p-1 space-y-1">
+                                            <div class="h-1 w-full rounded bg-slate-200"></div>
+                                            <div class="h-1 w-3/4 rounded bg-slate-200"></div>
+                                        </div>
+                                        <div class="w-1/3 bg-white border-r border-slate-100 p-1 space-y-1">
+                                            <div class="h-1.5 w-full rounded bg-slate-100"></div>
+                                            <div class="h-1.5 w-full rounded bg-slate-100"></div>
+                                        </div>
+                                        <div class="flex-1 bg-white p-1">
+                                            <div class="h-1 w-2/3 rounded bg-slate-200"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-between gap-1">
+                                    <span class="text-xs font-bold text-slate-800 dark:text-slate-100">2. Barra Superior</span>
+                                    <span class="ui-design-check hidden w-4 h-4 rounded-full bg-indigo-600 text-white text-[10px] font-bold items-center justify-center shrink-0">✓</span>
+                                </div>
+                                <span class="text-[10px] text-slate-500 dark:text-slate-400 block leading-tight mt-0.5">Barra superior y modales</span>
+                            </button>
+
+                            <!-- 3. Menú + Barra Superior -->
+                            <button type="button" data-design-option="sidebar-topbar" onclick="UI.setDesign('sidebar-topbar')" class="ui-design-card group relative p-2.5 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-indigo-400 transition-all text-left cursor-pointer shadow-2xs">
+                                <div class="w-full h-12 rounded-lg border border-slate-200 overflow-hidden flex flex-col bg-white mb-2 shadow-2xs">
+                                    <div class="h-3.5 w-full flex items-center px-1.5 gap-1" style="background: linear-gradient(90deg, var(--theme-topbar-start, #1e1b4b), var(--theme-topbar-end, #3730a3));">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-white/90"></span>
+                                        <span class="h-1 w-8 rounded bg-white/80"></span>
+                                    </div>
+                                    <div class="flex-1 flex">
+                                        <div class="w-1/4 border-r p-1 space-y-1" style="background: var(--theme-sidebar-end, #dbe4ff); border-color: var(--theme-sidebar-border, #b9c8f7);">
+                                            <div class="h-1 w-full rounded" style="background: var(--theme-sidebar-active-bg, #4338ca);"></div>
+                                            <div class="h-1 w-3/4 rounded opacity-45" style="background: var(--theme-sidebar-text, #1e1b4b);"></div>
+                                        </div>
+                                        <div class="w-1/3 bg-white border-r border-slate-100 p-1 space-y-1">
+                                            <div class="h-1.5 w-full rounded bg-slate-100"></div>
+                                            <div class="h-1.5 w-full rounded bg-slate-100"></div>
+                                        </div>
+                                        <div class="flex-1 bg-white p-1">
+                                            <div class="h-1 w-2/3 rounded bg-slate-200"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-between gap-1">
+                                    <span class="text-xs font-bold text-slate-800 dark:text-slate-100">3. Menú + Barra</span>
+                                    <span class="ui-design-check hidden w-4 h-4 rounded-full bg-indigo-600 text-white text-[10px] font-bold items-center justify-center shrink-0">✓</span>
+                                </div>
+                                <span class="text-[10px] text-slate-500 dark:text-slate-400 block leading-tight mt-0.5">Menú lateral y barra superior</span>
+                            </button>
+
+                            <!-- 4. Menú + Barra Superior + Lista de Correos -->
+                            <button type="button" data-design-option="full-tinted" onclick="UI.setDesign('full-tinted')" class="ui-design-card group relative p-2.5 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-indigo-400 transition-all text-left cursor-pointer shadow-2xs">
+                                <div class="w-full h-12 rounded-lg border border-slate-200 overflow-hidden flex flex-col bg-white mb-2 shadow-2xs">
+                                    <div class="h-3.5 w-full flex items-center px-1.5 gap-1" style="background: linear-gradient(90deg, var(--theme-topbar-start, #1e1b4b), var(--theme-topbar-end, #3730a3));">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-white/90"></span>
+                                        <span class="h-1 w-8 rounded bg-white/80"></span>
+                                    </div>
+                                    <div class="flex-1 flex">
+                                        <div class="w-1/4 border-r p-1 space-y-1" style="background: var(--theme-sidebar-end, #dbe4ff); border-color: var(--theme-sidebar-border, #b9c8f7);">
+                                            <div class="h-1 w-full rounded" style="background: var(--theme-sidebar-active-bg, #4338ca);"></div>
+                                            <div class="h-1 w-3/4 rounded opacity-45" style="background: var(--theme-sidebar-text, #1e1b4b);"></div>
+                                        </div>
+                                        <div class="w-1/3 border-r p-1 space-y-1" style="background: var(--theme-list-read-bg, #e4edfb); border-color: var(--theme-list-border, #c3d2ec);">
+                                            <div class="h-1.5 w-full rounded bg-white"></div>
+                                            <div class="h-1.5 w-full rounded" style="background: var(--theme-list-selected-bg, #c7d9f8);"></div>
+                                        </div>
+                                        <div class="flex-1 bg-white p-1">
+                                            <div class="h-1 w-2/3 rounded bg-slate-200"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-between gap-1">
+                                    <span class="text-xs font-bold text-slate-800 dark:text-slate-100">4. Menú + Barra + Lista</span>
+                                    <span class="ui-design-check hidden w-4 h-4 rounded-full bg-indigo-600 text-white text-[10px] font-bold items-center justify-center shrink-0">✓</span>
+                                </div>
+                                <span class="text-[10px] text-slate-500 dark:text-slate-400 block leading-tight mt-0.5">Menú, barra y lista de correos</span>
+                            </button>
+                        </div>
+
+                        <!-- Selector de Color Base con Degradé y Escala Armónica -->
+                        <div class="pt-2.5 border-t border-slate-200/80 dark:border-slate-700/60 space-y-2">
+                            <div class="flex items-center justify-between">
+                                <span class="text-[11px] font-bold text-slate-700 dark:text-slate-300">Color Base (Degradé y Escala)</span>
+                                <button type="button" onclick="UI.setDesignColor('#4f46e5')" class="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer" title="Restaurar color Índigo original">
+                                    Restablecer Índigo
+                                </button>
+                            </div>
+
+                            <div class="flex items-center justify-between gap-1.5 flex-wrap" id="ui-design-color-swatches">
+                                <button type="button" data-color-swatch="#4f46e5" onclick="UI.setDesignColor('#4f46e5')" class="w-6 h-6 rounded-full bg-[#4f46e5] border-2 border-white dark:border-slate-800 shadow-xs hover:scale-110 transition-transform cursor-pointer ring-2 ring-indigo-500" title="Índigo (Por defecto)"></button>
+                                <button type="button" data-color-swatch="#2563eb" onclick="UI.setDesignColor('#2563eb')" class="w-6 h-6 rounded-full bg-[#2563eb] border-2 border-white dark:border-slate-800 shadow-xs hover:scale-110 transition-transform cursor-pointer" title="Azul Océano"></button>
+                                <button type="button" data-color-swatch="#0891b2" onclick="UI.setDesignColor('#0891b2')" class="w-6 h-6 rounded-full bg-[#0891b2] border-2 border-white dark:border-slate-800 shadow-xs hover:scale-110 transition-transform cursor-pointer" title="Turquesa / Cian"></button>
+                                <button type="button" data-color-swatch="#059669" onclick="UI.setDesignColor('#059669')" class="w-6 h-6 rounded-full bg-[#059669] border-2 border-white dark:border-slate-800 shadow-xs hover:scale-110 transition-transform cursor-pointer" title="Esmeralda"></button>
+                                <button type="button" data-color-swatch="#7c3aed" onclick="UI.setDesignColor('#7c3aed')" class="w-6 h-6 rounded-full bg-[#7c3aed] border-2 border-white dark:border-slate-800 shadow-xs hover:scale-110 transition-transform cursor-pointer" title="Violeta Real"></button>
+                                <button type="button" data-color-swatch="#e11d48" onclick="UI.setDesignColor('#e11d48')" class="w-6 h-6 rounded-full bg-[#e11d48] border-2 border-white dark:border-slate-800 shadow-xs hover:scale-110 transition-transform cursor-pointer" title="Carmesí / Rosa"></button>
+                                <button type="button" data-color-swatch="#d97706" onclick="UI.setDesignColor('#d97706')" class="w-6 h-6 rounded-full bg-[#d97706] border-2 border-white dark:border-slate-800 shadow-xs hover:scale-110 transition-transform cursor-pointer" title="Ámbar / Cobre"></button>
+                                <button type="button" data-color-swatch="#475569" onclick="UI.setDesignColor('#475569')" class="w-6 h-6 rounded-full bg-[#475569] border-2 border-white dark:border-slate-800 shadow-xs hover:scale-110 transition-transform cursor-pointer" title="Pizarra Ejecutivo"></button>
+
+                                <!-- Selector de Color Personalizado Libre -->
+                                <label class="relative inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:border-indigo-400 text-[11px] font-semibold text-slate-700 dark:text-slate-200 shadow-2xs cursor-pointer transition-all" title="Elegir cualquier color personalizado">
+                                    <span id="ui-design-custom-color-dot" class="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" style="background-color: #4f46e5;"></span>
+                                    <span>Otro color</span>
+                                    <input type="color" id="ui-design-custom-color-input" value="#4f46e5" oninput="UI.previewDesignColor(this.value)" onchange="UI.setDesignColor(this.value)" class="opacity-0 absolute inset-0 w-full h-full cursor-pointer">
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Tarjeta Principal: Interruptor de Servicio de IA Gemini -->
                     <div id="gemini-service-card" class="p-4 bg-gradient-to-br from-indigo-50/90 via-white to-purple-50/60 dark:from-slate-850 dark:via-slate-850 dark:to-indigo-950/40 border border-indigo-200/80 dark:border-indigo-900/50 rounded-2xl flex items-center justify-between shadow-xs transition-all">
                         <div class="flex items-center gap-3 min-w-0 pr-3">
@@ -1396,6 +1564,33 @@
                                 <option value="">(Cargando cuentas disponibles...)</option>
                             </select>
                             <p class="text-[11px] text-slate-400 mt-1">El avatar y datos de esta cuenta se usarán como perfil del usuario por defecto.</p>
+                        </div>
+                    </div>
+
+                    <!-- Cantidad de Correos por Página (Paginación de Listas) -->
+                    <div class="p-4 bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-700/60 rounded-xl space-y-3">
+                        <div class="flex items-center gap-2">
+                            <div class="w-7 h-7 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+                            </div>
+                            <div>
+                                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Paginación de Correos</h4>
+                                <p class="text-[11px] text-slate-400">Cantidad de correos mostrados por página en las listas</p>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Correos por Página</label>
+                            <select id="settings-emails-page-size" onchange="EmailManager.setPageSize(parseInt(this.value, 10))" class="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-xs text-slate-900 dark:text-slate-100 cursor-pointer">
+                                <option value="10">10 correos por página</option>
+                                <option value="12" selected>12 correos por página (Predeterminado)</option>
+                                <option value="15">15 correos por página</option>
+                                <option value="20">20 correos por página</option>
+                                <option value="25">25 correos por página</option>
+                                <option value="30">30 correos por página</option>
+                                <option value="50">50 correos por página</option>
+                                <option value="100">100 correos por página</option>
+                            </select>
+                            <p class="text-[11px] text-slate-400 mt-1">Se aplica inmediatamente y se conserva guardado hasta que decidas modificarlo.</p>
                         </div>
                     </div>
 
@@ -1499,7 +1694,7 @@
         <div class="absolute inset-0 bg-slate-950/60 backdrop-blur-sm drawer-backdrop" onclick="UI.closeDrawer('drawer-signatures')"></div>
         <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
             <div class="w-screen max-w-lg bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col drawer-panel">
-                <div class="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850">
+                <div class="drawer-header p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850">
                     <div class="flex items-center gap-2">
                         <div class="w-7 h-7 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-500">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
@@ -1628,7 +1823,7 @@
         <div class="absolute inset-0 bg-slate-950/60 backdrop-blur-sm drawer-backdrop" onclick="UI.closeDrawer('drawer-accounts')"></div>
         <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
             <div class="w-screen max-w-md bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col drawer-panel">
-                <div class="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850">
+                <div class="drawer-header p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850">
                     <h3 class="font-bold text-sm text-slate-900 dark:text-white">Cuentas Conectadas</h3>
                     <button onclick="UI.closeDrawer('drawer-accounts')" class="text-slate-400 hover:text-white p-1">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -1662,7 +1857,7 @@
         <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
             <div class="w-screen max-w-md bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col drawer-panel">
                 <!-- Header del Drawer -->
-                <div class="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850">
+                <div class="drawer-header p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850">
                     <div class="flex items-center gap-2.5">
                         <div class="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/60 shadow-2xs">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
@@ -1716,7 +1911,7 @@
         <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
             <div class="w-screen max-w-md bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col drawer-panel">
                 <!-- Header del Detalle -->
-                <div class="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850">
+                <div class="drawer-header p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850">
                     <div class="flex items-center gap-2.5 min-w-0">
                         <div id="event-detail-badge-color" class="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs" style="background-color: #4f46e5"></div>
                         <div class="min-w-0">
@@ -1747,7 +1942,7 @@
                                 <span class="text-xs text-slate-500 dark:text-slate-400 block" id="event-detail-time"></span>
                                 <div class="flex items-center gap-2 mt-1 flex-wrap">
                                     <span class="text-[11px] text-indigo-500 dark:text-indigo-400 font-medium" id="event-detail-duration"></span>
-                                    <span id="event-detail-recurrence-badge" class="hidden text-[10px] font-semibold px-2 py-0.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-md"></span>
+                                    <span id="event-detail-recurrence-badge" class="hidden text-[10px] font-semibold px-2 py-0.5 bg-slate-200/80 dark:bg-slate-800 border border-slate-300/80 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-md"></span>
                                 </div>
                             </div>
                         </div>
@@ -1802,8 +1997,8 @@
                             <span id="event-detail-notification-text">10 min antes</span>
                         </div>
                         <div class="flex items-center gap-2">
-                            <span id="event-detail-availability-badge" class="px-2 py-0.5 rounded-md bg-slate-200 dark:bg-slate-750 text-[10px] font-semibold text-slate-700 dark:text-slate-300">Ocupado</span>
-                            <span id="event-detail-visibility-badge" class="px-2 py-0.5 rounded-md bg-slate-200 dark:bg-slate-750 text-[10px] font-semibold text-slate-700 dark:text-slate-300">Predeterminada</span>
+                            <span id="event-detail-availability-badge" class="px-2.5 py-0.5 rounded-md bg-slate-200/80 dark:bg-slate-800 border border-slate-300/80 dark:border-slate-700 text-[10px] font-semibold text-slate-700 dark:text-slate-200">Ocupado</span>
+                            <span id="event-detail-visibility-badge" class="px-2.5 py-0.5 rounded-md bg-slate-200/80 dark:bg-slate-800 border border-slate-300/80 dark:border-slate-700 text-[10px] font-semibold text-slate-700 dark:text-slate-200">Predeterminada</span>
                         </div>
                     </div>
 
@@ -1849,7 +2044,7 @@
         <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
             <div class="w-screen max-w-md bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col drawer-panel">
                 <!-- Header -->
-                <div class="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0">
+                <div class="drawer-header p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0">
                     <div class="flex items-center gap-2.5">
                         <div class="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800/80 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
@@ -1896,7 +2091,7 @@
         <div id="compose-modal-card" class="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-3xl w-full p-4 sm:p-5 shadow-2xl modal-content transition-all flex flex-col max-h-[92vh]">
             
             <!-- Cabecera del Redactor -->
-            <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-3 shrink-0">
+            <div class="modal-header flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-3 shrink-0">
                 <div class="flex items-center gap-2">
                     <h3 class="font-bold text-sm sm:text-base text-slate-900 dark:text-white flex items-center gap-2">
                         <svg class="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
@@ -1964,14 +2159,14 @@
                     <input type="text" id="compose-subject" required placeholder="Asunto del correo..." class="w-full bg-transparent text-xs md:text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 font-medium focus:outline-none">
                 </div>
 
-                <!-- Panel Integrado de Redacción con Elio (@elio) (Colapsable) -->
+                <!-- Panel Integrado de Redacción con @Elio (Colapsable) -->
                 <div id="composer-ai-inline-panel" class="hidden shrink-0 p-3 bg-gradient-to-r from-indigo-50/90 via-purple-50/90 to-pink-50/60 dark:from-indigo-950/40 dark:via-purple-950/30 dark:to-slate-850 border border-indigo-200 dark:border-indigo-800/80 rounded-xl space-y-2 shadow-xs transition-all">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center gap-2">
                             <span class="p-1 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                             </span>
-                            <span class="text-xs font-bold text-slate-800 dark:text-slate-100">Redactor Inteligente con Elio (@elio)</span>
+                            <span class="text-xs font-bold text-slate-800 dark:text-slate-100">Redactor Inteligente con @Elio</span>
                             <span class="text-[10px] text-indigo-500 font-medium bg-indigo-100/70 dark:bg-indigo-900/50 px-2 py-0.5 rounded-full border border-indigo-200 dark:border-indigo-800">Directo en editor</span>
                         </div>
                         <div class="flex items-center gap-1.5">
@@ -2221,7 +2416,7 @@
     <div id="modal-insert-link" class="fixed-modal hidden fixed inset-0 z-[120] overflow-y-auto flex items-center justify-center p-4">
         <div class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm modal-backdrop" onclick="Composer.closeLinkModal()"></div>
         <div class="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl modal-content">
-            <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-3">
+            <div class="modal-header flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-3">
                 <h4 class="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
                     <svg class="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
                     <span>Insertar Enlace</span>
@@ -2251,7 +2446,7 @@
     <div id="modal-new-account" class="fixed-modal hidden fixed inset-0 z-[100] overflow-y-auto flex items-center justify-center p-4">
         <div class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm modal-backdrop" onclick="document.getElementById('modal-new-account').classList.add('hidden')"></div>
         <div class="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl modal-content">
-            <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-4">
+            <div class="modal-header flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-4">
                 <h3 id="modal-account-title" class="font-bold text-base text-slate-900 dark:text-white">Conectar Cuenta de Correo</h3>
                 <button onclick="document.getElementById('modal-new-account').classList.add('hidden')" class="text-slate-400 hover:text-white p-1">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -2392,7 +2587,7 @@
     <div id="modal-google-oauth-config" class="fixed-modal hidden fixed inset-0 z-[100] overflow-y-auto flex items-center justify-center p-4">
         <div class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm modal-backdrop" onclick="document.getElementById('modal-google-oauth-config').classList.add('hidden')"></div>
         <div class="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl modal-content">
-            <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-4">
+            <div class="modal-header flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-4">
                 <div class="flex items-center gap-2">
                     <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
                     <h3 class="font-bold text-base text-slate-900 dark:text-white">Conexión Oficial con Google (OAuth 2.0)</h3>
@@ -2434,7 +2629,7 @@
         <div class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm modal-backdrop" onclick="document.getElementById('new-event-modal').classList.add('hidden')"></div>
         <div class="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full shadow-2xl modal-content max-h-[92vh] flex flex-col overflow-hidden">
             <!-- Header -->
-            <div class="flex items-center justify-between px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 shrink-0">
+            <div class="modal-header flex items-center justify-between px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 shrink-0">
                 <div class="flex items-center gap-2.5">
                     <div class="w-8 h-8 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
@@ -2494,14 +2689,14 @@
                             <div class="space-y-0.5">
                                 <label class="block text-[10px] font-medium text-slate-500">Inicio</label>
                                 <div class="flex items-center gap-1">
-                                    <input type="date" id="event-start-date" required class="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 px-2 text-xs text-slate-900 dark:text-slate-100">
+                                    <input type="date" id="event-start-date" required onchange="CalendarManager.onDateInputChange('start')" oninput="CalendarManager.onDateInputChange('start')" class="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 px-2 text-xs text-slate-900 dark:text-slate-100">
                                     <input type="time" id="event-start-time-only" value="10:00" class="w-22 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 px-2 text-xs text-slate-900 dark:text-slate-100">
                                 </div>
                             </div>
                             <div class="space-y-0.5">
                                 <label class="block text-[10px] font-medium text-slate-500">Fin</label>
                                 <div class="flex items-center gap-1">
-                                    <input type="date" id="event-end-date" required class="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 px-2 text-xs text-slate-900 dark:text-slate-100">
+                                    <input type="date" id="event-end-date" required onchange="CalendarManager.onDateInputChange('end')" oninput="CalendarManager.onDateInputChange('end')" class="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 px-2 text-xs text-slate-900 dark:text-slate-100">
                                     <input type="time" id="event-end-time-only" value="11:00" class="w-22 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 px-2 text-xs text-slate-900 dark:text-slate-100">
                                 </div>
                             </div>
@@ -2668,7 +2863,7 @@
     <div id="modal-day-events" class="fixed-modal hidden fixed inset-0 z-[100] overflow-y-auto flex items-center justify-center p-4">
         <div class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm modal-backdrop" onclick="document.getElementById('modal-day-events').classList.add('hidden')"></div>
         <div class="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl modal-content flex flex-col max-h-[85vh]">
-            <div class="flex items-center justify-between px-5 pt-4 sm:pt-5 pb-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
+            <div class="modal-header flex items-center justify-between px-5 pt-4 sm:pt-5 pb-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
                 <div class="flex items-center gap-2">
                     <div class="w-7 h-7 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-500">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
@@ -2705,7 +2900,7 @@
     <div id="modal-manage-label" class="fixed-modal hidden fixed inset-0 z-[100] overflow-y-auto flex items-center justify-center p-4">
         <div class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm modal-backdrop" onclick="document.getElementById('modal-manage-label').classList.add('hidden')"></div>
         <div class="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl modal-content">
-            <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-4">
+            <div class="modal-header flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-4">
                 <div class="flex items-center gap-2">
                     <svg class="w-5 h-5 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
                     <h3 id="modal-label-title" class="font-bold text-base text-slate-900 dark:text-white">Nueva Etiqueta</h3>
@@ -2755,9 +2950,9 @@
     <div id="confirmation-modal" class="fixed-modal hidden fixed inset-0 z-[110] overflow-y-auto flex items-center justify-center p-4">
         <div class="fixed inset-0 bg-slate-950/75 backdrop-blur-sm modal-backdrop"></div>
         <div class="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl modal-content">
-            <div class="flex items-center gap-3 mb-3">
-                <div class="w-10 h-10 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-500 shrink-0">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+            <div class="modal-header flex items-center gap-3 pb-3 border-b border-slate-200 dark:border-slate-800 mb-4">
+                <div class="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-500 shrink-0">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
                 </div>
                 <div>
                     <h3 id="confirm-modal-title" class="font-bold text-sm text-slate-900 dark:text-white">¿Confirmar acción?</h3>
@@ -2776,7 +2971,7 @@
         <div class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm modal-backdrop" onclick="ContactsManager.closeModal()"></div>
         <div class="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl modal-content space-y-4">
             <!-- Header con Avatar, Nombre y Botón Cerrar -->
-            <div class="flex items-start justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
+            <div class="modal-header flex items-start justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
                 <div class="flex items-center gap-3.5 min-w-0">
                     <div id="contact-modal-avatar" class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-500 to-purple-600 text-white font-bold text-lg flex items-center justify-center shrink-0 shadow-md ring-2 ring-indigo-500/20">
                         P
@@ -2931,17 +3126,17 @@
     <div id="app-global-tooltip" class="app-global-tooltip"></div>
 
     <!-- Scripts de la Aplicación -->
-    <script src="/static/js/ui.js?v=110"></script>
-    <script src="/static/js/avatars.js?v=110"></script>
-    <script src="/static/js/composer.js?v=110"></script>
-    <script src="/static/js/contacts.js?v=110"></script>
-    <script src="/static/js/email.js?v=110"></script>
-    <script src="/static/js/calendar.js?v=110"></script>
-    <script src="/static/js/gemini.js?v=110"></script>
-    <script src="/static/js/antigravity.js?v=110"></script>
-    <script src="/static/js/signatures.js?v=110"></script>
-    <script src="/static/js/user_profile.js?v=110"></script>
-    <script src="/static/js/desktop.js?v=110"></script>
-    <script src="/static/js/app.js?v=110"></script>
+    <script src="/static/js/ui.js?v=114"></script>
+    <script src="/static/js/avatars.js?v=114"></script>
+    <script src="/static/js/composer.js?v=114"></script>
+    <script src="/static/js/contacts.js?v=114"></script>
+    <script src="/static/js/email.js?v=119"></script>
+    <script src="/static/js/calendar.js?v=119"></script>
+    <script src="/static/js/gemini.js?v=119"></script>
+    <script src="/static/js/antigravity.js?v=114"></script>
+    <script src="/static/js/signatures.js?v=114"></script>
+    <script src="/static/js/user_profile.js?v=114"></script>
+    <script src="/static/js/desktop.js?v=114"></script>
+    <script src="/static/js/app.js?v=114"></script>
 </body>
 </html>

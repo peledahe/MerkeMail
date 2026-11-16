@@ -21,6 +21,14 @@ class ConfigService:
         except (ValueError, TypeError):
             default_calendar_id = 1
 
+        page_size_raw = settings.get("emails_page_size", "12")
+        try:
+            emails_page_size = int(page_size_raw) if page_size_raw else 12
+            if emails_page_size < 5 or emails_page_size > 200:
+                emails_page_size = 12
+        except (ValueError, TypeError):
+            emails_page_size = 12
+
         return {
             "gemini_api_key": raw_key,
             "gemini_api_key_masked": masked_key,
@@ -29,8 +37,11 @@ class ConfigService:
             "is_ai_active": is_ai_active,
             "gemini_model": settings.get("gemini_model", "gemini-2.5-flash"),
             "theme": settings.get("theme", "dark"),
+            "ui_design": settings.get("ui_design", "minimal"),
+            "ui_design_color": settings.get("ui_design_color", "#4f46e5"),
             "ai_prompt_tone": settings.get("ai_prompt_tone", "formal"),
-            "default_calendar_id": default_calendar_id
+            "default_calendar_id": default_calendar_id,
+            "emails_page_size": emails_page_size
         }
 
     @staticmethod

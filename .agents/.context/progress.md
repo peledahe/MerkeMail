@@ -2,6 +2,57 @@
 
 ## Historial de Hitos Completados
 
+- [x] **Fase 119: Selector de Cantidad de Correos para Paginación de Listas en Configuración:**
+  - Selector `#settings-emails-page-size` en `#drawer-settings` con opciones de `10`, `12` (por defecto), `15`, `20`, `25`, `30`, `50` y `100` correos por página.
+  - Aplicación inmediata en vivo (`EmailManager.setPageSize`) con notificación sticky y persistencia permanente en `localStorage` (`merkemail_page_size`) y SQLite (`emails_page_size`).
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 118: Revisión y Corrección de Botones, Badges y Opciones en Modo Oscuro:**
+  - Registro de `slate-650` y `slate-750` en `tailwind.config` y en `frontend/css/app.css`, corrigiendo los badges *"Ocupado"* y *"Predeterminada"* en el detalle de evento, así como botones y etiquetas en *Elio*, *Mis Calendarios* y *Depuración IA* que quedaban con fondo claro y texto claro en modo oscuro.
+  - Configuración de `color-scheme: dark` y contraste en desplegables `<select>/<option>` y contenedor de correos en texto plano en modo oscuro.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 117: Unificación de Encabezados en Todas las Modales/Drawers, Contraste de Botones/Badges y Línea Divisoria en Herramientas IA:**
+  - Aplicación de clases `.drawer-header` y `.modal-header` en todas las modales laterales y flotantes (corrigiendo el encabezado de **Elio / Antigravity Copilot**, **Insertar Enlace** y **Confirmación** que permanecían en blanco).
+  - Estilo cristal translúcido con texto y borde blanco de alto contraste para botones (`⚡ Asistente IA Prompt`, `+ Nuevo`) e insignias (`AGENTIC`, `Sincronizado`, `Conectado`, etc.) dentro de encabezados coloreados.
+  - Línea divisoria superior (`border-t`) sobre **Herramientas IA** en la barra lateral izquierda, idéntica a **Etiquetas** y **Otras Apps**.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 116: Tareas sin Fecha ni Hora Obligatoria y Hora Condicional a Fecha:**
+  - En modo **Tarea / Pendiente** (`☑️ Tarea / Pendiente`), ni la fecha ni la hora son obligatorias (`required = false`) y los selectores de hora permanecen vacíos y ocultos hasta que se asigne una fecha.
+  - En modo **Evento / Cita** (`📅 Evento / Cita`), se solicitan y prellenan fecha y hora de forma normal y obligatoria.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 115: Contraste de Cabeceras de Modales sin Línea Blanca, Calendario Sutil y Ocultación de Botón Nueva Etiqueta:**
+  - Eliminación del borde blanco vertical izquierdo en `.drawer-panel` y contraste blanco en títulos (`h1`..`h4`), subtítulos e iconos de cabeceras de modales/drawers.
+  - Rediseño sutil y armónico de eventos y encabezados del calendario (`.calendar-event-pill` con `color-mix` y acento lateral) para modo Minimalista y modalidades de color.
+  - Ocultación automática del botón `+` (`#btn-create-sidebar-label`) cuando la sección de etiquetas está minimizada.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 114: Selector de Color Base con Escala y Degradé Dinámico, Mejora de Borde de Avatar y Limpieza de Control de Etiquetas:**
+  - Selector de color en Ajustes (`UI.setDesignColor` y `UI.previewDesignColor`) con generación automática de escala HSL y degradé de 3 paradas sobre la base Índigo.
+  - Nitidez de la orilla del avatar (`#user-header-avatar` y `AvatarService.render`) eliminando el doble recorte circular y halo gris.
+  - Eliminación del icono chevron redundante a la izquierda de `ETIQUETAS`, conservando únicamente el botón `#btn-expand-sidebar-labels` a la derecha.
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 113: Ocultar/Minimizar Etiquetas por Defecto en Barra Lateral y Botón para Ampliar:**
+  - Área de etiquetas `#sidebar-labels-list` oculta/minimizada por defecto al abrir la aplicación (`sidebarLabelsMinimized: true`).
+  - Encabezado **Etiquetas** interactivo con indicador de cantidad, icono chevron y botón de ampliar/minimizar (`EmailManager.toggleSidebarLabels()`).
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 112: Selector de 4 Diseños Visuales en Modo Claro con Aplicación Inmediata y Persistencia:**
+  - Tarjetas visuales en `#drawer-settings` para elegir entre: **1. Minimalista**, **2. Barra Superior**, **3. Menú + Barra Superior** y **4. Menú + Barra Superior + Lista de Correos**.
+  - Activación automática de Modo Claro y aplicación en tiempo real al hacer clic (`UI.setDesign`).
+  - Paleta de alto contraste (índigo ejecutivo en barra superior y cabeceras de modales, lavanda-índigo en menú lateral y celeste pizarra en lista de correos).
+  - Persistencia en `localStorage`, script de `<head>` y base de datos SQLite (`ui_design` en `settings`).
+  - Sincronización exitosa con `install_desktop.sh`.
+
+- [x] **Fase 111: Reducción de Tamaño de Ventana en Modo Desktop hasta Tamaño Prudencial Tipo Móvil (`360x480`):**
+  - Cambio de `setMinimumSize(960, 600)` a `setMinimumSize(360, 480)` en `desktop/app_window.py`.
+  - Manejadores de redimensionamiento en bordes y esquinas (`__PYQT_RESIZE__` / `resize_by`) para ventana frameless en `desktop/app_window.py` y `frontend/js/desktop.js`.
+  - Adaptación automática de paneles de lista y lectura al cruzar el umbral responsivo móvil (`768px`).
+  - Sincronización exitosa con `install_desktop.sh`.
+
 - [x] **Fase 110: Selector de Etiquetas en Primer Plano y Apertura de Correo desde el Principio sin Auto-Enfoque:**
   - Menú desplegable de etiquetas montado en `document.body` con `position: fixed; z-index: 9999` sobre el `iframe` y sin barras de scroll en `#email-top-actions-right`.
   - Ocultación inicial de `#inline-reply-container` y eliminación de `InlineReply.focusTop()` al abrir un correo, garantizando `scrollTop = 0` para leer desde el inicio.

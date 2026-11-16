@@ -88,19 +88,19 @@ const AvatarService = {
             }
         }
 
-        const borderStyle = accountColor ? `border: 2px solid ${accountColor};` : '';
+        const ringStyle = accountColor ? `box-shadow: 0 0 0 2px ${accountColor};` : '';
 
         if (avatarUrl) {
             return `
-                <div class="${sizeClass} ${extraClass} rounded-full overflow-hidden shrink-0 relative bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-white shadow-2xs select-none" style="${borderStyle}">
-                    <img src="${avatarUrl}" alt="${initial}" loading="lazy" class="w-full h-full object-cover rounded-full" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
-                    <span style="display:none; ${accountColor ? `background-color: ${accountColor};` : ''}" class="w-full h-full ${accountColor ? '' : 'bg-gradient-to-tr from-indigo-500 to-purple-600'} rounded-full flex items-center justify-center font-bold text-white text-xs">${initial}</span>
+                <div class="${sizeClass} ${extraClass} rounded-full overflow-hidden shrink-0 relative bg-transparent flex items-center justify-center font-bold text-white select-none" style="${ringStyle} transform: translateZ(0); -webkit-backface-visibility: hidden;">
+                    <img src="${avatarUrl}" alt="${initial}" loading="lazy" class="w-full h-full object-cover block" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
+                    <span style="display:none; ${accountColor ? `background-color: ${accountColor};` : ''}" class="w-full h-full ${accountColor ? '' : 'bg-gradient-to-tr from-indigo-500 to-purple-600'} flex items-center justify-center font-bold text-white text-xs">${initial}</span>
                 </div>
             `;
         }
 
         return `
-            <div class="${sizeClass} ${extraClass} rounded-full flex items-center justify-center text-white font-bold shadow-2xs shrink-0 select-none ${accountColor ? '' : 'bg-gradient-to-tr from-indigo-500 to-purple-600'}" style="${accountColor ? `background-color: ${accountColor};` : ''} ${borderStyle}">
+            <div class="${sizeClass} ${extraClass} rounded-full flex items-center justify-center text-white font-bold shrink-0 select-none ${accountColor ? '' : 'bg-gradient-to-tr from-indigo-500 to-purple-600'}" style="${accountColor ? `background-color: ${accountColor};` : ''} ${ringStyle}">
                 ${initial}
             </div>
         `;
@@ -120,12 +120,15 @@ const AvatarService = {
 
             if (headerAvatar) {
                 headerAvatar.title = `Cuenta por defecto: ${defaultAcc.name} (${defaultAcc.email})`;
-                headerAvatar.style.border = `2px solid ${color}`;
+                headerAvatar.style.border = 'none';
+                headerAvatar.style.background = 'transparent';
+                headerAvatar.style.boxShadow = `0 0 0 2px ${color}`;
+                headerAvatar.style.transform = 'translateZ(0)';
 
                 if (avatarUrl) {
                     headerAvatar.innerHTML = `
-                        <img src="${avatarUrl}" alt="${initial}" class="w-full h-full object-cover rounded-full" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
-                        <span style="display:none; background-color: ${color};" class="w-full h-full rounded-full flex items-center justify-center font-bold text-white text-xs">${initial}</span>
+                        <img src="${avatarUrl}" alt="${initial}" class="w-full h-full object-cover block" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
+                        <span style="display:none; background-color: ${color};" class="w-full h-full flex items-center justify-center font-bold text-white text-xs">${initial}</span>
                     `;
                 } else {
                     headerAvatar.innerHTML = `<span class="w-full h-full flex items-center justify-center font-bold text-white text-xs" style="background-color: ${color}">${initial}</span>`;
@@ -133,11 +136,14 @@ const AvatarService = {
             }
 
             if (profileHeaderAvatar) {
-                profileHeaderAvatar.style.border = `2px solid ${color}`;
+                profileHeaderAvatar.style.border = 'none';
+                profileHeaderAvatar.style.background = 'transparent';
+                profileHeaderAvatar.style.boxShadow = `0 0 0 2px ${color}`;
+                profileHeaderAvatar.style.transform = 'translateZ(0)';
                 if (avatarUrl) {
                     profileHeaderAvatar.innerHTML = `
-                        <img src="${avatarUrl}" alt="${initial}" class="w-full h-full object-cover rounded-full" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
-                        <span style="display:none; background-color: ${color};" class="w-full h-full rounded-full flex items-center justify-center font-bold text-white text-base">${initial}</span>
+                        <img src="${avatarUrl}" alt="${initial}" class="w-full h-full object-cover block" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
+                        <span style="display:none; background-color: ${color};" class="w-full h-full flex items-center justify-center font-bold text-white text-base">${initial}</span>
                     `;
                 } else {
                     profileHeaderAvatar.innerHTML = `<span class="w-full h-full flex items-center justify-center font-bold text-white text-base" style="background-color: ${color}">${initial}</span>`;

@@ -257,6 +257,10 @@ input[type="checkbox"]:indeterminate {
     overflow-x: hidden !important;
 }
 
+#sidebar-labels-list.hidden {
+    display: none !important;
+}
+
 #sidebar-container.collapsed #sidebar-sync-progress {
     padding: 0.6rem 0.25rem !important;
     display: flex !important;
@@ -555,6 +559,7 @@ input[type="checkbox"]:indeterminate {
 
     /* En móviles y ventanas compactas (< 768px): si el detalle del correo está abierto, la lista queda 100% oculta para evitar colisiones visuales */
     #email-detail-container:not(.hidden) ~ #email-list-container,
+    #main-mail-section:has(#email-detail-container:not(.hidden)) #email-list-container,
     #main-content:has(#email-detail-container:not(.hidden)) #email-list-container {
         display: none !important;
     }
@@ -1001,6 +1006,492 @@ input[type="checkbox"]:indeterminate {
         max-width: 100% !important;
     }
 }
+
+/* ========================================================
+   DISEÑOS PERSONALIZABLES EN MODO CLARO (4 VARIANTES)
+   1. minimal        -> Clásico limpio actual
+   2. topbar         -> Barra Superior + Cabeceras de Modales
+   3. sidebar-topbar -> Menú Lateral + Barra Superior + Modales
+   4. full-tinted    -> Menú + Barra Superior + Lista de Correos
+   ======================================================== */
+
+/* --- DISEÑOS 2, 3 y 4: BARRA SUPERIOR Y CABECERAS DE MODALES/DRAWERS --- */
+html:not(.dark)[data-ui-design="topbar"] #desktop-window-drag-strip,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #desktop-window-drag-strip,
+html:not(.dark)[data-ui-design="full-tinted"] #desktop-window-drag-strip {
+    background: linear-gradient(90deg, var(--theme-topbar-start, #1e1b4b) 0%, var(--theme-topbar-mid, #2e2a72) 55%, var(--theme-topbar-end, #3730a3) 100%) !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #main-header,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header {
+    background: linear-gradient(90deg, var(--theme-topbar-start, #1e1b4b) 0%, var(--theme-topbar-mid, #2e2a72) 55%, var(--theme-topbar-end, #3730a3) 100%) !important;
+    border-bottom-color: var(--theme-topbar-start, #1e1b4b) !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 10px rgba(15, 23, 42, 0.16) !important;
+}
+
+/* Marca MerkeMail en Header coloreado */
+html:not(.dark)[data-ui-design="topbar"] #main-header .font-bold.text-slate-900,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header .font-bold.text-slate-900,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header .font-bold.text-slate-900 {
+    color: #ffffff !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #main-header p.text-slate-400,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header p.text-slate-400,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header p.text-slate-400 {
+    color: var(--theme-topbar-subtext, #c7d2fe) !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #main-header #brand-ai-badge,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header #brand-ai-badge,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header #brand-ai-badge {
+    background-color: rgba(255, 255, 255, 0.18) !important;
+    color: #ffffff !important;
+    border-color: rgba(255, 255, 255, 0.35) !important;
+}
+
+/* Botón Redactar en Header coloreado: blanco puro con alto contraste */
+html:not(.dark)[data-ui-design="topbar"] #main-header button[onclick*="openComposeModal"],
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header button[onclick*="openComposeModal"],
+html:not(.dark)[data-ui-design="full-tinted"] #main-header button[onclick*="openComposeModal"] {
+    background-color: #ffffff !important;
+    color: var(--theme-topbar-start, #1e1b4b) !important;
+    border-color: var(--theme-topbar-icon, #e0e7ff) !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2) !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #main-header button[onclick*="openComposeModal"] svg,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header button[onclick*="openComposeModal"] svg,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header button[onclick*="openComposeModal"] svg {
+    color: var(--theme-sidebar-active-bg, #4338ca) !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #main-header button[onclick*="openComposeModal"]:hover,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header button[onclick*="openComposeModal"]:hover,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header button[onclick*="openComposeModal"]:hover {
+    background-color: var(--theme-list-unread-bg, #f8faff) !important;
+}
+
+/* Barra de Búsqueda en Header coloreado: superficie clara nítida para máximo contraste de lectura */
+html:not(.dark)[data-ui-design="topbar"] #main-header #main-search-input,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header #main-search-input,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header #main-search-input {
+    color: #0f172a !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #main-header .rounded-full.shadow-inner,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header .rounded-full.shadow-inner,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header .rounded-full.shadow-inner {
+    background-color: #ffffff !important;
+    border-color: rgba(255, 255, 255, 0.5) !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15) !important;
+}
+
+/* Botones de iconos circulares y controles de ventana en Header coloreado */
+html:not(.dark)[data-ui-design="topbar"] #main-header > div:last-child > button:not(#btn-toggle-auto-sync):not(#btn-install-pwa),
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header > div:last-child > button:not(#btn-toggle-auto-sync):not(#btn-install-pwa),
+html:not(.dark)[data-ui-design="full-tinted"] #main-header > div:last-child > button:not(#btn-toggle-auto-sync):not(#btn-install-pwa),
+html:not(.dark)[data-ui-design="topbar"] #main-header > div:first-child > button.md\:hidden,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header > div:first-child > button.md\:hidden,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header > div:first-child > button.md\:hidden {
+    color: var(--theme-topbar-icon, #e0e7ff) !important;
+    border-color: rgba(255, 255, 255, 0.22) !important;
+    background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #main-header > div:last-child > button:not(#btn-toggle-auto-sync):not(#btn-install-pwa):hover,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header > div:last-child > button:not(#btn-toggle-auto-sync):not(#btn-install-pwa):hover,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header > div:last-child > button:not(#btn-toggle-auto-sync):not(#btn-install-pwa):hover {
+    background-color: rgba(255, 255, 255, 0.2) !important;
+    color: #ffffff !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #main-header #theme-toggle-icon svg,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header #theme-toggle-icon svg,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header #theme-toggle-icon svg {
+    color: #fde68a !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #main-header #btn-toggle-auto-sync,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header #btn-toggle-auto-sync,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header #btn-toggle-auto-sync {
+    background-color: rgba(16, 185, 129, 0.22) !important;
+    border-color: rgba(52, 211, 153, 0.45) !important;
+    color: #ecfdf5 !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #main-header #desktop-window-controls,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header #desktop-window-controls,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header #desktop-window-controls {
+    border-left-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #main-header #desktop-window-controls button,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header #desktop-window-controls button,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header #desktop-window-controls button {
+    color: var(--theme-topbar-icon, #e0e7ff) !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #main-header #desktop-window-controls button:hover,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header #desktop-window-controls button:hover,
+html:not(.dark)[data-ui-design="full-tinted"] #main-header #desktop-window-controls button:hover {
+    background-color: rgba(255, 255, 255, 0.18) !important;
+    color: #ffffff !important;
+}
+
+/* Cabeceras de todas las Modales y Drawers laterales en Diseños 2, 3 y 4 (Sin línea blanca lateral) */
+html:not(.dark)[data-ui-design="topbar"] .drawer-panel,
+html:not(.dark)[data-ui-design="sidebar-topbar"] .drawer-panel,
+html:not(.dark)[data-ui-design="full-tinted"] .drawer-panel {
+    border-left: none !important;
+    box-shadow: -12px 0 32px rgba(15, 23, 42, 0.22) !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] .modal-content,
+html:not(.dark)[data-ui-design="sidebar-topbar"] .modal-content,
+html:not(.dark)[data-ui-design="full-tinted"] .modal-content {
+    border-color: rgba(15, 23, 42, 0.14) !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] .drawer-panel > .drawer-header,
+html:not(.dark)[data-ui-design="sidebar-topbar"] .drawer-panel > .drawer-header,
+html:not(.dark)[data-ui-design="full-tinted"] .drawer-panel > .drawer-header,
+html:not(.dark)[data-ui-design="topbar"] .modal-content > .modal-header,
+html:not(.dark)[data-ui-design="sidebar-topbar"] .modal-content > .modal-header,
+html:not(.dark)[data-ui-design="full-tinted"] .modal-content > .modal-header,
+html:not(.dark)[data-ui-design="topbar"] .drawer-panel > div.border-b:first-of-type,
+html:not(.dark)[data-ui-design="sidebar-topbar"] .drawer-panel > div.border-b:first-of-type,
+html:not(.dark)[data-ui-design="full-tinted"] .drawer-panel > div.border-b:first-of-type,
+html:not(.dark)[data-ui-design="topbar"] .modal-content > div.border-b:first-of-type,
+html:not(.dark)[data-ui-design="sidebar-topbar"] .modal-content > div.border-b:first-of-type,
+html:not(.dark)[data-ui-design="full-tinted"] .modal-content > div.border-b:first-of-type {
+    background: linear-gradient(90deg, var(--theme-topbar-start, #1e1b4b) 0%, var(--theme-topbar-end, #312e81) 100%) !important;
+    border-bottom-color: var(--theme-topbar-start, #1e1b4b) !important;
+    border-left: none !important;
+    border-top: none !important;
+    border-right: none !important;
+    color: #ffffff !important;
+}
+
+/* Ajuste para modales con padding interno (compose, insertar enlace, etiquetas, contactos, cuentas, confirmación) */
+html:not(.dark)[data-ui-design="topbar"] .modal-content.p-6 > .modal-header,
+html:not(.dark)[data-ui-design="sidebar-topbar"] .modal-content.p-6 > .modal-header,
+html:not(.dark)[data-ui-design="full-tinted"] .modal-content.p-6 > .modal-header {
+    margin: -1.5rem -1.5rem 1rem -1.5rem !important;
+    padding: 1rem 1.5rem !important;
+    border-radius: 1rem 1rem 0 0 !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] .modal-content.p-5 > .modal-header,
+html:not(.dark)[data-ui-design="sidebar-topbar"] .modal-content.p-5 > .modal-header,
+html:not(.dark)[data-ui-design="full-tinted"] .modal-content.p-5 > .modal-header,
+html:not(.dark)[data-ui-design="topbar"] #compose-modal-card > .modal-header,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #compose-modal-card > .modal-header,
+html:not(.dark)[data-ui-design="full-tinted"] #compose-modal-card > .modal-header {
+    margin: -1.25rem -1.25rem 0.75rem -1.25rem !important;
+    padding: 0.9rem 1.25rem !important;
+    border-radius: 1rem 1rem 0 0 !important;
+}
+
+/* Títulos y subtítulos de alto contraste en cabeceras de modales y drawers */
+html:not(.dark)[data-ui-design="topbar"] .drawer-header :is(h1, h2, h3, h4),
+html:not(.dark)[data-ui-design="sidebar-topbar"] .drawer-header :is(h1, h2, h3, h4),
+html:not(.dark)[data-ui-design="full-tinted"] .drawer-header :is(h1, h2, h3, h4),
+html:not(.dark)[data-ui-design="topbar"] .modal-header :is(h1, h2, h3, h4),
+html:not(.dark)[data-ui-design="sidebar-topbar"] .modal-header :is(h1, h2, h3, h4),
+html:not(.dark)[data-ui-design="full-tinted"] .modal-header :is(h1, h2, h3, h4) {
+    color: #ffffff !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] .drawer-header :is(p, span.text-slate-400, span.text-slate-500),
+html:not(.dark)[data-ui-design="sidebar-topbar"] .drawer-header :is(p, span.text-slate-400, span.text-slate-500),
+html:not(.dark)[data-ui-design="full-tinted"] .drawer-header :is(p, span.text-slate-400, span.text-slate-500),
+html:not(.dark)[data-ui-design="topbar"] .modal-header :is(p, span.text-slate-400, span.text-slate-500),
+html:not(.dark)[data-ui-design="sidebar-topbar"] .modal-header :is(p, span.text-slate-400, span.text-slate-500),
+html:not(.dark)[data-ui-design="full-tinted"] .modal-header :is(p, span.text-slate-400, span.text-slate-500) {
+    color: var(--theme-topbar-subtext, #e0e7ff) !important;
+}
+
+/* Cajas de icono dentro de cabeceras de modales/drawers con acabado cristal translúcido */
+html:not(.dark)[data-ui-design="topbar"] :is(.drawer-header, .modal-header) :is(.w-7.h-7, .w-8.h-8, .w-9.h-9, .p-2.rounded-xl),
+html:not(.dark)[data-ui-design="sidebar-topbar"] :is(.drawer-header, .modal-header) :is(.w-7.h-7, .w-8.h-8, .w-9.h-9, .p-2.rounded-xl),
+html:not(.dark)[data-ui-design="full-tinted"] :is(.drawer-header, .modal-header) :is(.w-7.h-7, .w-8.h-8, .w-9.h-9, .p-2.rounded-xl) {
+    background-color: rgba(255, 255, 255, 0.16) !important;
+    border-color: rgba(255, 255, 255, 0.3) !important;
+    color: #ffffff !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] :is(.drawer-header, .modal-header) svg,
+html:not(.dark)[data-ui-design="sidebar-topbar"] :is(.drawer-header, .modal-header) svg,
+html:not(.dark)[data-ui-design="full-tinted"] :is(.drawer-header, .modal-header) svg {
+    color: #ffffff !important;
+}
+
+/* Badges e indicadores de estado dentro de cabeceras de modales/drawers (AGENTIC, Conectado, Sincronizado, Total Contactos, Analizado) */
+html:not(.dark)[data-ui-design="topbar"] :is(.drawer-header, .modal-header) :is(#antigravity-agent-status-badge, #gemini-status-badge, #user-profile-last-analyzed, #contacts-total-badge, #contact-modal-source-badge),
+html:not(.dark)[data-ui-design="sidebar-topbar"] :is(.drawer-header, .modal-header) :is(#antigravity-agent-status-badge, #gemini-status-badge, #user-profile-last-analyzed, #contacts-total-badge, #contact-modal-source-badge),
+html:not(.dark)[data-ui-design="full-tinted"] :is(.drawer-header, .modal-header) :is(#antigravity-agent-status-badge, #gemini-status-badge, #user-profile-last-analyzed, #contacts-total-badge, #contact-modal-source-badge) {
+    background-color: rgba(255, 255, 255, 0.18) !important;
+    border-color: rgba(255, 255, 255, 0.35) !important;
+    color: #ffffff !important;
+}
+
+/* Botones de acción con etiqueta dentro de cabeceras (ej. "Asistente IA Prompt" en Nuevo Correo y "+ Nuevo" en Contactos) */
+html:not(.dark)[data-ui-design="topbar"] :is(.drawer-header, .modal-header) :is(#btn-compose-ai-prompt, button.bg-indigo-600),
+html:not(.dark)[data-ui-design="sidebar-topbar"] :is(.drawer-header, .modal-header) :is(#btn-compose-ai-prompt, button.bg-indigo-600),
+html:not(.dark)[data-ui-design="full-tinted"] :is(.drawer-header, .modal-header) :is(#btn-compose-ai-prompt, button.bg-indigo-600) {
+    background-color: rgba(255, 255, 255, 0.18) !important;
+    border: 1px solid rgba(255, 255, 255, 0.38) !important;
+    color: #ffffff !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15) !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] :is(.drawer-header, .modal-header) :is(#btn-compose-ai-prompt, button.bg-indigo-600) span,
+html:not(.dark)[data-ui-design="sidebar-topbar"] :is(.drawer-header, .modal-header) :is(#btn-compose-ai-prompt, button.bg-indigo-600) span,
+html:not(.dark)[data-ui-design="full-tinted"] :is(.drawer-header, .modal-header) :is(#btn-compose-ai-prompt, button.bg-indigo-600) span {
+    color: #ffffff !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] :is(.drawer-header, .modal-header) :is(#btn-compose-ai-prompt, button.bg-indigo-600):hover,
+html:not(.dark)[data-ui-design="sidebar-topbar"] :is(.drawer-header, .modal-header) :is(#btn-compose-ai-prompt, button.bg-indigo-600):hover,
+html:not(.dark)[data-ui-design="full-tinted"] :is(.drawer-header, .modal-header) :is(#btn-compose-ai-prompt, button.bg-indigo-600):hover {
+    background-color: rgba(255, 255, 255, 0.28) !important;
+    border-color: rgba(255, 255, 255, 0.55) !important;
+    color: #ffffff !important;
+}
+
+/* Botones de icono (Cerrar, Ampliar, Sincronizar, Nuevo Chat) en cabeceras de modales y drawers */
+html:not(.dark)[data-ui-design="topbar"] :is(.drawer-header, .modal-header) button:not(#btn-compose-ai-prompt):not(.bg-indigo-600),
+html:not(.dark)[data-ui-design="sidebar-topbar"] :is(.drawer-header, .modal-header) button:not(#btn-compose-ai-prompt):not(.bg-indigo-600),
+html:not(.dark)[data-ui-design="full-tinted"] :is(.drawer-header, .modal-header) button:not(#btn-compose-ai-prompt):not(.bg-indigo-600) {
+    color: var(--theme-topbar-icon, #e0e7ff) !important;
+    background-color: transparent !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] :is(.drawer-header, .modal-header) button:not(#btn-compose-ai-prompt):not(.bg-indigo-600):hover,
+html:not(.dark)[data-ui-design="sidebar-topbar"] :is(.drawer-header, .modal-header) button:not(#btn-compose-ai-prompt):not(.bg-indigo-600):hover,
+html:not(.dark)[data-ui-design="full-tinted"] :is(.drawer-header, .modal-header) button:not(#btn-compose-ai-prompt):not(.bg-indigo-600):hover {
+    background-color: rgba(255, 255, 255, 0.18) !important;
+    color: #ffffff !important;
+}
+
+/* --- DISEÑOS 3 y 4: MENÚ LATERAL IZQUIERDO CON COLOR Y ALTO CONTRASTE --- */
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container {
+    background: linear-gradient(180deg, var(--theme-sidebar-start, #e0e7ff) 0%, var(--theme-sidebar-end, #d8e2ff) 100%) !important;
+    border-right: 1px solid var(--theme-sidebar-border, #b9c8f7) !important;
+}
+
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container #btn-sidebar-account-selector,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container #btn-sidebar-account-selector {
+    background-color: rgba(255, 255, 255, 0.88) !important;
+    border-color: var(--theme-sidebar-selector-border, #a5b4fc) !important;
+    color: var(--theme-sidebar-text, #1e1b4b) !important;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08) !important;
+}
+
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container .sidebar-section-header,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container .sidebar-section-header {
+    color: var(--theme-sidebar-header, #312e81) !important;
+    font-weight: 800 !important;
+}
+
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container .border-t,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container .border-t,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container .border-b,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container .border-b {
+    border-color: var(--theme-sidebar-divider, #c7d2fe) !important;
+}
+
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container nav button,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container nav button {
+    color: var(--theme-sidebar-text, #1e1b4b) !important;
+}
+
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container nav button:hover,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container nav button:hover,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container .label-nav-btn:hover,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container .label-nav-btn:hover {
+    background-color: var(--theme-sidebar-hover, rgba(67, 56, 202, 0.12)) !important;
+    color: var(--theme-sidebar-text, #1e1b4b) !important;
+}
+
+/* Carpeta o vista activa en el menú lateral con contraste AAA */
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container .folder-nav-btn.bg-indigo-50,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container .folder-nav-btn.bg-indigo-50,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container #nav-item-calendar.bg-indigo-50,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container #nav-item-calendar.bg-indigo-50 {
+    background-color: var(--theme-sidebar-active-bg, #4338ca) !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 6px var(--theme-sidebar-active-shadow, rgba(67, 56, 202, 0.25)) !important;
+}
+
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container .folder-nav-btn.bg-indigo-50 span,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container .folder-nav-btn.bg-indigo-50 span,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container .folder-nav-btn.bg-indigo-50 svg,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container .folder-nav-btn.bg-indigo-50 svg {
+    color: #ffffff !important;
+}
+
+html:not(.dark)[data-ui-design="sidebar-topbar"] #sidebar-container .folder-nav-btn.bg-indigo-50 .sidebar-badge,
+html:not(.dark)[data-ui-design="full-tinted"] #sidebar-container .folder-nav-btn.bg-indigo-50 .sidebar-badge {
+    background-color: rgba(255, 255, 255, 0.22) !important;
+    color: #ffffff !important;
+}
+
+/* --- DISEÑO 4: MENÚ + BARRA SUPERIOR + LISTA DE CORREOS --- */
+html:not(.dark)[data-ui-design="full-tinted"] #email-list-container {
+    background-color: var(--theme-list-bg, #ebf1fc) !important;
+    border-right: 1px solid var(--theme-list-border, #c3d2ec) !important;
+}
+
+html:not(.dark)[data-ui-design="full-tinted"] #email-list-container > div:first-child {
+    background-color: var(--theme-list-toolbar-bg, #dce6f9) !important;
+    border-bottom-color: var(--theme-list-border, #c3d2ec) !important;
+}
+
+html:not(.dark)[data-ui-design="full-tinted"] #emails-split-list {
+    background-color: var(--theme-list-bg, #ebf1fc) !important;
+}
+
+/* Correos leídos en Diseño 4 */
+html:not(.dark)[data-ui-design="full-tinted"] #emails-split-list .email-list-item.bg-white {
+    background-color: var(--theme-list-read-bg, #e4edfb) !important;
+    border-bottom-color: var(--theme-list-read-border, #d1def5) !important;
+}
+
+/* Correos NO leídos en Diseño 4: tarjeta clara destacada para contraste inmediato */
+html:not(.dark)[data-ui-design="full-tinted"] #emails-split-list .email-list-item:not(.bg-white) {
+    background-color: var(--theme-list-unread-bg, #f8faff) !important;
+    border-bottom-color: var(--theme-list-unread-border, #c6d6f4) !important;
+}
+
+/* Hover y correo seleccionado en Diseño 4 */
+html:not(.dark)[data-ui-design="full-tinted"] #emails-split-list .email-list-item:hover {
+    background-color: var(--theme-list-hover-bg, #d6e4fa) !important;
+}
+
+html:not(.dark)[data-ui-design="full-tinted"] #emails-split-list .email-list-item.selected {
+    background-color: var(--theme-list-selected-bg, #c7d9f8) !important;
+    border-left-color: var(--account-accent-color, var(--theme-sidebar-active-bg, #4338ca)) !important;
+}
+
+/* ========================================================
+   DISEÑO REFINADO Y CONGRUENTE DEL CALENDARIO
+   (Píldoras de eventos sutiles y armonización en modo Minimalista y de Color)
+   ======================================================== */
+
+/* Píldoras de Eventos en Mes, Semana y Día: Tono pastel sutil con acento lateral nítido */
+html:not(.dark) .calendar-event-pill {
+    background-color: color-mix(in srgb, var(--ev-color, #4f46e5) 14%, #ffffff) !important;
+    color: color-mix(in srgb, var(--ev-color, #4f46e5) 62%, #0f172a) !important;
+    border: 1px solid color-mix(in srgb, var(--ev-color, #4f46e5) 26%, transparent) !important;
+    border-left: 3px solid var(--ev-color, #4f46e5) !important;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+}
+
+html:not(.dark) .calendar-event-pill:hover {
+    background-color: color-mix(in srgb, var(--ev-color, #4f46e5) 22%, #ffffff) !important;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08) !important;
+}
+
+html.dark .calendar-event-pill {
+    background-color: color-mix(in srgb, var(--ev-color, #4f46e5) 22%, #0f172a) !important;
+    color: color-mix(in srgb, var(--ev-color, #4f46e5) 28%, #f8fafc) !important;
+    border: 1px solid color-mix(in srgb, var(--ev-color, #4f46e5) 35%, transparent) !important;
+    border-left: 3px solid var(--ev-color, #4f46e5) !important;
+}
+
+/* Armonización del Calendario en Modalidades de Color (Diseños 2, 3 y 4) */
+html:not(.dark)[data-ui-design="topbar"] #main-calendar-section button.bg-indigo-600,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-calendar-section button.bg-indigo-600,
+html:not(.dark)[data-ui-design="full-tinted"] #main-calendar-section button.bg-indigo-600,
+html:not(.dark)[data-ui-design="topbar"] #main-calendar-section span.bg-indigo-600,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #main-calendar-section span.bg-indigo-600,
+html:not(.dark)[data-ui-design="full-tinted"] #main-calendar-section span.bg-indigo-600 {
+    background-color: var(--theme-sidebar-active-bg, #4338ca) !important;
+    color: #ffffff !important;
+}
+
+html:not(.dark)[data-ui-design="topbar"] #calendar-active-count-badge,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #calendar-active-count-badge,
+html:not(.dark)[data-ui-design="full-tinted"] #calendar-active-count-badge,
+html:not(.dark)[data-ui-design="topbar"] #calendar-tasks-count,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #calendar-tasks-count,
+html:not(.dark)[data-ui-design="full-tinted"] #calendar-tasks-count {
+    background-color: var(--theme-sidebar-start, #e0e7ff) !important;
+    color: var(--theme-sidebar-header, #312e81) !important;
+    border-color: var(--theme-sidebar-border, #b9c8f7) !important;
+}
+
+/* Encabezado de días (LUN..DOM) y barra superior del calendario sutilmente integrados */
+html:not(.dark)[data-ui-design="topbar"] #calendar-view-container > div:first-child,
+html:not(.dark)[data-ui-design="sidebar-topbar"] #calendar-view-container > div:first-child,
+html:not(.dark)[data-ui-design="full-tinted"] #calendar-view-container > div:first-child {
+    background-color: var(--theme-list-bg, #ebf1fc) !important;
+    border-bottom-color: var(--theme-list-border, #c3d2ec) !important;
+    color: var(--theme-sidebar-header, #312e81) !important;
+}
+
+html:not(.dark)[data-ui-design="full-tinted"] #main-calendar-section {
+    background-color: var(--theme-list-bg, #ebf1fc) !important;
+}
+
+html:not(.dark)[data-ui-design="full-tinted"] #main-calendar-section > header {
+    background-color: var(--theme-list-unread-bg, #f8faff) !important;
+    border-bottom-color: var(--theme-list-border, #c3d2ec) !important;
+}
+
+html:not(.dark)[data-ui-design="full-tinted"] #calendar-view-container,
+html:not(.dark)[data-ui-design="full-tinted"] #main-calendar-section .lg\:w-80 > div {
+    border-color: var(--theme-list-border, #c3d2ec) !important;
+}
+
+/* ========================================================
+   GARANTÍA DE CONTRASTE EN MODO OSCURO (.dark)
+   (Soporte para tonos intermedios slate-750/650, select/options y pickers nativos)
+   ======================================================== */
+html.dark {
+    color-scheme: dark;
+}
+
+html:not(.dark) {
+    color-scheme: light;
+}
+
+html.dark select option {
+    background-color: #1e293b;
+    color: #f8fafc;
+}
+
+html:not(.dark) select option {
+    background-color: #ffffff;
+    color: #0f172a;
+}
+
+html.dark .dark\:bg-slate-750 {
+    background-color: #243044 !important;
+}
+
+html.dark .dark\:bg-slate-750\/80 {
+    background-color: rgba(36, 48, 68, 0.85) !important;
+}
+
+html.dark .dark\:hover\:bg-slate-750:hover {
+    background-color: #243044 !important;
+}
+
+html.dark .dark\:hover\:bg-slate-650:hover {
+    background-color: #3b495e !important;
+}
+
+html.dark .dark\:border-slate-750 {
+    border-color: #293548 !important;
+}
+
+
 
 
 

@@ -2,6 +2,75 @@
 
 ## Estado de Desarrollo Actual
 
+- **Fase 119 - Selector de Cantidad de Correos por Página en Ajustes con Persistencia Permanente:**
+  - **Selector en `#drawer-settings` (`frontend/index.html`):**
+    - Se agregó la tarjeta **Paginación de Correos** con el selector `#settings-emails-page-size` (`10`, `12` predeterminado, `15`, `20`, `25`, `30`, `50` y `100` correos por página).
+  - **Aplicación Inmediata y Persistencia (`frontend/js/email.js`, `frontend/js/gemini.js`, `backend/config_service.py`):**
+    - Al seleccionar una opción (`EmailManager.setPageSize`), actualiza inmediatamente `EmailManager.pageSize`, recarga la lista de correos en la página 1, muestra una notificación sticky y guarda el valor de forma permanente en `localStorage` (`merkemail_page_size`) y en la base de datos SQLite (`emails_page_size` en `settings`).
+
+- **Fase 118 - Corrección Integral de Contraste de Botones, Badges y Opciones en Modo Oscuro:**
+  - **Causa Raíz y Tonos `slate-750` / `slate-650` (`frontend/index.html`, `frontend/css/app.css`):**
+    - Se identificó que varias etiquetas y botones (como `#event-detail-availability-badge` *"Ocupado"* y `#event-detail-visibility-badge` *"Predeterminada"* en el detalle de evento, contadores en *Mis Calendarios*, tarjetas en *Asistente Elio* y *Depuración IA*) utilizaban `dark:bg-slate-750`, tono que no estaba registrado en `tailwind.config`, provocando que en modo oscuro conservaran su fondo claro (`bg-slate-200` / `bg-slate-100`) con texto claro (`dark:text-slate-300`).
+    - Se registraron `slate.650` (`#3b495e`) y `slate.750` (`#243044`) en `tailwind.config`, se añadieron reglas explícitas en `frontend/css/app.css` y se actualizaron los badges de detalle de evento con bordes y fondos oscuros nítidos (`dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200`).
+  - **Selectores `<select>/<option>`, Pickers y Correos de Texto Plano en Modo Oscuro (`frontend/css/app.css`, `frontend/js/email.js`):**
+    - Se añadió `color-scheme: dark` en `html.dark` y estilo explícito para `html.dark select option` (`background-color: #1e293b; color: #f8fafc`).
+    - Se corrigió el contenedor de lectura para correos en texto plano (`!email.body_html`) con `dark:bg-slate-900`.
+
+- **Fase 117 - Unificación de Encabezados Coloreados en Todas las Modales/Drawers, Botones/Badges de Alto Contraste y Línea Divisoria en Herramientas IA:**
+  - **Cobertura Total de Encabezados de Modales y Drawers (`.drawer-header`, `.modal-header` en `frontend/index.html` y `frontend/css/app.css`):**
+    - Se asignó explícitamente `.drawer-header` a las 11 modales laterales (incluyendo `#drawer-antigravity-copilot`, cuyo primer hijo era `#antigravity-drawer-resizer` y por eso quedaba en blanco con `:first-of-type`) y `.modal-header` a las 9 modales flotantes (incluyendo `#modal-insert-link` y `#confirmation-modal`).
+    - Se corrigió el contraste de botones e insignias dentro de los encabezados coloreados: el botón `#btn-compose-ai-prompt` (`⚡ Asistente IA Prompt` en **Nuevo Correo**), el botón `+ Nuevo` en **Libreta de Contactos** y los badges (`#antigravity-agent-status-badge`, `#gemini-status-badge`, `#user-profile-last-analyzed`, `#contacts-total-badge`, `#contact-modal-source-badge`) lucen un acabado cristal translúcido (`rgba(255, 255, 255, 0.18)`) con borde y texto blanco nítido.
+  - **Línea Divisoria sobre Herramientas IA (`frontend/index.html`):**
+    - Se incorporó `<div class="my-2 border-t border-slate-200 dark:border-slate-800/80"></div>` al inicio de `#sidebar-ai-section`, igualando la separación visual de **Etiquetas** y **Otras Apps**.
+
+- **Fase 116 - Tareas sin Fecha ni Hora Obligatoria y Visibilidad Condicional de Hora:**
+  - **Tareas (`☑️ Tarea / Pendiente`) (`frontend/js/calendar.js`, `frontend/index.html`, `backend/main.py`):**
+    - Al seleccionar o abrir **Tarea / Pendiente**, los campos de fecha (`#event-start-date`, `#event-end-date`) y hora (`#event-start-time-only`, `#event-end-time-only`) dejan de ser obligatorios (`required = false`).
+    - En la creación de una tarea nueva, la fecha inicia vacía y los selectores de hora permanecen ocultos y vacíos (`display: none`, `value = ''`), mostrándose y prellenándose únicamente cuando el usuario asigna una fecha (`onDateInputChange` / `syncDateTimeInputsVisibility`).
+  - **Eventos / Citas (`📅 Evento / Cita`):**
+    - Conservan su comportamiento normal obligatorio (`required = true`), prellenando fecha y hora de inicio/fin automáticamente.
+
+- **Fase 115 - Contraste en Cabeceras de Modales/Drawers sin Borde Blanco, Diseño Sutil de Calendario y Ocultación Condicional de Nueva Etiqueta:**
+  - **Texto de Modales y Eliminación de Borde Blanco Lateral (`frontend/css/app.css`):**
+    - Se eliminó `border-l` de `.drawer-panel` en modos con barra superior coloreada para suprimir la línea blanca vertical en la orilla izquierda de las modales laterales.
+    - Se aseguraron textos blancos (`#ffffff !important`) para todos los niveles de encabezado (`h1`, `h2`, `h3`, `h4`), subtítulos claros (`--theme-topbar-subtext`) y cajas de iconos con acabado cristal translúcido (`rgba(255, 255, 255, 0.16)`).
+  - **Diseño Sutil y Congruente del Calendario (`frontend/js/calendar.js`, `frontend/css/app.css`):**
+    - Se rediseñaron las píldoras de eventos (`.calendar-event-pill`) en vistas Mes, Semana y Día usando fondos sutiles pastel (`color-mix(in srgb, var(--ev-color) 14%, #ffffff)`), acento izquierdo nítido (`3px solid var(--ev-color)`) y tipografía de alto contraste congruente tanto en modo Minimalista como en modalidades de color.
+    - Se integraron los botones activos, insignias y encabezados de la cuadrícula del calendario con las variables de la escala cromática activa (`--theme-*`).
+  - **Ocultación del Botón `+` de Nueva Etiqueta al Minimizar (`frontend/index.html`, `frontend/js/email.js`):**
+    - El botón `#btn-create-sidebar-label` (`+`) permanece oculto cuando el área de etiquetas está oculta/minimizada y se muestra únicamente al ampliarla.
+
+- **Fase 114 - Selector de Color Base con Degradé/Escala Dinámica, Borde de Avatar Nítido y Botón Único de Expandir Etiquetas:**
+  - **Selector de Color Base Dinámico (`frontend/index.html`, `frontend/js/ui.js`, `frontend/css/app.css`, `backend/config_service.py`):**
+    - Se agregó un selector de color con muestras predefinidas (Índigo base, Azul Océano, Turquesa, Esmeralda, Violeta, Carmesí, Ámbar, Pizarra) y selector personalizado (`<input type="color">`) que calcula en tiempo real la escala armónica HSL (`--theme-topbar-*`, `--theme-sidebar-*`, `--theme-list-*`) preservando el degradé y el contraste de todas las capas.
+  - **Borde de Avatar Nítido sin Halo (`frontend/js/avatars.js`, `frontend/index.html`):**
+    - Se reemplazó la combinación conflictiva de `border`, `ring-1 ring-slate-200`, fondo degradado y doble `rounded-full` por un anillo único anti-aliased con aceleración GPU (`box-shadow: 0 0 0 2px ${color}; transform: translateZ(0)`) y recorte único en el contenedor padre.
+  - **Botón Único de Expandir/Minimizar Etiquetas (`frontend/index.html`, `frontend/js/email.js`):**
+    - Se retiró el icono chevron izquierdo junto al texto **ETIQUETAS** para no redundar, dejando exclusivamente el botón de expandir/minimizar (`#btn-expand-sidebar-labels`) a la derecha.
+
+- **Fase 113 - Ocultar/Minimizar Etiquetas por Defecto en Barra Lateral de Menú con Opción de Ampliar:**
+  - **Minimizado por Defecto y Control de Expansión (`frontend/index.html`, `frontend/js/email.js`, `frontend/css/app.css`):**
+    - El contenedor `#sidebar-labels-list` inicia oculto/minimizado por defecto (`sidebarLabelsMinimized: true`, clase `hidden`).
+    - Se incorporaron controles interactivos en el encabezado **Etiquetas** (`#btn-toggle-sidebar-labels` con chevron rotatorio `#icon-toggle-sidebar-labels`, contador `#sidebar-labels-count-badge` y botón de expandir/minimizar `#btn-expand-sidebar-labels`) que permiten ampliar y volver a minimizar el área de etiquetas con un clic.
+
+- **Fase 112 - Selector de 4 Diseños Visuales en Modo Claro con Vista Previa Inmediata y Persistencia Permanente:**
+  - **Selector Interactivo en `#drawer-settings` (`frontend/index.html`, `frontend/js/ui.js`):**
+    - Se agregó en el modal lateral de configuración la tarjeta **Diseño de Interfaz** con 4 variantes visuales con mini-diagrama esquemático:
+      1. **1. Minimalista (`minimal`):** Clásico limpio actual.
+      2. **2. Barra Superior (`topbar`):** Color índigo ejecutivo profundo (`#1e1b4b` – `#3730a3`) con texto blanco de alto contraste en la barra superior de la aplicación y en las cabeceras de todas las modales y paneles laterales.
+      3. **3. Menú + Barra Superior (`sidebar-topbar`):** Barra superior y modales en índigo profundo + menú lateral izquierdo en azul-índigo suave (`#e0e7ff` – `#d8e2ff`) con texto `#1e1b4b` e ítem activo en `#4338ca` con texto blanco.
+      4. **4. Menú + Barra + Lista (`full-tinted`):** Colores coordinados de alto contraste en barra superior, menú lateral y lista de correos (`#ebf1fc` con tarjetas blancas `#f8faff` para no leídos y `#c7d9f8` para el correo seleccionado), manteniendo el visor de lectura en blanco puro.
+  - **Aplicación Inmediata y Persistencia (`frontend/js/ui.js`, `backend/config_service.py`, `frontend/css/app.css`):**
+    - Al seleccionar cualquiera de las 4 opciones, activa automáticamente el Modo Claro (`theme = 'light'`), aplica el diseño al instante en vivo (`data-ui-design`) y guarda la elección tanto en `localStorage` como en SQLite (`POST /api/settings`) hasta que el usuario decida cambiarla.
+
+- **Fase 111 - Reducción de Tamaño de Ventana en Modo Desktop hasta Formato Móvil (`360x480`) y Redimensionamiento por Bordes:**
+  - **Tamaño Mínimo Tipo Móvil (`desktop/app_window.py`):**
+    - Se redujo la restricción `self.setMinimumSize(960, 600)` a `self.setMinimumSize(360, 480)` en `FramelessMainWindow`, permitiendo contraer la ventana hasta un ancho y alto prudencial tipo móvil.
+    - Se mejoró `restore_window()` para que al desmaximizar la ventana adopte dimensiones flotantes centradas si su geometría previa ocupaba todo el monitor.
+  - **Bordes y Esquinas Interactivos de Redimensionamiento (`frontend/js/desktop.js` y `desktop/app_window.py`):**
+    - Se añadieron manejadores perimetrales invisibles en los 4 bordes (`n`, `s`, `e`, `w`) y 4 esquinas (`nw`, `ne`, `sw`, `se`) que transmiten `__PYQT_RESIZE__` en tiempo real a `FramelessMainWindow.resize_by()`.
+    - Se incorporó `initResponsiveResizeWatcher()` en `frontend/js/desktop.js` y soporte en `frontend/css/app.css` para alternar limpiamente entre la vista móvil (`< 768px`) y la vista dividida de escritorio (`>= 768px`) al redimensionar la ventana.
+
 - **Fase 110 - Selector de Etiquetas en Primer Plano (`fixed z-[9999]`) y Lectura desde el Inicio sin Auto-Scroll al Responder:**
   - **Selector de Etiquetas en Primer Plano (`frontend/js/email.js`):**
     - Se eliminó `overflow-x-auto` de `#email-top-actions-right` y se montó `#email-label-dropdown-top-${emailId}` directamente sobre `document.body` con `position: fixed; z-index: 9999`, flotando siempre por encima del encabezado y del `iframe` del correo sin generar barras de scroll en la barra de acciones.

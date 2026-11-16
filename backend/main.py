@@ -145,8 +145,8 @@ class BatchActionRequest(BaseModel):
 class EventCreateRequest(BaseModel):
     calendar_id: Optional[int] = None
     title: str
-    start_time: str
-    end_time: str
+    start_time: Optional[str] = ""
+    end_time: Optional[str] = ""
     description: Optional[str] = ""
     location: Optional[str] = ""
     all_day: int = 0

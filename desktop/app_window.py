@@ -283,6 +283,18 @@ def run_pyqt_window():
                     pass
                 return
 
+            # Redimensionamiento continuo en tiempo real desde bordes y esquinas
+            if message.startswith("__PYQT_RESIZE__:"):
+                try:
+                    parts = message.split(":")
+                    edge = parts[1]
+                    dx = int(float(parts[2]))
+                    dy = int(float(parts[3]))
+                    self.window.resize_by(edge, dx, dy)
+                except Exception:
+                    pass
+                return
+
             # Canal ultrarrápido y directo de comunicación JS -> PyQt6
             if message.startswith("__PYQT_ACTION__:"):
                 action = message.split(":", 1)[1]
@@ -341,7 +353,8 @@ def run_pyqt_window():
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
             self.setWindowTitle("MerkeMail - Gestor de Correos Inteligente")
             self.resize(1280, 800)
-            self.setMinimumSize(960, 600)
+            # Permitir reducir la ventana hasta un tamaño prudencial tipo móvil (360x480)
+            self.setMinimumSize(360, 480)
 
             self.drag_position = None
 
@@ -420,6 +433,29 @@ def run_pyqt_window():
             new_pos = self.pos() + QPoint(dx, dy)
             self.move(new_pos)
 
+        def resize_by(self, edge: str, dx: int, dy: int):
+            if self.isMaximized():
+                return
+            geo = self.geometry()
+            min_w = self.minimumWidth()
+            min_h = self.minimumHeight()
+            x, y, w, h = geo.x(), geo.y(), geo.width(), geo.height()
+
+            if "e" in edge:
+                w = max(min_w, w + dx)
+            if "s" in edge:
+                h = max(min_h, h + dy)
+            if "w" in edge:
+                new_w = max(min_w, w - dx)
+                x += (w - new_w)
+                w = new_w
+            if "n" in edge:
+                new_h = max(min_h, h - dy)
+                y += (h - new_h)
+                h = new_h
+
+            self.setGeometry(x, y, w, h)
+
         def start_drag(self):
             # Si está maximizada, restaurar a tamaño normal antes de mover
             if self.isMaximized():
@@ -430,6 +466,7 @@ def run_pyqt_window():
 
         def maximize_window(self):
             if not self.isMaximized():
+                self._normal_geom = self.geometry()
                 self.showMaximized()
                 try:
                     self.view.page().runJavaScript("if (window.DesktopBridge) window.DesktopBridge.onNativeWindowStateChanged(true);")
@@ -439,6 +476,19 @@ def run_pyqt_window():
         def restore_window(self):
             if self.isMaximized():
                 self.showNormal()
+                try:
+                    screen = self.screen() or QApplication.primaryScreen()
+                    if screen:
+                        avail = screen.availableGeometry()
+                        cur = self.geometry()
+                        if cur.width() >= avail.width() - 24 and cur.height() >= avail.height() - 24:
+                            target_w = min(1200, max(360, int(avail.width() * 0.78)))
+                            target_h = min(780, max(480, int(avail.height() * 0.80)))
+                            target_x = avail.x() + (avail.width() - target_w) // 2
+                            target_y = avail.y() + (avail.height() - target_h) // 2
+                            self.setGeometry(target_x, target_y, target_w, target_h)
+                except Exception:
+                    pass
                 try:
                     self.view.page().runJavaScript("if (window.DesktopBridge) window.DesktopBridge.onNativeWindowStateChanged(false);")
                 except Exception:

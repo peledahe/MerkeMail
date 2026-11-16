@@ -190,14 +190,26 @@ const UI = {
     async initTheme() {
         // 1. Aplicar de inmediato desde localStorage para evitar parpadeos visuales
         let currentTheme = 'dark';
+        let currentDesign = 'minimal';
+        let currentDesignColor = '#4f46e5';
         try {
             const saved = localStorage.getItem('theme');
             if (saved === 'light' || saved === 'dark') {
                 currentTheme = saved;
             }
+            const savedDesign = localStorage.getItem('ui_design');
+            if (savedDesign && ['minimal', 'topbar', 'sidebar-topbar', 'full-tinted'].includes(savedDesign)) {
+                currentDesign = savedDesign;
+            }
+            const savedColor = localStorage.getItem('ui_design_color');
+            if (savedColor && /^#[0-9a-fA-F]{6}$/.test(savedColor)) {
+                currentDesignColor = savedColor;
+            }
         } catch (e) {}
 
         this.applyTheme(currentTheme);
+        this.applyDesignColor(currentDesignColor);
+        this.applyDesign(currentDesign);
 
         // 2. Sincronizar con la base de datos persistente del backend (SQLite)
         try {
@@ -212,6 +224,18 @@ const UI = {
                         } catch (e) {}
                     }
                 }
+                if (data.ui_design_color && /^#[0-9a-fA-F]{6}$/.test(data.ui_design_color)) {
+                    this.applyDesignColor(data.ui_design_color);
+                    try {
+                        localStorage.setItem('ui_design_color', data.ui_design_color);
+                    } catch (e) {}
+                }
+                if (data.ui_design && ['minimal', 'topbar', 'sidebar-topbar', 'full-tinted'].includes(data.ui_design)) {
+                    this.applyDesign(data.ui_design);
+                    try {
+                        localStorage.setItem('ui_design', data.ui_design);
+                    } catch (e) {}
+                }
             }
         } catch (e) {}
     },
@@ -223,6 +247,223 @@ const UI = {
             document.documentElement.classList.remove('dark');
         }
         this.updateThemeButton();
+    },
+
+    hexToHsl(hex) {
+        const clean = (hex || '#4f46e5').replace('#', '');
+        const r = parseInt(clean.substring(0, 2), 16) / 255;
+        const g = parseInt(clean.substring(2, 4), 16) / 255;
+        const b = parseInt(clean.substring(4, 6), 16) / 255;
+
+        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        let h = 0, s = 0;
+        const l = (max + min) / 2;
+
+        if (max !== min) {
+            const d = max - min;
+            s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+            switch (max) {
+                case r: h = ((g - b) / d + (g < b ? 6 : 0)); break;
+                case g: h = ((b - r) / d + 2); break;
+                case b: h = ((r - g) / d + 4); break;
+            }
+            h /= 6;
+        }
+        return {
+            h: Math.round(h * 360),
+            s: Math.round(s * 100),
+            l: Math.round(l * 100)
+        };
+    },
+
+    applyDesignColor(hex) {
+        const cleanHex = (hex && /^#[0-9a-fA-F]{6}$/.test(hex)) ? hex.toLowerCase() : '#4f46e5';
+        const root = document.documentElement;
+
+        if (cleanHex === '#4f46e5') {
+            // Valores originales calibrados del color Índigo por defecto
+            const defaults = {
+                '--theme-topbar-start': '#1e1b4b',
+                '--theme-topbar-mid': '#2e2a72',
+                '--theme-topbar-end': '#3730a3',
+                '--theme-topbar-subtext': '#c7d2fe',
+                '--theme-topbar-icon': '#e0e7ff',
+                '--theme-sidebar-start': '#e0e7ff',
+                '--theme-sidebar-end': '#d8e2ff',
+                '--theme-sidebar-border': '#b9c8f7',
+                '--theme-sidebar-divider': '#c7d2fe',
+                '--theme-sidebar-text': '#1e1b4b',
+                '--theme-sidebar-header': '#312e81',
+                '--theme-sidebar-hover': 'rgba(67, 56, 202, 0.12)',
+                '--theme-sidebar-active-bg': '#4338ca',
+                '--theme-sidebar-active-shadow': 'rgba(67, 56, 202, 0.25)',
+                '--theme-sidebar-selector-border': '#a5b4fc',
+                '--theme-list-bg': '#ebf1fc',
+                '--theme-list-toolbar-bg': '#dce6f9',
+                '--theme-list-border': '#c3d2ec',
+                '--theme-list-read-bg': '#e4edfb',
+                '--theme-list-read-border': '#d1def5',
+                '--theme-list-unread-bg': '#f8faff',
+                '--theme-list-unread-border': '#c6d6f4',
+                '--theme-list-hover-bg': '#d6e4fa',
+                '--theme-list-selected-bg': '#c7d9f8'
+            };
+            Object.entries(defaults).forEach(([k, v]) => root.style.setProperty(k, v));
+        } else {
+            const { h, s } = this.hexToHsl(cleanHex);
+            // Escala armónica conservando el degradé de 3 paradas y las capas de luminosidad
+            const sBase = s < 12 ? s : Math.max(28, Math.min(86, s));
+            const sTop = Math.min(72, Math.round(sBase * 0.82));
+            const sSide = Math.min(82, Math.round(sBase * 0.90));
+            const sList = Math.min(75, Math.round(sBase * 0.80));
+
+            const scale = {
+                '--theme-topbar-start': `hsl(${h}, ${Math.round(sTop * 0.85)}%, 18%)`,
+                '--theme-topbar-mid': `hsl(${h}, ${sTop}%, 28%)`,
+                '--theme-topbar-end': `hsl(${h}, ${Math.min(78, Math.round(sTop * 1.08))}%, 39%)`,
+                '--theme-topbar-subtext': `hsl(${h}, ${Math.min(92, sSide)}%, 88%)`,
+                '--theme-topbar-icon': `hsl(${h}, ${Math.min(95, sSide)}%, 93%)`,
+                '--theme-sidebar-start': `hsl(${h}, ${sSide}%, 93.5%)`,
+                '--theme-sidebar-end': `hsl(${h}, ${sSide}%, 90%)`,
+                '--theme-sidebar-border': `hsl(${h}, ${Math.round(sSide * 0.85)}%, 82%)`,
+                '--theme-sidebar-divider': `hsl(${h}, ${Math.round(sSide * 0.88)}%, 86%)`,
+                '--theme-sidebar-text': `hsl(${h}, ${Math.round(sTop * 0.9)}%, 17%)`,
+                '--theme-sidebar-header': `hsl(${h}, ${sTop}%, 30%)`,
+                '--theme-sidebar-hover': `hsla(${h}, ${sSide}%, 42%, 0.12)`,
+                '--theme-sidebar-active-bg': `hsl(${h}, ${Math.min(80, Math.round(sTop * 1.05))}%, 43%)`,
+                '--theme-sidebar-active-shadow': `hsla(${h}, ${sTop}%, 38%, 0.25)`,
+                '--theme-sidebar-selector-border': `hsl(${h}, ${Math.round(sSide * 0.85)}%, 76%)`,
+                '--theme-list-bg': `hsl(${h}, ${sList}%, 95.5%)`,
+                '--theme-list-toolbar-bg': `hsl(${h}, ${sList}%, 91%)`,
+                '--theme-list-border': `hsl(${h}, ${Math.round(sList * 0.78)}%, 83%)`,
+                '--theme-list-read-bg': `hsl(${h}, ${sList}%, 93.2%)`,
+                '--theme-list-read-border': `hsl(${h}, ${Math.round(sList * 0.82)}%, 88%)`,
+                '--theme-list-unread-bg': `hsl(${h}, ${Math.min(95, sSide)}%, 98.5%)`,
+                '--theme-list-unread-border': `hsl(${h}, ${Math.round(sList * 0.85)}%, 85%)`,
+                '--theme-list-hover-bg': `hsl(${h}, ${sList}%, 89.5%)`,
+                '--theme-list-selected-bg': `hsl(${h}, ${Math.min(85, Math.round(sList * 1.05))}%, 85.5%)`
+            };
+            Object.entries(scale).forEach(([k, v]) => root.style.setProperty(k, v));
+        }
+
+        this.updateDesignColorSwatchesUI(cleanHex);
+    },
+
+    previewDesignColor(hex) {
+        if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return;
+        this.applyTheme('light');
+        const currentDesign = document.documentElement.getAttribute('data-ui-design') || 'minimal';
+        if (currentDesign === 'minimal') {
+            this.applyDesign('sidebar-topbar');
+        }
+        this.applyDesignColor(hex);
+    },
+
+    setDesignColor(hex) {
+        const cleanHex = (hex && /^#[0-9a-fA-F]{6}$/.test(hex)) ? hex.toLowerCase() : '#4f46e5';
+        this.applyTheme('light');
+
+        let currentDesign = document.documentElement.getAttribute('data-ui-design') || 'minimal';
+        if (currentDesign === 'minimal') {
+            currentDesign = 'sidebar-topbar';
+            this.applyDesign(currentDesign);
+        }
+
+        this.applyDesignColor(cleanHex);
+
+        try {
+            localStorage.setItem('theme', 'light');
+            localStorage.setItem('ui_design', currentDesign);
+            localStorage.setItem('ui_design_color', cleanHex);
+        } catch (e) {}
+
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                theme: 'light',
+                ui_design: currentDesign,
+                ui_design_color: cleanHex
+            })
+        }).catch(() => {});
+
+        this.showStickyToast('Color Aplicado', `Escala y degradé actualizados con el color ${cleanHex.toUpperCase()}`, 'success', 2200);
+    },
+
+    updateDesignColorSwatchesUI(activeHex) {
+        const norm = (activeHex || '#4f46e5').toLowerCase();
+        const swatches = document.querySelectorAll('#ui-design-color-swatches [data-color-swatch]');
+        swatches.forEach(btn => {
+            const c = (btn.getAttribute('data-color-swatch') || '').toLowerCase();
+            if (c === norm) {
+                btn.classList.add('ring-2', 'ring-indigo-500', 'scale-110');
+            } else {
+                btn.classList.remove('ring-2', 'ring-indigo-500', 'scale-110');
+            }
+        });
+        const dot = document.getElementById('ui-design-custom-color-dot');
+        if (dot) dot.style.backgroundColor = norm;
+        const input = document.getElementById('ui-design-custom-color-input');
+        if (input && input.value.toLowerCase() !== norm) input.value = norm;
+    },
+
+    applyDesign(design) {
+        const valid = ['minimal', 'topbar', 'sidebar-topbar', 'full-tinted'];
+        const chosen = valid.includes(design) ? design : 'minimal';
+        document.documentElement.setAttribute('data-ui-design', chosen);
+        this.updateDesignSelectorUI(chosen);
+    },
+
+    setDesign(design) {
+        const valid = ['minimal', 'topbar', 'sidebar-topbar', 'full-tinted'];
+        const chosen = valid.includes(design) ? design : 'minimal';
+
+        // Al elegir cualquiera de los diseños, activar modo claro y aplicar de inmediato
+        this.applyTheme('light');
+        this.applyDesign(chosen);
+
+        try {
+            localStorage.setItem('theme', 'light');
+            localStorage.setItem('ui_design', chosen);
+        } catch (e) {}
+
+        // Guardar inmediatamente en la base de datos SQLite hasta que el usuario lo cambie
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ theme: 'light', ui_design: chosen })
+        }).catch(() => {});
+
+        const names = {
+            'minimal': '1. Minimalista (Modo Claro)',
+            'topbar': '2. Barra Superior y Modales',
+            'sidebar-topbar': '3. Menú + Barra Superior',
+            'full-tinted': '4. Menú + Barra Superior + Lista de Correos'
+        };
+        this.showStickyToast('Diseño Aplicado', `Se activó el diseño "${names[chosen] || chosen}"`, 'success', 2500);
+    },
+
+    updateDesignSelectorUI(activeDesign) {
+        const cards = document.querySelectorAll('#ui-design-selector-grid [data-design-option]');
+        cards.forEach(card => {
+            const opt = card.getAttribute('data-design-option');
+            const check = card.querySelector('.ui-design-check');
+            if (opt === activeDesign) {
+                card.classList.add('border-indigo-600', 'dark:border-indigo-500', 'ring-2', 'ring-indigo-500/20', 'bg-indigo-50/40');
+                card.classList.remove('border-slate-200', 'dark:border-slate-700');
+                if (check) {
+                    check.classList.remove('hidden');
+                    check.classList.add('inline-flex');
+                }
+            } else {
+                card.classList.remove('border-indigo-600', 'dark:border-indigo-500', 'ring-2', 'ring-indigo-500/20', 'bg-indigo-50/40');
+                card.classList.add('border-slate-200', 'dark:border-slate-700');
+                if (check) {
+                    check.classList.add('hidden');
+                    check.classList.remove('inline-flex');
+                }
+            }
+        });
     },
 
     updateThemeButton() {

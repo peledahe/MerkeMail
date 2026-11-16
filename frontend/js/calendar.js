@@ -576,8 +576,8 @@ const CalendarManager = {
                             const color = CalendarManager.getEventColor(ev);
                             const hasAccountColor = ev.account_color && ev.account_color !== ev.calendar_color;
                             return `
-                                <div onclick="CalendarManager.viewEventDetail(${ev.id})" class="text-[10px] sm:text-[10.5px] px-2 py-0.5 rounded-md truncate font-medium text-white cursor-pointer hover:opacity-90 shadow-2xs hover:shadow-xs hover:scale-[1.01] transition-all flex items-center gap-1.5 border-l-2 border-white/60" style="background-color: ${color}" title="${ev.title} (${ev.account_name || ev.calendar_name || 'Calendario'})">
-                                    ${hasAccountColor ? `<span class="w-1.5 h-1.5 rounded-full shrink-0 border border-white/70 shadow-2xs" style="background-color: ${ev.account_color}" title="Cuenta: ${ev.account_name}"></span>` : ''}
+                                <div onclick="CalendarManager.viewEventDetail(${ev.id})" class="calendar-event-pill text-[10px] sm:text-[10.5px] px-2 py-0.5 rounded-md truncate font-semibold cursor-pointer hover:scale-[1.01] transition-all flex items-center gap-1.5" style="--ev-color: ${color};" title="${ev.title} (${ev.account_name || ev.calendar_name || 'Calendario'})">
+                                    ${hasAccountColor ? `<span class="w-1.5 h-1.5 rounded-full shrink-0 shadow-2xs" style="background-color: ${ev.account_color}" title="Cuenta: ${ev.account_name}"></span>` : `<span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: ${color}"></span>`}
                                     <span class="truncate">${ev.title}</span>
                                 </div>
                             `;
@@ -698,9 +698,9 @@ const CalendarManager = {
                             ${slotEvents.map(ev => {
                                 const color = CalendarManager.getEventColor(ev);
                                 return `
-                                    <div onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id})" class="text-[11px] p-1.5 rounded-lg text-white font-medium shadow-xs hover:shadow-md hover:scale-[1.01] transition-all cursor-pointer flex items-center gap-1.5 border-l-2 border-white/60 min-w-0" style="background-color: ${color}" title="${ev.title} (${ev.account_name || ev.calendar_name || ''})">
-                                        ${ev.account_color && ev.account_color !== ev.calendar_color ? `<span class="w-2 h-2 rounded-full shrink-0 border border-white/80 shadow-2xs" style="background-color: ${ev.account_color}"></span>` : ''}
-                                        <span class="font-bold text-[10px] opacity-95 font-mono shrink-0">${ev.start_time.substring(11,16)}</span>
+                                    <div onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id})" class="calendar-event-pill text-[11px] p-1.5 rounded-lg font-medium hover:scale-[1.01] transition-all cursor-pointer flex items-center gap-1.5 min-w-0" style="--ev-color: ${color};" title="${ev.title} (${ev.account_name || ev.calendar_name || ''})">
+                                        ${ev.account_color && ev.account_color !== ev.calendar_color ? `<span class="w-2 h-2 rounded-full shrink-0 shadow-2xs" style="background-color: ${ev.account_color}"></span>` : `<span class="w-2 h-2 rounded-full shrink-0" style="background-color: ${color}"></span>`}
+                                        <span class="font-bold text-[10px] opacity-90 font-mono shrink-0">${ev.start_time.substring(11,16)}</span>
                                         <span class="truncate font-semibold leading-tight">${ev.title}</span>
                                     </div>
                                 `;
@@ -783,15 +783,15 @@ const CalendarManager = {
                             const timeEnd = ev.end_time ? ev.end_time.substring(11, 16) : '';
                             const color = CalendarManager.getEventColor(ev);
                             return `
-                                <div onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id})" class="p-3 sm:p-3.5 rounded-2xl text-white shadow-xs hover:shadow-md hover:scale-[1.008] transition-all cursor-pointer flex-1 min-w-[260px] max-w-xl border-l-4 border-white/60" style="background-color: ${color}">
+                                <div onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id})" class="calendar-event-pill p-3 sm:p-3.5 rounded-2xl hover:scale-[1.008] transition-all cursor-pointer flex-1 min-w-[260px] max-w-xl" style="--ev-color: ${color}; border-left-width: 4px;">
                                     <div class="flex items-center justify-between gap-3 mb-1.5">
                                         <div class="flex items-center gap-2 min-w-0">
-                                            ${ev.account_color && ev.account_color !== ev.calendar_color ? `<span class="w-2.5 h-2.5 rounded-full border border-white/80 shrink-0 shadow-2xs" style="background-color: ${ev.account_color}" title="Cuenta: ${ev.account_name}"></span>` : ''}
+                                            ${ev.account_color && ev.account_color !== ev.calendar_color ? `<span class="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style="background-color: ${ev.account_color}" title="Cuenta: ${ev.account_name}"></span>` : `<span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${color}"></span>`}
                                             <span class="text-sm font-bold leading-tight truncate">${ev.title}</span>
                                         </div>
-                                        <span class="text-xs px-2 py-0.5 rounded-lg bg-black/25 font-mono font-bold shrink-0">${timeStart}${timeEnd ? ' - ' + timeEnd : ''}</span>
+                                        <span class="text-xs px-2 py-0.5 rounded-lg bg-black/10 dark:bg-white/10 font-mono font-bold shrink-0">${timeStart}${timeEnd ? ' - ' + timeEnd : ''}</span>
                                     </div>
-                                    <div class="flex items-center gap-3 text-xs opacity-95 flex-wrap">
+                                    <div class="flex items-center gap-3 text-xs opacity-90 flex-wrap">
                                         <span class="flex items-center gap-1">📅 ${ev.account_name || ev.calendar_name || 'Calendario'}</span>
                                         ${ev.location ? `<span class="truncate flex items-center gap-1">📍 ${ev.location}</span>` : ''}
                                     </div>
@@ -1047,10 +1047,90 @@ const CalendarManager = {
     },
 
     toggleAllDay(isAllDay) {
+        this.syncDateTimeInputsVisibility();
+    },
+
+    onDateInputChange(which = 'start') {
+        const entryType = document.getElementById('event-entry-type')?.value || 'event';
+        const startDateEl = document.getElementById('event-start-date');
+        const endDateEl = document.getElementById('event-end-date');
         const startTimeEl = document.getElementById('event-start-time-only');
         const endTimeEl = document.getElementById('event-end-time-only');
-        if (startTimeEl) startTimeEl.style.display = isAllDay ? 'none' : 'block';
-        if (endTimeEl) endTimeEl.style.display = isAllDay ? 'none' : 'block';
+
+        if (which === 'start' && startDateEl) {
+            if (startDateEl.value) {
+                if (endDateEl && !endDateEl.value) {
+                    endDateEl.value = startDateEl.value;
+                }
+                if (startTimeEl && !startTimeEl.value) {
+                    startTimeEl.value = this.lastDefaultStartTime || '10:00';
+                }
+                if (endTimeEl && !endTimeEl.value) {
+                    endTimeEl.value = this.lastDefaultEndTime || '11:00';
+                }
+            } else if (entryType === 'task') {
+                if (endDateEl) endDateEl.value = '';
+                if (startTimeEl) startTimeEl.value = '';
+                if (endTimeEl) endTimeEl.value = '';
+            }
+        } else if (which === 'end' && endDateEl) {
+            if (endDateEl.value && startDateEl && !startDateEl.value) {
+                startDateEl.value = endDateEl.value;
+                if (startTimeEl && !startTimeEl.value) {
+                    startTimeEl.value = this.lastDefaultStartTime || '10:00';
+                }
+                if (endTimeEl && !endTimeEl.value) {
+                    endTimeEl.value = this.lastDefaultEndTime || '11:00';
+                }
+            }
+        }
+
+        this.syncDateTimeInputsVisibility();
+    },
+
+    syncDateTimeInputsVisibility() {
+        const entryType = document.getElementById('event-entry-type')?.value || 'event';
+        const isAllDay = !!document.getElementById('event-all-day')?.checked;
+        const startDateEl = document.getElementById('event-start-date');
+        const endDateEl = document.getElementById('event-end-date');
+        const startTimeEl = document.getElementById('event-start-time-only');
+        const endTimeEl = document.getElementById('event-end-time-only');
+
+        const hasDate = Boolean((startDateEl && startDateEl.value) || (endDateEl && endDateEl.value));
+
+        if (entryType === 'task') {
+            if (startDateEl) startDateEl.required = false;
+            if (endDateEl) endDateEl.required = false;
+            if (startTimeEl) startTimeEl.required = false;
+            if (endTimeEl) endTimeEl.required = false;
+
+            // En Tareas: la hora solo se muestra y asigna si se ha elegido una fecha (y no es Todo el día)
+            const showTime = hasDate && !isAllDay;
+            if (startTimeEl) {
+                startTimeEl.style.display = showTime ? 'block' : 'none';
+                if (showTime && !startTimeEl.value) startTimeEl.value = this.lastDefaultStartTime || '10:00';
+                if (!hasDate) startTimeEl.value = '';
+            }
+            if (endTimeEl) {
+                endTimeEl.style.display = showTime ? 'block' : 'none';
+                if (showTime && !endTimeEl.value) endTimeEl.value = this.lastDefaultEndTime || '11:00';
+                if (!hasDate) endTimeEl.value = '';
+            }
+        } else {
+            // En Eventos / Citas: fecha y hora son obligatorias de forma normal
+            if (startDateEl) startDateEl.required = true;
+            if (endDateEl) endDateEl.required = true;
+            if (startTimeEl) {
+                startTimeEl.style.display = isAllDay ? 'none' : 'block';
+                startTimeEl.required = !isAllDay;
+                if (!isAllDay && !startTimeEl.value) startTimeEl.value = this.lastDefaultStartTime || '10:00';
+            }
+            if (endTimeEl) {
+                endTimeEl.style.display = isAllDay ? 'none' : 'block';
+                endTimeEl.required = !isAllDay;
+                if (!isAllDay && !endTimeEl.value) endTimeEl.value = this.lastDefaultEndTime || '11:00';
+            }
+        }
     },
 
     toggleEventModalAdvanced(forceState = null) {
@@ -1155,10 +1235,6 @@ const CalendarManager = {
     openNewTaskModal() {
         this.openNewEventModal();
         this.setNewEventType('task');
-        const startDateInput = document.getElementById('event-start-date');
-        const endDateInput = document.getElementById('event-end-date');
-        if (startDateInput) startDateInput.value = '';
-        if (endDateInput) endDateInput.value = '';
     },
 
     openNewEventModal(dateStr = '', timeStr = '10:00', editEvent = null) {
@@ -1188,23 +1264,28 @@ const CalendarManager = {
             if (modalTitle) modalTitle.textContent = editEvent.is_task ? 'Editar Tarea' : 'Editar Evento / Cita';
             if (submitBtn) submitBtn.textContent = 'Actualizar Cambios';
             if (titleInput) titleInput.value = (editEvent.title || '').replace(/^\[Tarea\]\s*/i, '');
-            
-            this.setNewEventType(editEvent.is_task ? 'task' : 'event');
 
             const isAllDay = !!editEvent.all_day;
             if (allDayCheckbox) allDayCheckbox.checked = isAllDay;
-            this.toggleAllDay(isAllDay);
 
             if (editEvent.start_time) {
                 const sParts = editEvent.start_time.split('T');
                 if (startDateInput) startDateInput.value = sParts[0] || '';
-                if (startTimeInput && sParts[1]) startTimeInput.value = sParts[1].substring(0, 5);
+                if (startTimeInput) startTimeInput.value = sParts[1] ? sParts[1].substring(0, 5) : '';
+            } else {
+                if (startDateInput) startDateInput.value = '';
+                if (startTimeInput) startTimeInput.value = '';
             }
             if (editEvent.end_time) {
                 const eParts = editEvent.end_time.split('T');
                 if (endDateInput) endDateInput.value = eParts[0] || '';
-                if (endTimeInput && eParts[1]) endTimeInput.value = eParts[1].substring(0, 5);
+                if (endTimeInput) endTimeInput.value = eParts[1] ? eParts[1].substring(0, 5) : '';
+            } else {
+                if (endDateInput) endDateInput.value = '';
+                if (endTimeInput) endTimeInput.value = '';
             }
+
+            this.setNewEventType(editEvent.is_task ? 'task' : 'event');
 
             if (recurrenceSelect) recurrenceSelect.value = editEvent.recurrence || 'none';
             if (locationInput) locationInput.value = editEvent.location || '';
@@ -1249,13 +1330,16 @@ const CalendarManager = {
             let endH = startH + 1;
             if (endH > 23) endH = 23;
 
+            this.lastDefaultEventDate = defaultDate;
+            this.lastDefaultStartTime = `${String(startH).padStart(2, '0')}:00`;
+            this.lastDefaultEndTime = `${String(endH).padStart(2, '0')}:00`;
+
             if (startDateInput) startDateInput.value = defaultDate;
-            if (startTimeInput) startTimeInput.value = `${String(startH).padStart(2, '0')}:00`;
+            if (startTimeInput) startTimeInput.value = this.lastDefaultStartTime;
             if (endDateInput) endDateInput.value = defaultDate;
-            if (endTimeInput) endTimeInput.value = `${String(endH).padStart(2, '0')}:00`;
+            if (endTimeInput) endTimeInput.value = this.lastDefaultEndTime;
 
             if (allDayCheckbox) allDayCheckbox.checked = false;
-            this.toggleAllDay(false);
 
             if (recurrenceSelect) recurrenceSelect.value = 'none';
             if (locationInput) locationInput.value = '';
@@ -1295,6 +1379,10 @@ const CalendarManager = {
         const titleInput = document.getElementById('event-title');
         const submitBtn = document.getElementById('btn-submit-event');
         const editId = document.getElementById('event-edit-id')?.value;
+        const startDateInput = document.getElementById('event-start-date');
+        const endDateInput = document.getElementById('event-end-date');
+        const startTimeInput = document.getElementById('event-start-time-only');
+        const endTimeInput = document.getElementById('event-end-time-only');
 
         if (inputType) inputType.value = type;
 
@@ -1304,13 +1392,30 @@ const CalendarManager = {
             if (modalTitle) modalTitle.textContent = editId ? 'Editar Tarea' : 'Crear Tarea / Pendiente';
             if (titleInput) titleInput.placeholder = 'Entregar reporte, revisar contrato...';
             if (submitBtn) submitBtn.textContent = editId ? 'Actualizar Tarea' : 'Guardar Tarea';
+
+            // Al crear una tarea nueva, iniciar sin fecha ni hora obligatoria
+            if (!editId) {
+                if (startDateInput) startDateInput.value = '';
+                if (endDateInput) endDateInput.value = '';
+                if (startTimeInput) startTimeInput.value = '';
+                if (endTimeInput) endTimeInput.value = '';
+            }
         } else {
             if (btnEvent) btnEvent.className = 'py-1.5 px-3 rounded-lg bg-indigo-600 text-white font-semibold shadow-2xs transition-all text-center cursor-pointer';
             if (btnTask) btnTask.className = 'py-1.5 px-3 rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-all text-center cursor-pointer';
             if (modalTitle) modalTitle.textContent = editId ? 'Editar Evento / Cita' : 'Programar Evento / Cita';
             if (titleInput) titleInput.placeholder = 'Añade un título para la reunión o cita...';
             if (submitBtn) submitBtn.textContent = editId ? 'Actualizar Cita' : 'Guardar Cita';
+
+            // En Eventos / Citas: asegurar que tenga fecha y hora normal si estaban vacíos
+            const fallbackDate = this.lastDefaultEventDate || new Date().toISOString().split('T')[0];
+            if (startDateInput && !startDateInput.value) startDateInput.value = fallbackDate;
+            if (endDateInput && !endDateInput.value) endDateInput.value = startDateInput?.value || fallbackDate;
+            if (startTimeInput && !startTimeInput.value) startTimeInput.value = this.lastDefaultStartTime || '10:00';
+            if (endTimeInput && !endTimeInput.value) endTimeInput.value = this.lastDefaultEndTime || '11:00';
         }
+
+        this.syncDateTimeInputsVisibility();
     },
 
     async saveEvent(e) {

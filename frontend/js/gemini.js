@@ -254,6 +254,19 @@ const GeminiAI = {
             const composeToneSelect = document.getElementById('ai-compose-tone');
             if (composeToneSelect) composeToneSelect.value = savedTone;
 
+            // Sincronizar cantidad de correos por página (paginación)
+            const savedPageSize = parseInt(data.emails_page_size || localStorage.getItem('merkemail_page_size') || '12', 10) || 12;
+            const pageSizeSelect = document.getElementById('settings-emails-page-size');
+            if (pageSizeSelect) pageSizeSelect.value = String(savedPageSize);
+            try {
+                localStorage.setItem('merkemail_page_size', String(savedPageSize));
+            } catch (e) {}
+            if (window.EmailManager && EmailManager.pageSize !== savedPageSize) {
+                EmailManager.pageSize = savedPageSize;
+                EmailManager.currentPage = 1;
+                EmailManager.loadEmails(false);
+            }
+
             // Poblar y seleccionar el calendario predeterminado
             const defaultCalSelect = document.getElementById('settings-default-calendar-select');
             if (defaultCalSelect) {
@@ -366,6 +379,8 @@ const GeminiAI = {
         const tone = document.getElementById('gemini-default-tone').value;
         const defaultCalEl = document.getElementById('settings-default-calendar-select');
         const defaultCalendarId = defaultCalEl ? (defaultCalEl.value || '1') : '1';
+        const pageSizeEl = document.getElementById('settings-emails-page-size');
+        const emailsPageSize = pageSizeEl ? (pageSizeEl.value || '12') : String(window.EmailManager?.pageSize || 12);
 
         try {
             const res = await fetch('/api/settings', {
@@ -376,7 +391,8 @@ const GeminiAI = {
                     gemini_api_key: apiKey,
                     gemini_model: model,
                     ai_prompt_tone: tone,
-                    default_calendar_id: defaultCalendarId
+                    default_calendar_id: defaultCalendarId,
+                    emails_page_size: emailsPageSize
                 })
             });
             if (res.ok) {
