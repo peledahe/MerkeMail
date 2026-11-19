@@ -741,6 +741,123 @@ class GoogleOAuthService:
 
     _last_labels_sync_by_acc: Dict[int, float] = {}
 
+    # Paleta de colores de fondo que acepta la API de Gmail para etiquetas (cualquier otro valor
+    # devuelve error 400). El color elegido en MerkeMail se aproxima al más cercano de esta lista.
+    _GMAIL_LABEL_BG_COLORS = [
+        "#000000", "#434343", "#666666", "#999999", "#cccccc", "#efefef", "#f3f3f3", "#ffffff",
+        "#fb4c2f", "#ffad47", "#fad165", "#16a766", "#43d692", "#4a86e8", "#a479e2", "#f691b3",
+        "#f6c5be", "#ffe6c7", "#fef1d1", "#b9e4d0", "#c6f3de", "#c9daf8", "#e4d7f5", "#fcdee8",
+        "#efa093", "#ffd6a2", "#fce8b3", "#89d3b2", "#a0eac9", "#a4c2f4", "#d0bcf1", "#fbc8d9",
+        "#e66550", "#ffbc6b", "#fcda83", "#44b984", "#68dfa9", "#6d9eeb", "#b694e8", "#f7a7c0",
+        "#cc3a21", "#eaa041", "#f2c960", "#149e60", "#3dc789", "#3c78d8", "#8e63ce", "#e07798",
+        "#ac2b16", "#cf8933", "#d5ae49", "#0b804b", "#2a9c68", "#285bac", "#653e9b", "#b65775",
+        "#822111", "#a46a21", "#aa8831", "#076239", "#1a764d", "#1c4587", "#41236d", "#83334c",
+    ]
+
+    @classmethod
+    def is_gmail_api_account(cls, account_id: Optional[int]) -> bool:
+        """True si la cuenta es de Gmail conectada por OAuth (sincroniza por la API REST de Gmail)."""
+        if not account_id:
+            return False
+        conn = get_db()
+        row = conn.execute("SELECT auth_type FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        conn.close()
+        return bool(row and row["auth_type"] == "oauth2")
+
+    @classmethod
+    def _gmail_label_color(cls, hex_color: Optional[str]) -> Optional[Dict[str, str]]:
+        """Color de Gmail más cercano al color local (fondo + texto legible), o None si no es válido."""
+        m = re.fullmatch(r"#?([0-9a-fA-F]{6})", (hex_color or "").strip())
+        if not m:
+            return None
+        rgb = tuple(int(m.group(1)[i:i + 2], 16) for i in (0, 2, 4))
+        def dist(c):
+            c_rgb = tuple(int(c[i:i + 2], 16) for i in (1, 3, 5))
+            return sum((a - b) ** 2 for a, b in zip(rgb, c_rgb))
+        bg = min(cls._GMAIL_LABEL_BG_COLORS, key=dist)
+        r, g, b = (int(bg[i:i + 2], 16) for i in (1, 3, 5))
+        text = "#000000" if (0.299 * r + 0.587 * g + 0.114 * b) > 150 else "#ffffff"
+        return {"backgroundColor": bg, "textColor": text}
+
+    @classmethod
+    def create_gmail_label(cls, account_id: int, name: str, color: Optional[str] = None) -> str:
+        """Crea la etiqueta en Gmail y devuelve su id remoto. Si ya existe una con ese nombre
+        (sin distinguir mayúsculas) se reutiliza. Lanza excepción si Gmail no está disponible."""
+        creds = cls.get_valid_credentials(account_id)
+        service = build("gmail", "v1", credentials=creds)
+        key = (name or "").strip().casefold()
+        for glbl in service.users().labels().list(userId="me").execute().get("labels", []):
+            if (glbl.get("name") or "").strip().casefold() == key:
+                return glbl["id"]
+        body = {"name": name.strip(), "labelListVisibility": "labelShow", "messageListVisibility": "show"}
+        gcolor = cls._gmail_label_color(color)
+        if gcolor:
+            body["color"] = gcolor
+        try:
+            created = service.users().labels().create(userId="me", body=body).execute()
+        except Exception:
+            if "color" not in body:
+                raise
+            body.pop("color")  # Reintentar sin color si Gmail lo rechaza
+            created = service.users().labels().create(userId="me", body=body).execute()
+        return created["id"]
+
+    @classmethod
+    def update_gmail_label(cls, account_id: int, remote_id: str, name: str, color: Optional[str] = None) -> None:
+        """Renombra / cambia el color de la etiqueta en Gmail."""
+        creds = cls.get_valid_credentials(account_id)
+        service = build("gmail", "v1", credentials=creds)
+        body = {"name": name.strip()}
+        gcolor = cls._gmail_label_color(color)
+        if gcolor:
+            body["color"] = gcolor
+        try:
+            service.users().labels().patch(userId="me", id=remote_id, body=body).execute()
+        except Exception:
+            if "color" not in body:
+                raise
+            body.pop("color")
+            service.users().labels().patch(userId="me", id=remote_id, body=body).execute()
+
+    @classmethod
+    def delete_gmail_label(cls, account_id: int, remote_id: str) -> None:
+        """Elimina la etiqueta en Gmail (los mensajes no se borran, solo pierden la etiqueta)."""
+        creds = cls.get_valid_credentials(account_id)
+        service = build("gmail", "v1", credentials=creds)
+        service.users().labels().delete(userId="me", id=remote_id).execute()
+
+    @classmethod
+    def push_pending_local_labels(cls, account_id: int) -> int:
+        """Crea en Gmail las etiquetas de la cuenta que aún son solo locales (sin remote_id), p. ej.
+        si Gmail no respondía al crearlas, y envía a Gmail sus asignaciones a correos.
+        Devuelve cuántas etiquetas se crearon."""
+        conn = get_db()
+        pending = conn.execute(
+            "SELECT id, name, color FROM labels WHERE account_id = ? AND (remote_id IS NULL OR remote_id = '')",
+            (account_id,)
+        ).fetchall()
+        conn.close()
+        created = 0
+        for lbl in pending:
+            try:
+                remote_id = cls.create_gmail_label(account_id, lbl["name"], lbl["color"])
+            except Exception as e:
+                print(f"Aviso: no se pudo crear la etiqueta '{lbl['name']}' en Gmail: {e}")
+                continue
+            conn = get_db()
+            conn.execute("UPDATE labels SET remote_id = ?, type = 'user' WHERE id = ?", (remote_id, lbl["id"]))
+            uids = [r["uid"] for r in conn.execute(
+                """SELECT e.uid FROM email_labels el JOIN emails e ON e.id = el.email_id
+                   WHERE el.label_id = ? AND e.account_id = ? AND e.uid IS NOT NULL AND e.uid != ''""",
+                (lbl["id"], account_id)
+            ).fetchall()]
+            conn.commit()
+            conn.close()
+            for uid in uids:
+                cls.modify_message_labels(account_id, uid, add_labels=[remote_id])
+            created += 1
+        return created
+
     @classmethod
     def sync_gmail_labels(cls, account_id: int, force: bool = True) -> List[Dict[str, Any]]:
         """Sincroniza todas las etiquetas (labels) de la cuenta de Gmail a la base de datos local."""
@@ -820,6 +937,13 @@ class GoogleOAuthService:
 
             conn.commit()
             conn.close()
+
+            # Etiquetas creadas en MerkeMail que aún no existen en Gmail -> crearlas allí
+            try:
+                cls.push_pending_local_labels(account_id)
+            except Exception as push_err:
+                print(f"Aviso enviando etiquetas locales pendientes a Gmail: {push_err}")
+
             cls._last_labels_sync_by_acc[account_id] = now_ts
             return saved_labels
         except Exception as e:
@@ -1083,6 +1207,19 @@ class GoogleOAuthService:
                 print(f"Error procesando mensaje nuevo {msg_id}: {item_err}")
                 continue
 
+        # Etiquetas de usuario (con id remoto de ESTA cuenta) asignadas localmente a los correos existentes
+        local_remote_labels_by_email: Dict[int, set] = {}
+        existing_db_ids = [existing_by_uid[mid]["id"] for mid in existing_msg_ids]
+        for i in range(0, len(existing_db_ids), 500):
+            chunk = existing_db_ids[i:i + 500]
+            ph = ",".join("?" for _ in chunk)
+            for r in conn.execute(
+                f"""SELECT el.email_id, l.remote_id FROM email_labels el JOIN labels l ON l.id = el.label_id
+                    WHERE el.email_id IN ({ph}) AND l.account_id = ? AND l.remote_id IS NOT NULL AND l.remote_id != ''""",
+                chunk + [account_id]
+            ).fetchall():
+                local_remote_labels_by_email.setdefault(r["email_id"], set()).add(r["remote_id"])
+
         # Procesar actualizaciones de mensajes existentes respetando Prioridad 1 (cambios en MerkeMail prevalecen)
         for msg_id in existing_msg_ids:
             min_data = minimal_messages.get(msg_id)
@@ -1144,6 +1281,12 @@ class GoogleOAuthService:
                         for sys_rm in ("TRASH", "SPAM"):
                             if sys_rm in msg_label_ids:
                                 rem_lbls.append(sys_rm)
+                # Etiquetas de usuario: las asignadas en MerkeMail prevalecen y se envían a Gmail
+                # (reintenta también envíos que fallaron al asignar/quitar la etiqueta)
+                local_user = local_remote_labels_by_email.get(existing["id"], set())
+                remote_user = {l for l in msg_label_ids if l in remote_to_local_label}
+                add_lbls.extend(sorted(local_user - remote_user))
+                rem_lbls.extend(sorted(remote_user - local_user))
                 if add_lbls or rem_lbls:
                     threading.Thread(
                         target=cls.modify_message_labels,

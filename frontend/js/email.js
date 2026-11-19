@@ -5,6 +5,8 @@ const EmailManager = {
     currentAccountId: null,
     currentLabelId: null,
     labels: [],
+    allLabels: [],
+    pendingLabelAssignEmailId: null,
     searchQuery: '',
     currentPage: 1,
     pageSize: parseInt(localStorage.getItem('merkemail_page_size') || '12', 10) || 12,
@@ -21,7 +23,6 @@ const EmailManager = {
     readTimerId: null,
     pendingReadEmailId: null,
     emailDetailCache: new Map(),
-    accountLabelsCache: {},
 
     getFolderDisplayName(folder) {
         if (!folder) return 'Recibidos';
@@ -715,6 +716,10 @@ const EmailManager = {
             // Renderizar cuentas en todos los contenedores y selectores
             this.renderAccounts();
 
+            // Las etiquetas pueden haberse cargado antes que las cuentas (carga en paralelo):
+            // re-renderizar para mostrar la cuenta dueña de cada etiqueta
+            if (this.allLabels && this.allLabels.length > 0) this.renderLabels();
+
             this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
 
             // Actualizar la descripción de bienvenida del asistente Elio
@@ -902,27 +907,61 @@ const EmailManager = {
 
     async loadLabels() {
         try {
-            // Cargar todas las etiquetas para pre-popular la caché por cuenta
+            // Se cargan todas las etiquetas de todas las cuentas una sola vez y se filtran en cliente
             const allRes = await fetch('/api/labels');
             const allLabels = await allRes.json();
-            this.accountLabelsCache = {};
-            (allLabels || []).forEach(l => {
-                if (l.account_id) {
-                    if (!this.accountLabelsCache[l.account_id]) this.accountLabelsCache[l.account_id] = [];
-                    this.accountLabelsCache[l.account_id].push(l);
-                }
-            });
+            this.allLabels = Array.isArray(allLabels) ? allLabels : [];
 
-            if (this.currentAccountId) {
-                this.labels = (allLabels || []).filter(l => !l.account_id || l.account_id === this.currentAccountId);
-            } else {
-                this.labels = allLabels;
-            }
+            this.labels = this.getSidebarLabelsForAccount(this.currentAccountId);
             await this.updateUnreadCounts();
             this.renderLabels();
         } catch (e) {
             console.error("Error al cargar etiquetas:", e);
         }
+    },
+
+    // Etiquetas que se listan en la barra lateral según el selector superior de cuentas:
+    //  - "Todas las cuentas" (null): todas las etiquetas de todas las cuentas.
+    //  - Una cuenta: solo las de esa cuenta (propias + las que estén en uso en sus correos).
+    getSidebarLabelsForAccount(accountId) {
+        const all = this.allLabels || [];
+        if (!accountId) return all;
+        return all.filter(l =>
+            l.account_id === accountId ||
+            (Array.isArray(l.account_ids) && l.account_ids.includes(accountId))
+        );
+    },
+
+    // Texto para distinguir etiquetas con el mismo nombre dentro de una lista:
+    // nombre de la cuenta dueña o "Compartida" para las etiquetas sin cuenta.
+    getLabelOwnerHint(label, list) {
+        const key = String(label.name || '').trim().toLowerCase();
+        const dupes = (list || []).filter(x => String(x.name || '').trim().toLowerCase() === key).length > 1;
+        if (!dupes) return '';
+        if (!label.account_id) return 'Compartida';
+        const acc = (this.accounts || []).find(a => a.id === label.account_id);
+        return acc ? acc.name : '';
+    },
+
+    // Lista de etiquetas de los menús "Etiquetar" (barra superior de la lista y vista del correo):
+    // exactamente la misma lista de la barra lateral, que respeta el selector superior de cuentas
+    // ("Todas las cuentas" = todas las etiquetas; una cuenta = solo las etiquetas de esa cuenta).
+    // Si se elige una etiqueta de otra cuenta, el backend usa la homónima de la cuenta del correo.
+    getLabelMenu() {
+        return this.labels || [];
+    },
+
+    // ¿La etiqueta del menú está aplicada al correo? Una etiqueta de otra cuenta cuenta como
+    // aplicada si el correo tiene la homónima de su propia cuenta (es la que usará el backend).
+    isLabelAppliedToEmail(label, email, assignedLabelIds) {
+        if (assignedLabelIds.has(label.id)) return true;
+        if (!label.account_id || label.account_id === email.account_id) return false;
+        const name = String(label.name || '').trim().toLowerCase();
+        return (this.allLabels || []).some(l =>
+            assignedLabelIds.has(l.id) &&
+            l.account_id === email.account_id &&
+            String(l.name || '').trim().toLowerCase() === name
+        );
     },
 
     async syncRemoteLabels() {
@@ -1183,19 +1222,34 @@ const EmailManager = {
             return;
         }
 
+        // Nombres repetidos en la lista (p. ej. "Trabajo" compartida y "Trabajo" de una cuenta)
+        const nameCounts = {};
+        this.labels.forEach(l => {
+            const key = String(l.name || '').trim().toLowerCase();
+            nameCounts[key] = (nameCounts[key] || 0) + 1;
+        });
+
         container.innerHTML = this.labels.map(l => {
             const isActive = this.currentLabelId === l.id;
             const unread = (this.unreadCounts?.labels && this.unreadCounts.labels[String(l.id)]) || 0;
             const displayName = this.getLabelDisplayName(l.name);
+            // En "Todas las cuentas" se indica la cuenta dueña; si el nombre se repite, también
+            // se marca la etiqueta compartida para poder distinguirlas
+            const ownerAcc = (!this.currentAccountId && l.account_id)
+                ? (this.accounts || []).find(a => a.id === l.account_id)
+                : null;
+            const isDuplicateName = nameCounts[String(l.name || '').trim().toLowerCase()] > 1;
+            const ownerName = ownerAcc ? ownerAcc.name : ((!l.account_id && isDuplicateName) ? 'Compartida' : '');
+            const ownerHint = ownerName ? ` (${ownerName})` : '';
             return `
                 <div class="label-nav-btn group flex items-center justify-between px-3 sm:px-4 py-1.5 rounded-r-full cursor-pointer transition-colors ${
                     isActive 
                         ? 'bg-indigo-50 dark:bg-indigo-950/70 font-bold text-indigo-700 dark:text-indigo-300 border-l-2 border-indigo-600 dark:border-indigo-400' 
                         : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60'
-                }" onclick="EmailManager.filterByLabel(${l.id})" title="${this.escapeHtml(displayName)}">
+                }" onclick="EmailManager.filterByLabel(${l.id})" title="${this.escapeHtml(displayName + ownerHint)}">
                     <div class="label-left-content flex items-center gap-2.5 min-w-0 flex-1">
                         <span class="label-dot w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style="background-color: ${l.color || '#3b82f6'}"></span>
-                        <span class="sidebar-text truncate text-xs">${this.escapeHtml(displayName)}</span>
+                        <span class="sidebar-text truncate text-xs">${this.escapeHtml(displayName)}${ownerName ? `<span class="ml-1 text-[10px] font-normal text-slate-400 dark:text-slate-500">· ${this.escapeHtml(ownerName)}</span>` : ''}</span>
                     </div>
                     <div class="sidebar-text flex items-center gap-1.5 shrink-0 ml-1">
                         <span class="sidebar-badge text-[11px] px-2 py-0.5 rounded-full font-bold bg-slate-200/80 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 ${unread > 0 ? '' : 'hidden'}" id="label-badge-${l.id}">
@@ -1253,35 +1307,80 @@ const EmailManager = {
         this.loadEmails();
     },
 
-    openCreateLabelModal() {
-        document.getElementById('modal-label-title').textContent = 'Nueva Etiqueta';
-        document.getElementById('manage-label-id').value = '';
+    // Cuenta principal: la marcada como predeterminada (is_default) o, si no hay, la primera
+    getPrimaryAccountId() {
+        const accs = this.accounts || [];
+        const def = accs.find(a => Number(a.is_default) === 1) || accs.find(a => Number(a.is_active) === 1) || accs[0];
+        return def ? def.id : null;
+    },
+
+    // Abre el modal de etiqueta. `accountId` = cuenta donde se creará; `assignToEmailId` = correo
+    // al que se asignará automáticamente tras crearla (creación desde la vista del correo).
+    _openLabelModal({ title, labelId = '', name = '', color = '#3b82f6', accountId = null, assignToEmailId = null, info = '' }) {
+        document.getElementById('modal-label-title').textContent = title;
+        document.getElementById('manage-label-id').value = labelId;
         const accEl = document.getElementById('manage-label-account-id');
-        if (accEl) accEl.value = this.currentAccountId || '';
-        document.getElementById('manage-label-name').value = '';
-        this.selectLabelColor('#3b82f6');
+        if (accEl) accEl.value = accountId || '';
+        this.pendingLabelAssignEmailId = assignToEmailId;
+        const infoEl = document.getElementById('manage-label-account-info');
+        if (infoEl) {
+            infoEl.innerHTML = info;
+            infoEl.classList.toggle('hidden', !info);
+        }
+        document.getElementById('manage-label-name').value = name;
+        this.selectLabelColor(color || '#3b82f6');
         document.getElementById('modal-manage-label').classList.remove('hidden');
         setTimeout(() => document.getElementById('manage-label-name').focus(), 100);
     },
 
-    openCreateLabelModalForAccount(accountId) {
-        document.getElementById('modal-label-title').textContent = 'Nueva Etiqueta en Cuenta';
-        document.getElementById('manage-label-id').value = '';
-        const accEl = document.getElementById('manage-label-account-id');
-        if (accEl) accEl.value = accountId || '';
-        document.getElementById('manage-label-name').value = '';
-        this.selectLabelColor('#3b82f6');
-        document.getElementById('modal-manage-label').classList.remove('hidden');
-        setTimeout(() => document.getElementById('manage-label-name').focus(), 100);
+    _accountLabelText(accountId) {
+        const acc = (this.accounts || []).find(a => a.id === accountId);
+        return acc ? `<strong>${this.escapeHtml(acc.name)}</strong> (${this.escapeHtml(acc.email)})` : 'la cuenta seleccionada';
+    },
+
+    // Crear desde la barra lateral:
+    //  - "Todas las cuentas": en la cuenta principal (si luego se asigna a correos de otras
+    //    cuentas, el backend crea la etiqueta homónima en cada una de esas cuentas).
+    //  - Una cuenta seleccionada: en la cuenta del correo abierto y asignada a ese correo;
+    //    si no hay correo abierto, en la cuenta seleccionada.
+    openCreateLabelModal() {
+        if (!this.currentAccountId) {
+            const accountId = this.getPrimaryAccountId();
+            this._openLabelModal({
+                title: 'Nueva Etiqueta', accountId,
+                info: `Se creará en la cuenta principal ${this._accountLabelText(accountId)}. Si la asignas a correos de otras cuentas, se creará también en esas cuentas.`
+            });
+            return;
+        }
+        const opened = this.getOpenedEmail();
+        if (opened) {
+            this.openCreateLabelModalForAccount(opened.account_id, opened.id);
+            return;
+        }
+        this._openLabelModal({
+            title: 'Nueva Etiqueta', accountId: this.currentAccountId,
+            info: `Se creará en la cuenta ${this._accountLabelText(this.currentAccountId)}.`
+        });
+    },
+
+    // Correo abierto actualmente en el visor (o null)
+    getOpenedEmail() {
+        const em = this.currentOpenedEmail;
+        return (em && this.selectedEmailId && em.id === this.selectedEmailId) ? em : null;
+    },
+
+    // Crear desde la vista del correo: en la cuenta del correo abierto y asignada a ese correo
+    openCreateLabelModalForAccount(accountId, emailId = null) {
+        document.querySelectorAll('[id^="email-label-dropdown"]').forEach(el => el.classList.add('hidden'));
+        const opened = this.getOpenedEmail();
+        const subject = (opened && opened.id === emailId) ? (opened.subject || '(sin asunto)') : '';
+        const info = `Se creará en la cuenta ${this._accountLabelText(accountId)}` +
+            (emailId ? ` y se asignará al correo abierto${subject ? `: <em>${this.escapeHtml(subject)}</em>` : ''}` : '') + '.';
+        this._openLabelModal({ title: 'Nueva Etiqueta en Cuenta', accountId, assignToEmailId: emailId, info });
     },
 
     openEditLabelModal(labelId, labelName, labelColor) {
-        document.getElementById('modal-label-title').textContent = 'Editar Etiqueta';
-        document.getElementById('manage-label-id').value = labelId;
-        document.getElementById('manage-label-name').value = labelName;
-        this.selectLabelColor(labelColor || '#3b82f6');
-        document.getElementById('modal-manage-label').classList.remove('hidden');
-        setTimeout(() => document.getElementById('manage-label-name').focus(), 100);
+        this._openLabelModal({ title: 'Editar Etiqueta', labelId, name: labelName, color: labelColor });
     },
 
     selectLabelColor(color) {
@@ -1297,7 +1396,8 @@ const EmailManager = {
         const name = document.getElementById('manage-label-name').value.trim();
         const color = document.getElementById('manage-label-color').value;
         const accIdVal = document.getElementById('manage-label-account-id')?.value;
-        const account_id = accIdVal ? parseInt(accIdVal) : (this.currentAccountId || null);
+        const account_id = accIdVal ? parseInt(accIdVal) : (this.currentAccountId || this.getPrimaryAccountId());
+        const assignToEmailId = id ? null : this.pendingLabelAssignEmailId;
 
         if (!name) {
             UI.showStickyToast('Nombre requerido', 'Ingresa el nombre de la etiqueta', 'warning');
@@ -1312,7 +1412,11 @@ const EmailManager = {
                     body: JSON.stringify({ name, color, account_id })
                 });
                 if (!res.ok) throw new Error('Error al actualizar');
+                const upd = await res.json().catch(() => ({}));
                 UI.showStickyToast('Etiqueta Actualizada', `Se guardó "${name}" correctamente`, 'success');
+                if (upd.gmail_error) {
+                    UI.showStickyToast('Gmail', 'El cambio se guardó en MerkeMail pero no se pudo aplicar en Gmail.', 'warning', 6000);
+                }
             } else {
                 const res = await fetch('/api/labels', {
                     method: 'POST',
@@ -1320,15 +1424,42 @@ const EmailManager = {
                     body: JSON.stringify({ name, color, account_id })
                 });
                 if (!res.ok) throw new Error('Error al crear');
-                UI.showStickyToast('Etiqueta Creada', `La etiqueta "${name}" ha sido creada`, 'success');
+                const created = await res.json();
+
+                // Creada desde la vista del correo: asignarla automáticamente a ese correo
+                if (assignToEmailId && created.label_id) {
+                    const resAssign = await fetch(`/api/emails/${assignToEmailId}/labels`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ label_id: created.label_id })
+                    });
+                    if (!resAssign.ok) throw new Error('La etiqueta se creó pero no se pudo asignar al correo');
+                    this.emailDetailCache.delete(assignToEmailId);
+                }
+
+                const accName = ((this.accounts || []).find(a => a.id === account_id) || {}).name || 'la cuenta';
+                const what = created.existing ? `La etiqueta "${name}" ya existía en ${accName}` : `La etiqueta "${name}" se creó en ${accName}`;
+                const gmail = created.gmail || {};
+                const gmailTxt = gmail.is_gmail ? (gmail.synced ? ' (también en Gmail)' : '') : '';
+                UI.showStickyToast(
+                    created.existing ? 'Etiqueta Existente' : 'Etiqueta Creada',
+                    (assignToEmailId ? `${what}${gmailTxt} y se asignó al correo` : `${what}${gmailTxt}`),
+                    'success'
+                );
+                if (gmail.is_gmail && !gmail.synced) {
+                    UI.showStickyToast('Gmail no disponible',
+                        'La etiqueta quedó guardada en MerkeMail y se creará en Gmail en la próxima sincronización.',
+                        'warning', 6000);
+                }
             }
 
+            this.pendingLabelAssignEmailId = null;
             document.getElementById('modal-manage-label').classList.add('hidden');
             await this.loadLabels();
             if (this.selectedEmailId) {
                 await this.openEmailDetail(this.selectedEmailId);
             }
-            if (this.currentLabelId) {
+            if (this.currentLabelId || assignToEmailId) {
                 await this.loadEmails(false);
             }
         } catch (err) {
@@ -1339,7 +1470,8 @@ const EmailManager = {
     async deleteLabel(labelId, labelName) {
         const confirmed = await UI.confirm({
             title: '¿Eliminar etiqueta?',
-            message: `¿Estás seguro de eliminar la etiqueta "${labelName}"? Los correos no se borrarán, solo perderán esta etiqueta.`,
+            message: `¿Estás seguro de eliminar la etiqueta "${labelName}"? Los correos no se borrarán, solo perderán esta etiqueta.` +
+                (((this.allLabels || []).find(l => l.id === labelId) || {}).remote_id ? ' La etiqueta también se eliminará en Gmail.' : ''),
             confirmText: 'Eliminar Etiqueta',
             cancelText: 'Cancelar',
             isDanger: true
@@ -1349,7 +1481,10 @@ const EmailManager = {
 
         try {
             const res = await fetch(`/api/labels/${labelId}`, { method: 'DELETE' });
-            if (!res.ok) throw new Error('No se pudo eliminar la etiqueta');
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.detail || 'No se pudo eliminar la etiqueta');
+            }
 
             UI.showStickyToast('Etiqueta Eliminada', `Se eliminó "${labelName}" con éxito`, 'success');
 
@@ -1380,7 +1515,8 @@ const EmailManager = {
             UI.showStickyToast('Etiqueta Asignada', 'Se ha asignado la etiqueta al correo', 'success');
             await this.openEmailDetail(emailId);
             await this.loadEmails(false);
-            await this.updateUnreadCounts();
+            // Recargar etiquetas: el uso por cuenta cambia y también los contadores
+            await this.loadLabels();
         } catch (err) {
             UI.showStickyToast('Error', err.message, 'error');
         }
@@ -1398,7 +1534,8 @@ const EmailManager = {
             UI.showStickyToast('Etiqueta Removida', 'Se quitó la etiqueta del correo actual', 'info');
             await this.openEmailDetail(emailId);
             await this.loadEmails(false);
-            await this.updateUnreadCounts();
+            // Recargar etiquetas: el uso por cuenta cambia y también los contadores
+            await this.loadLabels();
         } catch (err) {
             UI.showStickyToast('Error', err.message, 'error');
         }
@@ -1876,8 +2013,8 @@ const EmailManager = {
             const emailLabels = email.labels || [];
             const assignedLabelIds = new Set(emailLabels.map(l => l.id));
 
-            // Obtener etiquetas de la cuenta desde caché en memoria inmediata
-            let originLabels = this.accountLabelsCache[email.account_id] || [];
+            // Etiquetas del menú según el selector de cuentas (misma lista que la barra lateral)
+            let originLabels = this.getLabelMenu();
             const originAccount = (this.accounts || []).find(a => a.id === email.account_id);
             const originAccountLabel = originAccount ? (originAccount.email || originAccount.name) : 'Cuenta origen';
             const folderDisplayName = this.getFolderDisplayName(email.folder);
@@ -1896,12 +2033,12 @@ const EmailManager = {
                 
                 <div class="py-1">
                     ${originLabels.length > 0 ? originLabels.map(l => {
-                        const isAssigned = assignedLabelIds.has(l.id);
+                        const isAssigned = this.isLabelAppliedToEmail(l, email, assignedLabelIds);
                         return `
                             <div onclick="EmailManager.toggleLabelOnCurrentEmail(${email.id}, ${l.id}, ${isAssigned})" class="w-full text-left px-3 py-1.5 flex items-center justify-between gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors">
                                 <div class="flex items-center gap-2 min-w-0">
                                     <span class="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style="background-color: ${l.color}"></span>
-                                    <span class="truncate text-slate-700 dark:text-slate-200 ${isAssigned ? 'font-semibold text-indigo-600 dark:text-indigo-400' : ''}">${this.escapeHtml(this.getLabelDisplayName(l.name))}</span>
+                                    <span class="truncate text-slate-700 dark:text-slate-200 ${isAssigned ? 'font-semibold text-indigo-600 dark:text-indigo-400' : ''}">${this.escapeHtml(this.getLabelDisplayName(l.name))}${(() => { const h = this.getLabelOwnerHint(l, originLabels); return h ? `<span class="ml-1 text-[10px] font-normal text-slate-400">· ${this.escapeHtml(h)}</span>` : ''; })()}</span>
                                 </div>
                                 <span class="w-4 h-4 rounded border flex items-center justify-center shrink-0 text-xs ${
                                     isAssigned 
@@ -1920,7 +2057,7 @@ const EmailManager = {
                 </div>
 
                 <div class="border-t border-slate-100 dark:border-slate-800 pt-1 px-1">
-                    <button onclick="EmailManager.openCreateLabelModalForAccount(${email.account_id})" class="w-full text-left px-2.5 py-1.5 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-lg flex items-center gap-1.5 font-medium transition-colors">
+                    <button onclick="EmailManager.openCreateLabelModalForAccount(${email.account_id}, ${email.id})" class="w-full text-left px-2.5 py-1.5 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-lg flex items-center gap-1.5 font-medium transition-colors">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                         <span>Nueva etiqueta en esta cuenta...</span>
                     </button>
@@ -3381,6 +3518,9 @@ const EmailManager = {
                 // Deseleccionar todo inmediatamente al aplicar una acción
                 this.clearSelection();
                 await this.loadEmails();
+                if (action === 'add_label' || action === 'remove_label' || action === 'toggle_label') {
+                    await this.loadLabels();
+                }
             } else {
                 UI.showStickyToast('Error', data.detail || 'No se pudo completar la acción', 'error');
             }
@@ -3397,13 +3537,16 @@ const EmailManager = {
 
         const isHidden = drop.classList.contains('hidden');
         if (isHidden) {
-            if (!this.labels || this.labels.length === 0) {
-                listEl.innerHTML = '<div class="px-3 py-2 text-slate-400 text-[11px] italic">Sin etiquetas creadas</div>';
+            // Misma lista que la barra lateral (según el selector de cuentas)
+            const batchLabels = this.getLabelMenu();
+
+            if (batchLabels.length === 0) {
+                listEl.innerHTML = '<div class="px-3 py-2 text-slate-400 text-[11px] italic">Sin etiquetas disponibles</div>';
             } else {
-                listEl.innerHTML = this.labels.map(l => `
+                listEl.innerHTML = batchLabels.map(l => `
                     <button onclick="EmailManager.executeBatchAction('add_label', { label_id: ${l.id} })" class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center gap-2">
                         <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${l.color}"></span>
-                        <span class="truncate">${this.escapeHtml(l.name)}</span>
+                        <span class="truncate">${this.escapeHtml(l.name)}${(() => { const h = this.getLabelOwnerHint(l, batchLabels); return h ? `<span class="ml-1 text-[10px] text-slate-400">· ${this.escapeHtml(h)}</span>` : ''; })()}</span>
                     </button>
                 `).join('');
             }

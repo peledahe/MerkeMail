@@ -43,6 +43,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "frontend"
 IMG_DIR = BASE_DIR / "img"
 
+# Sin cabecera Cache-Control, el navegador (y el perfil persistente de la app de escritorio)
+# puede reutilizar por caché heurística un index.html/JS antiguo durante horas tras actualizar
+# la aplicación. "no-cache" obliga a revalidar con ETag en cada carga (respuesta 304 si no cambió).
+_NO_CACHE_PATHS = ("/", "/sw.js", "/manifest.json")
+
+@app.middleware("http")
+async def _frontend_no_cache(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if (path in _NO_CACHE_PATHS or path.startswith("/static/")) and "cache-control" not in response.headers:
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
 # Montar archivos estáticos
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/img", StaticFiles(directory=str(IMG_DIR)), name="img")
@@ -1660,18 +1673,21 @@ def batch_action_emails(req: BatchActionRequest):
     elif (req.action in ("add_label", "toggle_label")) and req.label_id:
         added = 0
         removed = 0
-        lbl_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (req.label_id,)).fetchone()
-        rem_lbl_id = lbl_row["remote_id"] if lbl_row else None
         for t in targets:
             eid = t["id"]
+            # Etiqueta efectiva según la cuenta de cada correo (ver _resolve_label_for_email)
+            lbl = _resolve_label_for_email(conn, req.label_id, eid, t["account_id"])
+            if not lbl:
+                continue
+            rem_lbl_id = lbl["remote_id"]
             exists = conn.execute(
                 "SELECT 1 FROM email_labels WHERE email_id = ? AND label_id = ?",
-                (eid, req.label_id)
+                (eid, lbl["id"])
             ).fetchone()
             if exists:
                 conn.execute(
                     "DELETE FROM email_labels WHERE email_id = ? AND label_id = ?",
-                    (eid, req.label_id)
+                    (eid, lbl["id"])
                 )
                 removed += 1
                 if rem_lbl_id and t.get("uid"):
@@ -1679,7 +1695,7 @@ def batch_action_emails(req: BatchActionRequest):
             else:
                 conn.execute(
                     "INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)",
-                    (eid, req.label_id)
+                    (eid, lbl["id"])
                 )
                 added += 1
                 if rem_lbl_id and t.get("uid"):
@@ -1687,14 +1703,14 @@ def batch_action_emails(req: BatchActionRequest):
         conn.execute(f"UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + req.email_ids)
         msg = f"Etiqueta actualizada (+{added} asignadas, -{removed} removidas)"
     elif req.action == "remove_label" and req.label_id:
-        lbl_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (req.label_id,)).fetchone()
-        rem_lbl_id = lbl_row["remote_id"] if lbl_row else None
-        conn.execute(f"DELETE FROM email_labels WHERE label_id = ? AND email_id IN ({placeholders})", [req.label_id] + req.email_ids)
+        for t in targets:
+            lbl = _resolve_label_for_email(conn, req.label_id, t["id"], t["account_id"], for_removal=True)
+            if not lbl:
+                continue
+            conn.execute("DELETE FROM email_labels WHERE email_id = ? AND label_id = ?", (t["id"], lbl["id"]))
+            if lbl["remote_id"] and t.get("uid"):
+                bg_label_ops.append((t["account_id"], t["uid"], None, [lbl["remote_id"]]))
         conn.execute(f"UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + req.email_ids)
-        if rem_lbl_id:
-            for t in targets:
-                if t.get("uid"):
-                    bg_label_ops.append((t["account_id"], t["uid"], None, [rem_lbl_id]))
         msg = f"Etiqueta removida de {len(req.email_ids)} correos"
     elif req.action == "move_folder" and req.folder:
         conn.execute(f"UPDATE emails SET folder = ?, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [req.folder, now_iso] + req.email_ids)
@@ -2311,49 +2327,138 @@ def create_event_from_email(email_id: int, calendar_id: Optional[int] = Query(No
         raise HTTPException(status_code=400, detail=str(e))
 
 # --- ENDPOINTS DE ETIQUETAS (LABELS) ---
+def _resolve_label_for_email(conn, label_id: int, email_id: int, email_account_id: Optional[int], for_removal: bool = False) -> Optional[Dict[str, Any]]:
+    """Etiqueta efectiva al asignar/quitar `label_id` en un correo de `email_account_id`.
+
+    Las etiquetas pertenecen a una cuenta. Si se elige una etiqueta de OTRA cuenta (p. ej. con
+    "Todas las cuentas" seleccionado):
+      - Se usa la etiqueta homónima (mismo nombre) de la cuenta del correo.
+      - Si la cuenta del correo no la tiene, se CREA en esa cuenta (mismo nombre y color) y se usa.
+    Las etiquetas compartidas (sin cuenta) y las de la misma cuenta del correo se usan tal cual.
+    Al quitar (`for_removal`) nunca se crea nada: se quita la asignada exacta o su homónima.
+    """
+    row = conn.execute("SELECT id, name, color, account_id, remote_id FROM labels WHERE id = ?", (label_id,)).fetchone()
+    if not row:
+        return None
+    lbl = dict(row)
+    if lbl["account_id"] is None or lbl["account_id"] == email_account_id or email_account_id is None:
+        return lbl
+    if for_removal and conn.execute(
+        "SELECT 1 FROM email_labels WHERE email_id = ? AND label_id = ?", (email_id, label_id)
+    ).fetchone():
+        lbl["remote_id"] = None
+        return lbl
+    same = _find_label_in_account(conn, email_account_id, lbl["name"])
+    if same:
+        return same
+    if for_removal:
+        lbl["remote_id"] = None
+        return lbl
+    # Crear la etiqueta en la cuenta del correo (y en Gmail si la cuenta es Gmail)
+    from datetime import datetime
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    _, remote_id, _ = _create_remote_label_if_gmail(email_account_id, lbl["name"], lbl["color"])
+    cur = conn.execute(
+        "INSERT INTO labels (name, color, account_id, remote_id, type, updated_at, local_modified) VALUES (?, ?, ?, ?, 'user', ?, 1)",
+        (lbl["name"], lbl["color"] or "#3b82f6", email_account_id, remote_id, now_iso)
+    )
+    return {"id": cur.lastrowid, "name": lbl["name"], "color": lbl["color"], "account_id": email_account_id, "remote_id": remote_id}
+
+def _create_remote_label_if_gmail(account_id: Optional[int], name: str, color: Optional[str]):
+    """Si la cuenta es Gmail (OAuth), crea la etiqueta también en Gmail.
+    Devuelve (es_gmail, remote_id, error). Si falla, la etiqueta queda local y se reintenta
+    en la próxima sincronización de etiquetas (push_pending_local_labels)."""
+    if not GoogleOAuthService.is_gmail_api_account(account_id):
+        return False, None, None
+    try:
+        return True, GoogleOAuthService.create_gmail_label(account_id, name, color), None
+    except Exception as e:
+        print(f"Aviso: no se pudo crear la etiqueta '{name}' en Gmail: {e}")
+        return True, None, str(e)
+
+def _find_label_in_account(conn, account_id: int, name: str) -> Optional[Dict[str, Any]]:
+    """Etiqueta de `account_id` con ese nombre (sin distinguir mayúsculas), o None."""
+    key = (name or "").strip().casefold()
+    for row in conn.execute(
+        "SELECT id, name, color, account_id, remote_id FROM labels WHERE account_id = ? ORDER BY id", (account_id,)
+    ).fetchall():
+        if (row["name"] or "").strip().casefold() == key:
+            return dict(row)
+    return None
+
 @app.get("/api/labels")
 def list_labels(account_id: Optional[int] = None):
+    """Lista de etiquetas.
+
+    - Sin account_id ("Todas las cuentas"): todas las etiquetas de todas las cuentas.
+    - Con account_id: solo las etiquetas de esa cuenta, es decir, las propias de la cuenta
+      (labels.account_id = cuenta) más cualquier otra etiqueta que esté en uso en algún
+      correo de esa cuenta.
+
+    Cada etiqueta incluye `account_ids`: cuentas cuyos correos tienen asignada la etiqueta.
+    """
     conn = get_db()
 
-    effective_acc_id = account_id
-    if not effective_acc_id:
-        acc = conn.execute("SELECT id, auth_type FROM accounts WHERE is_active = 1 ORDER BY id ASC LIMIT 1").fetchone()
-        if acc:
-            effective_acc_id = acc["id"]
-
-    if effective_acc_id:
-        existing_acc_labels = conn.execute("SELECT COUNT(*) as total FROM labels WHERE account_id = ?", (effective_acc_id,)).fetchone()["total"]
-        if existing_acc_labels == 0:
-            acc_info = conn.execute("SELECT auth_type FROM accounts WHERE id = ?", (effective_acc_id,)).fetchone()
-            if acc_info and acc_info["auth_type"] == "oauth2":
-                threading.Thread(
-                    target=GoogleOAuthService.sync_gmail_labels,
-                    args=(effective_acc_id, True),
-                    daemon=True
-                ).start()
-
+    # Auto-sincronizar etiquetas de Gmail (OAuth) en cuentas que aún no tienen ninguna.
+    # En "Todas las cuentas" se revisan todas las cuentas activas, no solo la primera.
     if account_id:
-        rows = conn.execute("SELECT * FROM labels WHERE account_id = ? OR account_id IS NULL ORDER BY name ASC", (account_id,)).fetchall()
+        candidate_accs = conn.execute("SELECT id, auth_type FROM accounts WHERE id = ?", (account_id,)).fetchall()
     else:
-        rows = conn.execute("SELECT * FROM labels ORDER BY name ASC").fetchall()
+        candidate_accs = conn.execute("SELECT id, auth_type FROM accounts WHERE is_active = 1 ORDER BY id ASC").fetchall()
+    for acc in candidate_accs:
+        if acc["auth_type"] != "oauth2":
+            continue
+        existing_acc_labels = conn.execute("SELECT COUNT(*) as total FROM labels WHERE account_id = ?", (acc["id"],)).fetchone()["total"]
+        if existing_acc_labels == 0:
+            threading.Thread(
+                target=GoogleOAuthService.sync_gmail_labels,
+                args=(acc["id"], True),
+                daemon=True
+            ).start()
 
+    rows = conn.execute("SELECT * FROM labels ORDER BY name COLLATE NOCASE ASC, account_id ASC").fetchall()
+    usage_rows = conn.execute(
+        """SELECT DISTINCT el.label_id, e.account_id
+           FROM email_labels el
+           JOIN emails e ON e.id = el.email_id
+           WHERE e.account_id IS NOT NULL"""
+    ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+
+    usage_by_label: Dict[int, List[int]] = {}
+    for u in usage_rows:
+        usage_by_label.setdefault(u["label_id"], []).append(u["account_id"])
+
+    labels = []
+    for r in rows:
+        lbl = dict(r)
+        lbl["account_ids"] = sorted(usage_by_label.get(lbl["id"], []))
+        if account_id:
+            owned = lbl["account_id"] == account_id
+            in_use = account_id in lbl["account_ids"]
+            if not (owned or in_use):
+                continue
+        labels.append(lbl)
+    return labels
 
 @app.post("/api/labels/sync")
 def sync_labels(account_id: Optional[int] = None):
     conn = get_db()
-    if not account_id:
-        acc = conn.execute("SELECT id FROM accounts WHERE is_active = 1 ORDER BY id ASC LIMIT 1").fetchone()
-        if acc:
-            account_id = acc["id"]
-        else:
+    if account_id:
+        target_ids = [account_id]
+    else:
+        # "Todas las cuentas": sincronizar las etiquetas de todas las cuentas Gmail (OAuth) activas
+        all_accs = conn.execute("SELECT id, auth_type FROM accounts WHERE is_active = 1 ORDER BY id ASC").fetchall()
+        if not all_accs:
             conn.close()
             return {"success": False, "error": "No hay cuentas configuradas"}
+        target_ids = [a["id"] for a in all_accs if a["auth_type"] == "oauth2"]
     conn.close()
 
     from backend.google_oauth import GoogleOAuthService
-    labels = GoogleOAuthService.sync_gmail_labels(account_id, force=True)
+    labels = []
+    for acc_id in target_ids:
+        labels.extend(GoogleOAuthService.sync_gmail_labels(acc_id, force=True))
     return {"success": True, "count": len(labels), "labels": labels}
 
 @app.post("/api/labels")
@@ -2361,27 +2466,78 @@ def create_label(req: LabelCreateRequest):
     from datetime import datetime
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="El nombre de la etiqueta es obligatorio")
+    name = req.name.strip()
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO labels (name, color, account_id, updated_at, local_modified) VALUES (?, ?, ?, ?, 1)", (req.name.strip(), req.color or "#3b82f6", req.account_id, now_iso))
-    conn.commit()
-    label_id = cursor.lastrowid
+    # Si la cuenta ya tiene una etiqueta con ese nombre se reutiliza en lugar de duplicarla
+    existing = _find_label_in_account(conn, req.account_id, name) if req.account_id else None
     conn.close()
-    return {"success": True, "label_id": label_id, "name": req.name.strip(), "color": req.color, "account_id": req.account_id}
+
+    # En cuentas Gmail (OAuth) la etiqueta se crea también en Gmail (o se vincula si ya existe allí)
+    is_gmail, remote_id, gmail_error = (False, None, None)
+    if not existing or not existing.get("remote_id"):
+        is_gmail, remote_id, gmail_error = _create_remote_label_if_gmail(
+            req.account_id, existing["name"] if existing else name, existing["color"] if existing else req.color
+        )
+    else:
+        is_gmail, remote_id = True, existing["remote_id"]
+
+    conn = get_db()
+    if existing:
+        label_id = existing["id"]
+        if remote_id and not existing.get("remote_id"):
+            conn.execute("UPDATE labels SET remote_id = ?, type = 'user' WHERE id = ?", (remote_id, label_id))
+        result_name, result_color = existing["name"], existing["color"]
+    else:
+        cursor = conn.execute(
+            "INSERT INTO labels (name, color, account_id, remote_id, type, updated_at, local_modified) VALUES (?, ?, ?, ?, 'user', ?, 1)",
+            (name, req.color or "#3b82f6", req.account_id, remote_id, now_iso)
+        )
+        label_id = cursor.lastrowid
+        result_name, result_color = name, req.color
+    conn.commit()
+    conn.close()
+    return {
+        "success": True, "existing": bool(existing), "label_id": label_id,
+        "name": result_name, "color": result_color, "account_id": req.account_id,
+        "gmail": {"is_gmail": is_gmail, "synced": bool(remote_id), "remote_id": remote_id, "error": gmail_error},
+    }
 
 @app.put("/api/labels/{label_id}")
 def update_label(label_id: int, req: LabelCreateRequest):
     from datetime import datetime
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
+    row = conn.execute("SELECT account_id, remote_id FROM labels WHERE id = ?", (label_id,)).fetchone()
     conn.execute("UPDATE labels SET name = ?, color = ?, updated_at = ?, local_modified = 1 WHERE id = ?", (req.name.strip(), req.color, now_iso, label_id))
     conn.commit()
     conn.close()
-    return {"success": True, "message": "Etiqueta actualizada"}
+
+    # Reflejar el cambio en Gmail si la etiqueta existe allí
+    gmail_error = None
+    if row and row["remote_id"] and GoogleOAuthService.is_gmail_api_account(row["account_id"]):
+        try:
+            GoogleOAuthService.update_gmail_label(row["account_id"], row["remote_id"], req.name.strip(), req.color)
+        except Exception as e:
+            gmail_error = str(e)
+            print(f"Aviso: no se pudo actualizar la etiqueta en Gmail: {e}")
+    return {"success": True, "message": "Etiqueta actualizada", "gmail_error": gmail_error}
 
 @app.delete("/api/labels/{label_id}")
 def delete_label(label_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT account_id, remote_id FROM labels WHERE id = ?", (label_id,)).fetchone()
+    conn.close()
+
+    # Eliminarla también en Gmail; si no, la próxima sincronización la volvería a importar
+    if row and row["remote_id"] and GoogleOAuthService.is_gmail_api_account(row["account_id"]):
+        try:
+            GoogleOAuthService.delete_gmail_label(row["account_id"], row["remote_id"])
+        except Exception as e:
+            msg = str(e)
+            if "404" not in msg and "not found" not in msg.lower():
+                raise HTTPException(status_code=502, detail=f"No se pudo eliminar la etiqueta en Gmail: {msg}")
+
     conn = get_db()
     conn.execute("DELETE FROM email_labels WHERE label_id = ?", (label_id,))
     conn.execute("DELETE FROM labels WHERE id = ?", (label_id,))
@@ -2394,22 +2550,27 @@ def add_label_to_email(email_id: int, req: EmailLabelRequest):
     from datetime import datetime
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
-    conn.execute("INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)", (email_id, req.label_id))
+    email_row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not email_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+    lbl = _resolve_label_for_email(conn, req.label_id, email_id, email_row["account_id"])
+    if not lbl:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Etiqueta no encontrada")
+    conn.execute("INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)", (email_id, lbl["id"]))
     conn.execute("UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id = ?", (now_iso, email_id))
     conn.commit()
-
-    email_row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
-    label_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (req.label_id,)).fetchone()
     conn.close()
 
-    if email_row and label_row and label_row["remote_id"] and email_row["uid"]:
+    if lbl["remote_id"] and email_row["uid"]:
         threading.Thread(
             target=GoogleOAuthService.modify_message_labels,
-            args=(email_row["account_id"], email_row["uid"], [label_row["remote_id"]], None),
+            args=(email_row["account_id"], email_row["uid"], [lbl["remote_id"]], None),
             daemon=True
         ).start()
 
-    return {"success": True, "message": "Etiqueta agregada al correo"}
+    return {"success": True, "message": "Etiqueta agregada al correo", "label_id": lbl["id"]}
 
 @app.delete("/api/emails/{email_id}/labels/{label_id}")
 def remove_label_from_email(email_id: int, label_id: int):
@@ -2417,16 +2578,17 @@ def remove_label_from_email(email_id: int, label_id: int):
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
     email_row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
-    label_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (label_id,)).fetchone()
-    conn.execute("DELETE FROM email_labels WHERE email_id = ? AND label_id = ?", (email_id, label_id))
+    lbl = _resolve_label_for_email(conn, label_id, email_id, email_row["account_id"], for_removal=True) if email_row else None
+    target_label_id = lbl["id"] if lbl else label_id
+    conn.execute("DELETE FROM email_labels WHERE email_id = ? AND label_id = ?", (email_id, target_label_id))
     conn.execute("UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id = ?", (now_iso, email_id))
     conn.commit()
     conn.close()
 
-    if email_row and label_row and label_row["remote_id"] and email_row["uid"]:
+    if email_row and lbl and lbl["remote_id"] and email_row["uid"]:
         threading.Thread(
             target=GoogleOAuthService.modify_message_labels,
-            args=(email_row["account_id"], email_row["uid"], None, [label_row["remote_id"]]),
+            args=(email_row["account_id"], email_row["uid"], None, [lbl["remote_id"]]),
             daemon=True
         ).start()
 
