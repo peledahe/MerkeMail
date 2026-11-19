@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 
 from backend.database import get_db, init_db, set_setting, get_setting
-from backend.email_service import EmailService
+from backend.email_service import EmailService, deleted_email_key
 from backend.calendar_service import CalendarService
 from backend.gemini_service import GeminiService
 from backend.config_service import ConfigService
@@ -853,7 +853,7 @@ def download_attachment(attachment_id: int):
     conn = get_db()
     row = conn.execute('''
         SELECT a.id, a.email_id, a.filename, a.content_type, a.size, a.remote_id, a.file_path,
-               e.account_id, e.uid, e.folder, acc.provider, acc.auth_type
+               e.account_id, e.uid, e.folder, e.source_folder, acc.provider, acc.auth_type
         FROM attachments a
         JOIN emails e ON a.email_id = e.id
         JOIN accounts acc ON e.account_id = acc.id
@@ -936,11 +936,19 @@ def download_attachment(attachment_id: int):
                     mail = imaplib.IMAP4(account["imap_host"], int(account["imap_port"]))
                 raw_pass = CryptoService.decrypt(account.get("imap_password", "")) or ""
                 mail.login(account["imap_user"].strip(), raw_pass.replace(" ", "").strip())
-                mail.select(row["folder"] or "INBOX", readonly=True)
-                res, msg_data = mail.fetch(str(row["uid"]).encode(), "(RFC822)")
+                if row["source_folder"]:
+                    # Buzón real del servidor + UID estable (la carpeta local puede ser ARCHIVE, SPAM...)
+                    from backend.email_service import _quote_mailbox
+                    mail.select(_quote_mailbox(row["source_folder"]), readonly=True)
+                    res, msg_data = mail.uid("fetch", str(row["uid"]).encode(), "(RFC822)")
+                else:
+                    # Correos sincronizados por versiones anteriores (número de secuencia)
+                    mail.select(row["folder"] or "INBOX", readonly=True)
+                    res, msg_data = mail.fetch(str(row["uid"]).encode(), "(RFC822)")
                 mail.logout()
-                if res == "OK" and msg_data and msg_data[0]:
-                    msg = email_pkg.message_from_bytes(msg_data[0][1])
+                raw_part = next((p for p in (msg_data or []) if isinstance(p, tuple) and len(p) > 1), None)
+                if res == "OK" and raw_part:
+                    msg = email_pkg.message_from_bytes(raw_part[1])
                     for part in msg.walk():
                         part_fn = part.get_filename()
                         if part_fn:
@@ -1482,28 +1490,48 @@ def mark_email_not_spam(email_id: int):
             args=(account_id, uid, ["INBOX"], ["SPAM"]),
             daemon=True
         ).start()
+    # Cuentas IMAP: mover también en el servidor (Spam -> Recibidos)
+    EmailService.schedule_imap_push(email_ids=[email_id])
 
     return {"success": True, "message": "Correo marcado como legítimo y movido a Recibidos"}
 
 @app.delete("/api/emails/{email_id}")
 def delete_email(email_id: int):
+    """Mueve el correo a la Papelera; si ya estaba en la Papelera, lo elimina definitivamente de MerkeMail."""
+    from datetime import datetime
     conn = get_db()
-    row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
-    if row and row["uid"]:
-        conn.execute(
-            "INSERT OR REPLACE INTO deleted_emails (account_id, uid, deleted_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-            (row["account_id"], row["uid"])
-        )
-    conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
+    row = conn.execute("SELECT id, account_id, uid, folder, source_folder FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+    permanent = (row["folder"] or "").upper() == "TRASH"
+    if permanent:
+        if row["uid"]:
+            conn.execute(
+                "INSERT OR REPLACE INTO deleted_emails (account_id, uid, deleted_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                (row["account_id"], deleted_email_key(row["source_folder"], row["uid"]))
+            )
+        conn.execute("DELETE FROM email_labels WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM attachments WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
+    else:
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute("UPDATE emails SET folder = 'TRASH', updated_at = ?, local_modified = 1 WHERE id = ?", (now_iso, email_id))
     conn.commit()
     conn.close()
-    if row and row["account_id"] and row["uid"]:
+    if row["account_id"] and row["uid"]:
         threading.Thread(
             target=GoogleOAuthService.modify_message_labels,
             args=(row["account_id"], row["uid"], ["TRASH"], ["INBOX"]),
             daemon=True
         ).start()
-    return {"success": True, "message": "Correo eliminado"}
+    # Cuentas IMAP: reflejar en el servidor (mover a su Papelera)
+    if permanent:
+        EmailService.schedule_imap_push(removed_rows=[dict(row)])
+    else:
+        EmailService.schedule_imap_push(email_ids=[email_id])
+    return {"success": True, "permanent": permanent,
+            "message": "Correo eliminado definitivamente" if permanent else "Correo movido a la papelera"}
 
 @app.post("/api/emails/batch-delete")
 def batch_delete_emails(req: BatchDeleteRequest):
@@ -1512,7 +1540,7 @@ def batch_delete_emails(req: BatchDeleteRequest):
         return {"success": True, "deleted_count": 0}
     conn = get_db()
     placeholders = ",".join("?" for _ in req.email_ids)
-    rows = conn.execute(f"SELECT id, account_id, uid FROM emails WHERE id IN ({placeholders})", req.email_ids).fetchall()
+    rows = conn.execute(f"SELECT id, account_id, uid, folder, source_folder FROM emails WHERE id IN ({placeholders})", req.email_ids).fetchall()
     targets = [dict(r) for r in rows]
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -1521,8 +1549,10 @@ def batch_delete_emails(req: BatchDeleteRequest):
             if t.get("uid"):
                 conn.execute(
                     "INSERT OR REPLACE INTO deleted_emails (account_id, uid, deleted_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-                    (t["account_id"], t["uid"])
+                    (t["account_id"], deleted_email_key(t.get("source_folder"), t["uid"]))
                 )
+        conn.execute(f"DELETE FROM email_labels WHERE email_id IN ({placeholders})", req.email_ids)
+        conn.execute(f"DELETE FROM attachments WHERE email_id IN ({placeholders})", req.email_ids)
         conn.execute(f"DELETE FROM emails WHERE id IN ({placeholders})", req.email_ids)
     else:
         conn.execute(
@@ -1540,6 +1570,11 @@ def batch_delete_emails(req: BatchDeleteRequest):
                 except Exception:
                     pass
     threading.Thread(target=_bg_batch_del, daemon=True).start()
+    # Cuentas IMAP: reflejar en el servidor (mover a su Papelera)
+    if req.permanent:
+        EmailService.schedule_imap_push(removed_rows=targets)
+    else:
+        EmailService.schedule_imap_push(email_ids=req.email_ids)
 
     return {"success": True, "deleted_count": len(req.email_ids), "message": f"{len(req.email_ids)} correos procesados exitosamente"}
 
@@ -1670,6 +1705,10 @@ def batch_action_emails(req: BatchActionRequest):
 
     conn.commit()
     conn.close()
+
+    # Cuentas IMAP: reflejar en el servidor los cambios de carpeta (Archivar, Spam, Papelera, restaurar)
+    if req.action in ("archive", "spam", "trash", "move_folder"):
+        EmailService.schedule_imap_push(email_ids=req.email_ids)
 
     if bg_label_ops:
         def _bg_apply_ops():
@@ -2143,7 +2182,7 @@ def sync_calendars():
             return {
                 "success": False,
                 "api_disabled": True,
-                "enable_url": enable_url or "https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=627907237091",
+                "enable_url": enable_url or GoogleOAuthService.build_api_enable_url("calendar-json.googleapis.com"),
                 "message": "La API de Google Calendar está deshabilitada en la consola de Google Cloud para este proyecto."
             }
 

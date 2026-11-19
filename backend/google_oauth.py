@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import base64
 import urllib.parse
@@ -25,6 +26,20 @@ GOOGLE_SCOPES = [
 ]
 
 class GoogleOAuthService:
+    @staticmethod
+    def build_api_enable_url(api_name: str, err_str: str = "") -> str:
+        """Construye la URL de la consola de Google Cloud para habilitar una API,
+        usando el número de proyecto del propio usuario (extraído del error de Google
+        o del prefijo de su Client ID), sin IDs de proyecto fijos en el código."""
+        base = f"https://console.developers.google.com/apis/api/{api_name}/overview"
+        match = re.search(r"project[=\s]+(\d+)", err_str or "")
+        project = match.group(1) if match else ""
+        if not project:
+            client_id = (get_setting("google_client_id") or os.getenv("GOOGLE_CLIENT_ID", "")).strip()
+            cid_match = re.match(r"^(\d+)-", client_id)
+            project = cid_match.group(1) if cid_match else ""
+        return f"{base}?project={project}" if project else base
+
     @staticmethod
     def get_credentials_config() -> Dict[str, str]:
         """Obtiene el Client ID y Client Secret de los settings o variables de entorno."""
@@ -381,7 +396,7 @@ class GoogleOAuthService:
                 "success": False,
                 "error": err_str,
                 "api_disabled": is_disabled,
-                "enable_url": "https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=627907237091" if is_disabled else None,
+                "enable_url": cls.build_api_enable_url("calendar-json.googleapis.com", err_str) if is_disabled else None,
                 "synced": 0
             }
 
@@ -633,7 +648,7 @@ class GoogleOAuthService:
                 "error": err_str if is_disabled else None,
                 "api_disabled": is_disabled,
                 "needs_reauth": is_insufficient,
-                "enable_url": "https://console.developers.google.com/apis/api/tasks.googleapis.com/overview?project=627907237091" if is_disabled else None,
+                "enable_url": cls.build_api_enable_url("tasks.googleapis.com", err_str) if is_disabled else None,
                 "synced": 0
             }
 

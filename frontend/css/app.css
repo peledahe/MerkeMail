@@ -479,6 +479,13 @@ input[type="checkbox"]:indeterminate {
     display: flex !important;
 }
 
+/* 5. Carpetas donde no se permite archivar en lote (Todos, Spam, Papelera, Borradores):
+      ocultar el botón y su opción del selector (3) en cualquier modo. Debe ir después de las reglas anteriores. */
+#email-list-container.batch-archive-disabled #btn-batch-archive,
+#email-list-container.batch-archive-disabled #batch-more-item-archive {
+    display: none !important;
+}
+
 /* Botones de carpetas y etiquetas activas */
 .active-folder {
     font-weight: 700 !important;

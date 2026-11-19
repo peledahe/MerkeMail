@@ -1,4 +1,4 @@
-const CACHE_NAME = 'merkemail-v2';
+const CACHE_NAME = 'merkemail-v3';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -7,6 +7,7 @@ const STATIC_ASSETS = [
   '/img/icon-192.png',
   '/img/icon-512.png',
   '/static/css/app.css',
+  '/static/js/vendor/tailwindcss-3.4.17.js',
   '/static/js/ui.js',
   '/static/js/composer.js',
   '/static/js/email.js',

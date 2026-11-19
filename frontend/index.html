@@ -36,8 +36,25 @@
     <meta name="apple-mobile-web-app-title" content="MerkeMail">
     <meta name="application-name" content="MerkeMail">
 
-    <!-- Tailwind CSS CDN con configuración -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Aviso si se abre index.html directamente (file://): la app necesita el servidor Python -->
+    <script>
+        if (location.protocol === 'file:') {
+            document.addEventListener('DOMContentLoaded', function () {
+                document.body.innerHTML =
+                    '<div style="font-family:system-ui,sans-serif;max-width:640px;margin:80px auto;padding:32px;' +
+                    'background:#0f172a;color:#e2e8f0;border-radius:16px;line-height:1.6">' +
+                    '<h2 style="margin-top:0;color:#f87171">MerkeMail no se puede abrir como archivo</h2>' +
+                    '<p>Abriste <code>index.html</code> directamente. La aplicación necesita su servidor ' +
+                    '(estilos, imágenes y correos se sirven desde él).</p>' +
+                    '<p>En una terminal, dentro de la carpeta <b>proyecto</b>, ejecuta:</p>' +
+                    '<pre style="background:#020617;padding:12px;border-radius:8px">./setup.sh\n# o bien:\npython run.py</pre>' +
+                    '<p>y abre en Chrome: <a style="color:#60a5fa" href="http://127.0.0.1:8000">http://127.0.0.1:8000</a></p></div>';
+            });
+        }
+    </script>
+
+    <!-- Tailwind CSS v3.4.17 (Play CDN) servido localmente para funcionar sin conexión a Internet -->
+    <script src="/static/js/vendor/tailwindcss-3.4.17.js"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -707,7 +724,7 @@
                     <svg class="w-5 h-5 text-amber-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
                     <span>La <strong>Google Calendar API</strong> no está habilitada en tu proyecto de Google Cloud Console. Para sincronizar tus calendarios y eventos, actívala con un clic.</span>
                 </div>
-                <a id="calendar-api-enable-link" href="https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=627907237091" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg shrink-0 transition-colors shadow-2xs">
+                <a id="calendar-api-enable-link" href="https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg shrink-0 transition-colors shadow-2xs">
                     Habilitar API en Google Cloud
                 </a>
             </div>

@@ -362,16 +362,19 @@ def eliminar_correos(ids_correos: str, permanente: bool = False) -> str:
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
     placeholders = ",".join("?" for _ in ids)
-    target_rows = conn.execute(f"SELECT id, account_id, uid FROM emails WHERE id IN ({placeholders})", ids).fetchall()
+    target_rows = conn.execute(f"SELECT id, account_id, uid, folder, source_folder FROM emails WHERE id IN ({placeholders})", ids).fetchall()
     targets = [dict(r) for r in target_rows]
+    from backend.email_service import EmailService, deleted_email_key
 
     if permanente:
         for t in targets:
             if t.get("uid"):
                 conn.execute(
                     "INSERT OR REPLACE INTO deleted_emails (account_id, uid, deleted_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-                    (t["account_id"], t["uid"])
+                    (t["account_id"], deleted_email_key(t.get("source_folder"), t["uid"]))
                 )
+        conn.execute(f"DELETE FROM email_labels WHERE email_id IN ({placeholders})", ids)
+        conn.execute(f"DELETE FROM attachments WHERE email_id IN ({placeholders})", ids)
         conn.execute(f"DELETE FROM emails WHERE id IN ({placeholders})", ids)
         action_desc = "eliminado permanentemente"
     else:
@@ -395,6 +398,11 @@ def eliminar_correos(ids_correos: str, permanente: bool = False) -> str:
         except Exception:
             pass
     threading.Thread(target=_bg_sync_del, daemon=True).start()
+    # Cuentas IMAP: reflejar en el servidor (mover a su Papelera)
+    if permanente:
+        EmailService.schedule_imap_push(removed_rows=targets)
+    else:
+        EmailService.schedule_imap_push(email_ids=ids)
 
     del_data = {
         "ids": ids,
@@ -496,6 +504,11 @@ def gestionar_correos(ids_correos: str, accion: str, destino: str = "") -> str:
 
     conn.commit()
     conn.close()
+
+    # Cuentas IMAP: reflejar en el servidor los cambios de carpeta
+    if act in ("archivar", "archive", "spam", "no_spam", "not_spam", "mover_carpeta", "move_folder"):
+        from backend.email_service import EmailService
+        EmailService.schedule_imap_push(email_ids=ids)
 
     if add_remote_lbls or rem_remote_lbls:
         def _bg_mod():

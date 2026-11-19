@@ -1,0 +1,4 @@
+# Dependencias opcionales para el modo escritorio (ventana nativa + bandeja del sistema)
+# Instalar con: pip install -r requirements.txt -r requirements-desktop.txt
+PyQt6==6.11.0
+PyQt6-WebEngine==6.11.0

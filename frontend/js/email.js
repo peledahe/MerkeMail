@@ -1413,6 +1413,10 @@ const EmailManager = {
     },
 
     async archiveCurrentEmail(emailId) {
+        if (!this.canBatchArchiveInCurrentFolder() && ['ALL', 'TODOS'].includes((this.currentFolder || '').toUpperCase())) {
+            UI.showStickyToast('Acción no permitida', 'No se permite archivar correos desde Todos', 'warning');
+            return;
+        }
         const folderUpper = (this.currentFolder || (this.currentOpenedEmail && this.currentOpenedEmail.folder) || '').toUpperCase();
         if (['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes(folderUpper) || (this.currentOpenedEmail && ['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes((this.currentOpenedEmail.folder || '').toUpperCase()))) {
             UI.showStickyToast('Acción no permitida', 'No se permite almacenar o archivar correos en Spam, Papelera o Borradores', 'warning');
@@ -1880,6 +1884,8 @@ const EmailManager = {
             const isInboxCategory = ['INBOX', 'CATEGORY_UPDATES', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_FORUMS', 'CATEGORY_PERSONAL'].includes((email.folder || '').toUpperCase());
             const isSpam = (email.folder === 'SPAM' || this.currentFolder === 'SPAM');
             const isTrashOrSpamOrDraft = ['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes((this.currentFolder || '').toUpperCase()) || ['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes((email.folder || '').toUpperCase());
+            // Archivar no se ofrece en Papelera/Spam/Borradores ni cuando el correo se abre desde "Todos" (ALL)
+            const canArchiveHere = !isTrashOrSpamOrDraft && this.canBatchArchiveInCurrentFolder();
             const hasImages = Boolean(email.body_html && (/<img\b|background-image\s*:/i.test(email.body_html)));
             const hasImagesAuthorized = this.authorizedSpamImages.has(email.id);
 
@@ -1940,7 +1946,7 @@ const EmailManager = {
                                 <!-- Indicador Carpeta / Recibidos con botón de archivar -->
                                 <span class="inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full font-medium ${isSpam ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'} shrink-0 whitespace-nowrap" title="${folderDisplayName}">
                                     <span>${folderDisplayName}</span>
-                                    ${isInboxCategory ? `
+                                    ${isInboxCategory && canArchiveHere ? `
                                         <button onclick="EmailManager.archiveCurrentEmail(${email.id})" class="hover:text-rose-500 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-full w-3.5 h-3.5 flex items-center justify-center text-xs leading-none transition-colors ml-0.5 cursor-pointer shrink-0" title="Archivar (quitar de ${folderDisplayName})">&times;</button>
                                     ` : ''}
                                 </span>
@@ -1969,8 +1975,8 @@ const EmailManager = {
 
                         <!-- Acciones Rápidas Superior Derecha (Gestión Individual & Redacción) -->
                         <div id="email-top-actions-right" class="relative z-40 flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end overflow-visible">
-                            <!-- 1. Botón Archivar / Almacenar (Oculto en Papelera, Spam y Borradores) -->
-                            ${!isTrashOrSpamOrDraft ? `
+                            <!-- 1. Botón Archivar / Almacenar (Oculto en Papelera, Spam, Borradores y en "Todos") -->
+                            ${canArchiveHere ? `
                                 <button onclick="EmailManager.archiveCurrentEmail(${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Archivar correo (quitar de Recibidos)">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
                                 </button>
@@ -3061,7 +3067,15 @@ const EmailManager = {
     },
 
     async deleteCurrentEmail(emailId) {
-        const confirmed = await UI.confirm({
+        // Si el correo ya está en la Papelera, la acción lo elimina definitivamente de MerkeMail
+        const opened = (this.currentOpenedEmail && this.currentOpenedEmail.id === emailId) ? this.currentOpenedEmail : null;
+        const inTrash = ((opened && opened.folder) || '').toUpperCase() === 'TRASH';
+        const confirmed = await UI.confirm(inTrash ? {
+            title: '¿Eliminar definitivamente?',
+            message: 'El correo se eliminará de MerkeMail. Esta acción no se puede deshacer.',
+            confirmText: 'Eliminar definitivamente',
+            isDanger: true
+        } : {
             title: '¿Mover a la papelera?',
             message: 'El correo seleccionado se moverá a la papelera.',
             confirmText: 'Mover a papelera',
@@ -3073,9 +3087,11 @@ const EmailManager = {
         try {
             const res = await fetch(`/api/emails/${emailId}`, { method: 'DELETE' });
             if (res.ok) {
-                UI.showStickyToast('Correo Eliminado', 'El correo ha sido enviado a la papelera', 'success');
+                const data = await res.json().catch(() => ({}));
+                UI.showStickyToast('Correo Eliminado', data.permanent ? 'El correo fue eliminado definitivamente' : 'El correo ha sido enviado a la papelera', 'success');
                 this.backToList();
                 this.loadEmails();
+                if (typeof this.updateUnreadCounts === 'function') this.updateUnreadCounts();
             }
         } catch (e) {
             UI.showStickyToast('Error', e.message, 'error');
@@ -3271,17 +3287,19 @@ const EmailManager = {
             }
         }
 
-        // Ocultar botón de archivar masivo en carpetas Papelera (TRASH), Spam (SPAM) y Borradores (DRAFT/DRAFTS)
+        // Ocultar botón de archivar masivo en Papelera, Spam, Borradores y en "Todos" (ALL)
+        // (se usa una clase en el contenedor porque las reglas responsivas de app.css usan !important)
+        const listContainer = document.getElementById('email-list-container');
+        if (listContainer) {
+            listContainer.classList.toggle('batch-archive-disabled', !this.canBatchArchiveInCurrentFolder());
+        }
+    },
+
+    // Carpetas donde NO se permite archivar en lote: Spam, Papelera, Borradores y "Todos" (ALL),
+    // ya que en "Todos" archivar no tiene efecto visible (los archivados también se muestran ahí)
+    canBatchArchiveInCurrentFolder() {
         const folderUpper = (this.currentFolder || '').toUpperCase();
-        const canArchiveInFolder = !['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes(folderUpper);
-        const batchArchiveBtn = document.getElementById('btn-batch-archive');
-        const batchMoreArchiveBtn = document.getElementById('batch-more-item-archive');
-        if (batchArchiveBtn) {
-            batchArchiveBtn.style.display = canArchiveInFolder ? '' : 'none';
-        }
-        if (batchMoreArchiveBtn) {
-            batchMoreArchiveBtn.style.display = canArchiveInFolder ? '' : 'none';
-        }
+        return !['SPAM', 'TRASH', 'DRAFT', 'DRAFTS', 'ALL', 'TODOS'].includes(folderUpper);
     },
 
     onCheckboxChange(emailId, isChecked) {
@@ -3337,12 +3355,9 @@ const EmailManager = {
         const ids = this.getSelectedEmailIds();
         if (ids.length === 0) return;
 
-        if (action === 'archive') {
-            const folderUpper = (this.currentFolder || '').toUpperCase();
-            if (['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes(folderUpper)) {
-                UI.showStickyToast('Acción no permitida', 'No se permite almacenar o archivar correos en Spam, Papelera o Borradores', 'warning');
-                return;
-            }
+        if (action === 'archive' && !this.canBatchArchiveInCurrentFolder()) {
+            UI.showStickyToast('Acción no permitida', 'No se permite archivar correos desde Todos, Spam, Papelera o Borradores', 'warning');
+            return;
         }
 
         // Cerrar posibles dropdowns

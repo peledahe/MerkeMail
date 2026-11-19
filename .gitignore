@@ -1,3 +1,93 @@
-/MerkeMail.code-workspace
-/data
+# =====================================================================
+# MerkeMail - .gitignore (Python + Privacidad de Correos & Credenciales)
+# =====================================================================
+
+# --- Caché y Bytecode de Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Entornos Virtuales ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Bases de Datos Locales, Correos y Adjuntos (Datos Sensibles) ---
+/data/
+data/
 /mail.db
+/database.db
+/merkemail.db
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.sqlite3-journal
+*.eml
+*.msg
+*.mbox
+*.pst
+attachments/
+
+# --- Credenciales, API Keys, Tokens OAuth y Cifrado ---
+.env
+.env.*
+*.env
+!.env.example
+.secret.key
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+client_secret*.json
+credentials*.json
+token*.json
+oauth*.json
+service_account*.json
+*secret*.json
+*credentials*.json
+*apikey*
+*api_key*
+
+# --- Herramientas de Desarrollo, Agentes y Scripts Locales ---
+/MerkeMail.code-workspace
+.vscode/
+.idea/
+.agents/
+.clinerules
+/scripts/
+
+# --- Logs y Archivos Temporales del Sistema ---
+*.log
+logs/
+tmp/
+temp/
+.DS_Store
+Thumbs.db
+*~
