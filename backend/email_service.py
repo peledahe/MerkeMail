@@ -373,16 +373,21 @@ def _push_pending_moves(conn, account_id: int, mover: "_ImapMover", only_ids: Op
     """Aplica en el servidor los cambios de carpeta hechos en MerkeMail que aún no están reflejados."""
     import sqlite3 as _sqlite3
     q = ("SELECT id, uid, folder, source_folder FROM emails WHERE account_id = ? AND source_folder IS NOT NULL "
-         "AND uid NOT LIKE 'seed-%' AND UPPER(folder) IN ('INBOX', 'ARCHIVE', 'SPAM', 'TRASH')")
+         "AND uid NOT LIKE 'seed-%' AND (UPPER(folder) IN ('INBOX', 'ARCHIVE', 'SPAM', 'TRASH') OR UPPER(folder) LIKE 'CATEGORY_%')")
     params: List[Any] = [account_id]
     if only_ids:
         q += f" AND id IN ({','.join('?' for _ in only_ids)})"
         params += list(only_ids)
     rows = [dict(r) for r in conn.execute(q, params).fetchall()]
     result = {"moved": 0, "failed": 0, "errors": []}
-    pending = [r for r in rows if mover.key_of(r["source_folder"]) != r["folder"].upper()]
+
+    def _imap_effective_folder(f: str) -> str:
+        u = (f or "INBOX").upper()
+        return "INBOX" if u.startswith("CATEGORY_") else u
+
+    pending = [r for r in rows if mover.key_of(r["source_folder"]) != _imap_effective_folder(r["folder"])]
     for r in sorted(pending, key=lambda x: x["source_folder"]):
-        want = r["folder"].upper()
+        want = _imap_effective_folder(r["folder"])
         try:
             dest = mover.target(want)
             if not dest:
@@ -395,15 +400,15 @@ def _push_pending_moves(conn, account_id: int, mover: "_ImapMover", only_ids: Op
         if status == "missing" or not new_uid:
             # Ya no está en el buzón de origen (otro cliente lo movió) o el servidor no informó el UID nuevo:
             # se deja sin buzón de origen y la próxima sincronización de ese buzón lo reconoce (remitente+asunto+fecha).
-            conn.execute("UPDATE emails SET source_folder = NULL WHERE id = ?", (r["id"],))
+            conn.execute("UPDATE emails SET source_folder = NULL, local_modified = 0 WHERE id = ?", (r["id"],))
         else:
             try:
-                conn.execute("UPDATE emails SET uid = ?, source_folder = ? WHERE id = ?", (new_uid, dest, r["id"]))
+                conn.execute("UPDATE emails SET uid = ?, source_folder = ?, local_modified = 0 WHERE id = ?", (new_uid, dest, r["id"]))
             except _sqlite3.IntegrityError:
                 # El mismo mensaje ya se había descargado desde el buzón destino: se conserva la fila del usuario
                 conn.execute("DELETE FROM emails WHERE account_id = ? AND folder = ? AND uid = ? AND source_folder = ? AND id != ?",
                              (account_id, r["folder"], new_uid, dest, r["id"]))
-                conn.execute("UPDATE emails SET uid = ?, source_folder = ? WHERE id = ?", (new_uid, dest, r["id"]))
+                conn.execute("UPDATE emails SET uid = ?, source_folder = ?, local_modified = 0 WHERE id = ?", (new_uid, dest, r["id"]))
         if status == "moved":
             result["moved"] += 1
     conn.commit()

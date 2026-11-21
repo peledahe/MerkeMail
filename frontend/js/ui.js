@@ -107,7 +107,10 @@ const UI = {
         message = '¿Estás seguro de que deseas proceder con esta acción?',
         confirmText = 'Confirmar',
         cancelText = 'Cancelar',
-        isDanger = false
+        isDanger = false,
+        showDontAskAgain = false,
+        dontAskAgainLabel = 'No volver a preguntar',
+        onDontAskAgain = null
     } = {}) {
         return new Promise((resolve) => {
             const modalEl = document.getElementById('confirmation-modal');
@@ -115,11 +118,27 @@ const UI = {
             const messageEl = document.getElementById('confirm-modal-message');
             const confirmBtn = document.getElementById('confirm-modal-btn');
             const cancelBtn = document.getElementById('confirm-modal-cancel');
+            const checkboxContainer = document.getElementById('confirm-modal-checkbox-container');
+            const checkboxEl = document.getElementById('confirm-modal-checkbox');
+            const checkboxLabelEl = document.getElementById('confirm-modal-checkbox-label');
 
             titleEl.textContent = title;
             messageEl.textContent = message;
             confirmBtn.textContent = confirmText;
             cancelBtn.textContent = cancelText;
+
+            if (checkboxContainer && checkboxEl) {
+                if (showDontAskAgain) {
+                    checkboxContainer.classList.remove('hidden');
+                    checkboxEl.checked = false;
+                    if (checkboxLabelEl && dontAskAgainLabel) {
+                        checkboxLabelEl.textContent = dontAskAgainLabel;
+                    }
+                } else {
+                    checkboxContainer.classList.add('hidden');
+                    checkboxEl.checked = false;
+                }
+            }
 
             if (isDanger) {
                 confirmBtn.className = 'px-4 py-2 text-sm font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow transition-colors';
@@ -131,12 +150,21 @@ const UI = {
 
             const cleanUp = () => {
                 modalEl.classList.add('hidden');
+                if (checkboxContainer) checkboxContainer.classList.add('hidden');
                 confirmBtn.onclick = null;
                 cancelBtn.onclick = null;
             };
 
             confirmBtn.onclick = () => {
+                const wasChecked = Boolean(checkboxEl && checkboxEl.checked);
                 cleanUp();
+                if (showDontAskAgain && typeof onDontAskAgain === 'function') {
+                    try {
+                        onDontAskAgain(wasChecked);
+                    } catch (cbErr) {
+                        console.error('Error en callback onDontAskAgain:', cbErr);
+                    }
+                }
                 resolve(true);
             };
 

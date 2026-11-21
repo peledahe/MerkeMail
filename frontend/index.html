@@ -536,27 +536,35 @@
 
                             <!-- BARRA DE ACCIONES MASIVAS ESTILO GMAIL (Se activa al seleccionar correos) -->
                             <div id="batch-actions-bar" class="hidden flex items-center gap-0.5 shrink-0">
-                                <!-- 1. Archivar -->
+                                <!-- 1. Mover a Carpeta (Lista de selección) -->
+                                <button id="btn-batch-move" onclick="EmailManager.toggleMoveMenu(event, 'batch')" class="p-1.5 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-colors shrink-0" title="Mover a carpeta">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m0 0l-3-3m3 3l-3 3"/>
+                                    </svg>
+                                </button>
+
+                                <!-- 2. Archivar -->
                                 <button id="btn-batch-archive" onclick="EmailManager.executeBatchAction('archive')" class="p-1.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-colors shrink-0" title="Archivar">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
                                 </button>
 
-                                <!-- 2. Marcar como Spam -->
+                                <!-- 3. Marcar como Spam -->
                                 <button id="btn-batch-spam" onclick="EmailManager.executeBatchAction('spam')" class="p-1.5 text-slate-600 dark:text-slate-300 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-colors shrink-0" title="Marcar como spam">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
                                 </button>
 
-                                <!-- 3. Eliminar (Papelera con modal de confirmación) -->
+                                <!-- 4. Eliminar (Papelera con modal de confirmación) -->
                                 <button id="btn-batch-delete" onclick="EmailManager.deleteSelectedBatch()" class="p-1.5 text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-950/40 rounded-lg transition-colors shrink-0" title="Eliminar">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                                 </button>
 
-                                <!-- 4. Marcar como leído / no leído -->
+                                <!-- 5. Marcar como leído / no leído -->
                                 <button id="btn-batch-read" onclick="EmailManager.executeBatchAction('toggle_read')" class="p-1.5 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-colors shrink-0" title="Marcar como leído / no leído">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                                 </button>
 
-                                <!-- 5. Asignar Etiqueta (con Dropdown) -->
+                                <!-- 6. Asignar Etiqueta (con Dropdown) -->
                                 <div id="batch-labels-wrapper" class="relative flex items-center shrink-0">
                                     <button id="btn-batch-labels" onclick="EmailManager.toggleBatchLabelsMenu(event)" class="p-1.5 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-colors shrink-0" title="Etiquetas">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
@@ -569,17 +577,12 @@
                                     </div>
                                 </div>
 
-                                <!-- 6. Destacar (Estrella directa si hay espacio) -->
+                                <!-- 7. Destacar (Estrella directa) -->
                                 <button id="btn-batch-star" onclick="EmailManager.executeBatchAction('star')" class="p-1.5 text-slate-600 dark:text-slate-300 hover:text-amber-500 dark:hover:text-amber-400 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-colors shrink-0" title="Destacar">
                                     <svg class="w-4 h-4 text-amber-500 fill-amber-500" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
                                 </button>
 
-                                <!-- 7. Quitar estrella directa si hay espacio -->
-                                <button id="btn-batch-unstar" onclick="EmailManager.executeBatchAction('unstar')" class="p-1.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-colors shrink-0" title="Quitar estrella">
-                                    <svg class="w-4 h-4 text-slate-400 fill-none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
-                                </button>
-
-                                <!-- 8. Selector de Más Opciones (Overflow): Solo se muestra si hay acciones desbordadas por falta de espacio -->
+                                <!-- 7. Selector de Más Opciones (Overflow): Solo se muestra si hay acciones desbordadas por falta de espacio -->
                                 <div id="batch-more-wrapper" class="relative flex items-center shrink-0">
                                     <button id="batch-more-btn" onclick="EmailManager.toggleBatchMoreMenu(event)" class="p-1.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-colors shrink-0" title="Más opciones">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/></svg>
@@ -596,6 +599,10 @@
                                         <button id="batch-more-item-labels" onclick="EmailManager.toggleBatchLabelsMenu(event); EmailManager.closeBatchMoreMenu();" class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center gap-2">
                                             <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
                                             <span>Etiquetas</span>
+                                        </button>
+                                        <button id="batch-more-item-move" onclick="EmailManager.toggleMoveMenu(event, 'batch'); EmailManager.closeBatchMoreMenu();" class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center gap-2">
+                                            <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m0 0l-3-3m3 3l-3 3"/></svg>
+                                            <span>Mover a carpeta</span>
                                         </button>
                                         <button id="batch-more-item-read" onclick="EmailManager.executeBatchAction('toggle_read'); EmailManager.closeBatchMoreMenu();" class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center gap-2">
                                             <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
@@ -1626,6 +1633,25 @@
                             </select>
                             <p class="text-[11px] text-slate-400 mt-1">Se aplica inmediatamente y se conserva guardado hasta que decidas modificarlo.</p>
                         </div>
+                    </div>
+
+                    <!-- Confirmación de Eliminación de Correos (Bypass Papelera) -->
+                    <div class="p-4 bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-700/60 rounded-xl space-y-3">
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <div class="w-7 h-7 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                </div>
+                                <div class="min-w-0">
+                                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Eliminación de Correos</h4>
+                                    <p class="text-[11px] text-slate-400">Omitir confirmación al mover correos a la papelera</p>
+                                </div>
+                            </div>
+                            <button type="button" role="switch" id="settings-skip-delete-confirm-switch" onclick="EmailManager.toggleSkipDeleteConfirm()" class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-slate-300 dark:bg-slate-700 transition-colors duration-200 ease-in-out focus:outline-none shadow-2xs" title="Omitir diálogo de confirmación">
+                                <span id="settings-skip-delete-confirm-thumb" class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out translate-x-0"></span>
+                            </button>
+                        </div>
+                        <p class="text-[11px] text-slate-400">Al activarse, las eliminaciones de correos individuales o por lote se enviarán directo a la papelera sin solicitar confirmación previa.</p>
                     </div>
 
                     <!-- Calendario Predeterminado para Eventos y Tareas -->
@@ -2993,7 +3019,13 @@
                     <h3 id="confirm-modal-title" class="font-bold text-sm text-slate-900 dark:text-white">¿Confirmar acción?</h3>
                 </div>
             </div>
-            <p id="confirm-modal-message" class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-6"></p>
+            <p id="confirm-modal-message" class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-4"></p>
+            <div id="confirm-modal-checkbox-container" class="hidden mb-5 pt-3 border-t border-slate-200/80 dark:border-slate-800">
+                <label class="flex items-center gap-2.5 cursor-pointer select-none">
+                    <input type="checkbox" id="confirm-modal-checkbox" class="w-4 h-4 text-rose-600 dark:text-rose-500 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:ring-rose-500 cursor-pointer">
+                    <span id="confirm-modal-checkbox-label" class="text-xs text-slate-600 dark:text-slate-300 font-medium">No volver a preguntar</span>
+                </label>
+            </div>
             <div class="flex justify-end gap-2">
                 <button id="confirm-modal-cancel" class="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">Cancelar</button>
                 <button id="confirm-modal-btn" class="px-4 py-2 text-xs font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-sm">Confirmar</button>

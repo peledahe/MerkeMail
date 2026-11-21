@@ -29,6 +29,9 @@ class ConfigService:
         except (ValueError, TypeError):
             emails_page_size = 12
 
+        skip_delete_confirm_raw = settings.get("skip_delete_confirm", "false").strip().lower()
+        skip_delete_confirm = skip_delete_confirm_raw in ("true", "1", "yes")
+
         return {
             "gemini_api_key": raw_key,
             "gemini_api_key_masked": masked_key,
@@ -41,7 +44,8 @@ class ConfigService:
             "ui_design_color": settings.get("ui_design_color", "#4f46e5"),
             "ai_prompt_tone": settings.get("ai_prompt_tone", "formal"),
             "default_calendar_id": default_calendar_id,
-            "emails_page_size": emails_page_size
+            "emails_page_size": emails_page_size,
+            "skip_delete_confirm": skip_delete_confirm
         }
 
     @staticmethod

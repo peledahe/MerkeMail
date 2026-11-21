@@ -4,12 +4,14 @@ const EmailManager = {
     currentFolder: 'INBOX',
     currentAccountId: null,
     currentLabelId: null,
+    activeFilterLabelIds: null,
     labels: [],
     allLabels: [],
     pendingLabelAssignEmailId: null,
     searchQuery: '',
     currentPage: 1,
     pageSize: parseInt(localStorage.getItem('merkemail_page_size') || '12', 10) || 12,
+    skipDeleteConfirm: localStorage.getItem('merkemail_skip_delete_confirm') === 'true',
     selectedEmailId: null,
     selectedBatchIds: new Set(),
     authorizedSpamImages: new Set(),
@@ -29,7 +31,7 @@ const EmailManager = {
         const clean = String(folder).trim().toUpperCase();
         const map = {
             'INBOX': 'Recibidos',
-            'CATEGORY_UPDATES': 'Actualizaciones',
+            'CATEGORY_UPDATES': 'Notificaciones',
             'CATEGORY_PROMOTIONS': 'Promociones',
             'CATEGORY_SOCIAL': 'Social',
             'CATEGORY_FORUMS': 'Foros',
@@ -51,7 +53,7 @@ const EmailManager = {
         if (!name) return '';
         const clean = String(name).trim();
         const map = {
-            'CATEGORY_UPDATES': 'Actualizaciones',
+            'CATEGORY_UPDATES': 'Notificaciones',
             'CATEGORY_PROMOTIONS': 'Promociones',
             'CATEGORY_SOCIAL': 'Social',
             'CATEGORY_FORUMS': 'Foros',
@@ -105,6 +107,54 @@ const EmailManager = {
                 `Ahora se muestran ${validSize} correos por página en las listas.`,
                 'success',
                 2400
+            );
+        }
+    },
+
+    toggleSkipDeleteConfirm() {
+        this.setSkipDeleteConfirm(!this.skipDeleteConfirm, true);
+    },
+
+    async setSkipDeleteConfirm(newVal, showNotification = true) {
+        this.skipDeleteConfirm = Boolean(newVal);
+        try {
+            localStorage.setItem('merkemail_skip_delete_confirm', this.skipDeleteConfirm ? 'true' : 'false');
+        } catch (e) {}
+
+        const switchEl = document.getElementById('settings-skip-delete-confirm-switch');
+        const thumbEl = document.getElementById('settings-skip-delete-confirm-thumb');
+        if (switchEl && thumbEl) {
+            if (this.skipDeleteConfirm) {
+                switchEl.classList.remove('bg-slate-300', 'dark:bg-slate-700');
+                switchEl.classList.add('bg-indigo-600');
+                thumbEl.classList.remove('translate-x-0');
+                thumbEl.classList.add('translate-x-5');
+            } else {
+                switchEl.classList.remove('bg-indigo-600');
+                switchEl.classList.add('bg-slate-300', 'dark:bg-slate-700');
+                thumbEl.classList.remove('translate-x-5');
+                thumbEl.classList.add('translate-x-0');
+            }
+        }
+
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ skip_delete_confirm: this.skipDeleteConfirm ? 'true' : 'false' })
+            });
+        } catch (e) {
+            console.warn('Error guardando skip_delete_confirm en backend:', e);
+        }
+
+        if (showNotification && window.UI) {
+            UI.showStickyToast(
+                'Preferencia Guardada',
+                this.skipDeleteConfirm
+                    ? 'Se omitirá el diálogo de confirmación al mover correos a la papelera.'
+                    : 'Se solicitará confirmación antes de mover correos a la papelera.',
+                'info',
+                2500
             );
         }
     },
@@ -884,6 +934,7 @@ const EmailManager = {
         this.selectedEmailId = null;
         this.currentFolder = 'INBOX';
         this.currentLabelId = null;
+        this.activeFilterLabelIds = null;
         this.clearSelection();
 
         // Actualizar visualmente la carpeta activa en el sidebar a "Recibidos"
@@ -1200,6 +1251,254 @@ const EmailManager = {
         }
     },
 
+    getLabelAndDescendantIds(labelId) {
+        const labelPool = (this.allLabels && this.allLabels.length > 0) ? this.allLabels : (this.labels || []);
+        const parent = labelPool.find(l => l.id === labelId);
+        if (!parent || !parent.name) return [labelId];
+        const prefix = String(parent.name).trim() + '/';
+        const accId = parent.account_id;
+        const matchedIds = [labelId];
+        labelPool.forEach(l => {
+            if (l.id !== labelId && l.name) {
+                const name = String(l.name).trim();
+                if (name.startsWith(prefix)) {
+                    if (!accId || !l.account_id || l.account_id === accId) {
+                        if (!matchedIds.includes(l.id)) {
+                            matchedIds.push(l.id);
+                        }
+                    }
+                }
+            }
+        });
+        return matchedIds;
+    },
+
+    isLabelCollapsed(labelId) {
+        const labelPool = (this.allLabels && this.allLabels.length > 0) ? this.allLabels : (this.labels || []);
+        const parent = labelPool.find(l => l.id === labelId);
+        if (!parent || !parent.name) return false;
+        const fullPath = String(parent.name).trim();
+        const accKey = (this.currentAccountId ? '' : (parent.account_id || 'shared')) + '::';
+        const nodeKey = accKey + fullPath;
+        const prefix = fullPath + '/';
+        const hasChildren = labelPool.some(l => l.id !== labelId && String(l.name || '').trim().startsWith(prefix));
+        if (!hasChildren) return false;
+        if (!this.collapsedLabelNodes) {
+            try {
+                const saved = JSON.parse(localStorage.getItem('merkemail_collapsed_label_nodes') || '[]');
+                this.collapsedLabelNodes = new Set(Array.isArray(saved) ? saved : []);
+            } catch (e) {
+                this.collapsedLabelNodes = new Set();
+            }
+        }
+        return this.collapsedLabelNodes.has(nodeKey);
+    },
+
+    buildLabelTree(labels) {
+        const rootNodes = [];
+        const nodeMap = new Map();
+
+        // Inicializar conjunto de nodos colapsados desde localStorage
+        if (!this.collapsedLabelNodes) {
+            try {
+                const saved = JSON.parse(localStorage.getItem('merkemail_collapsed_label_nodes') || '[]');
+                this.collapsedLabelNodes = new Set(Array.isArray(saved) ? saved : []);
+            } catch (e) {
+                this.collapsedLabelNodes = new Set();
+            }
+        }
+
+        (labels || []).forEach(label => {
+            const fullPath = String(label.name || '').trim();
+            const parts = fullPath.split('/').map(p => p.trim()).filter(Boolean);
+            if (parts.length === 0) return;
+
+            const accKey = (this.currentAccountId ? '' : (label.account_id || 'shared')) + '::';
+            let currentPath = '';
+
+            for (let i = 0; i < parts.length; i++) {
+                const partName = parts[i];
+                const parentPath = currentPath;
+                currentPath = currentPath ? `${currentPath}/${partName}` : partName;
+                const fullKey = accKey + currentPath;
+
+                if (!nodeMap.has(fullKey)) {
+                    const isLeaf = (i === parts.length - 1);
+                    const node = {
+                        key: fullKey,
+                        path: currentPath,
+                        name: partName,
+                        fullPath: currentPath,
+                        level: i,
+                        label: isLeaf ? label : null,
+                        children: [],
+                        account_id: label.account_id
+                    };
+                    nodeMap.set(fullKey, node);
+
+                    if (i === 0) {
+                        rootNodes.push(node);
+                    } else {
+                        const parentKey = accKey + parentPath;
+                        const parentNode = nodeMap.get(parentKey);
+                        if (parentNode) {
+                            parentNode.children.push(node);
+                        } else {
+                            rootNodes.push(node);
+                        }
+                    }
+                } else if (i === parts.length - 1) {
+                    const node = nodeMap.get(fullKey);
+                    node.label = label;
+                    node.account_id = label.account_id;
+                }
+            }
+        });
+
+        return rootNodes;
+    },
+
+    getLabelTreeTotalUnread(node) {
+        let total = (node.label && this.unreadCounts?.labels && this.unreadCounts.labels[String(node.label.id)]) || 0;
+        if (node.children && node.children.length > 0) {
+            node.children.forEach(child => {
+                total += this.getLabelTreeTotalUnread(child);
+            });
+        }
+        return total;
+    },
+
+    toggleLabelCollapse(nodeKey) {
+        if (!this.collapsedLabelNodes) {
+            try {
+                const saved = JSON.parse(localStorage.getItem('merkemail_collapsed_label_nodes') || '[]');
+                this.collapsedLabelNodes = new Set(Array.isArray(saved) ? saved : []);
+            } catch (e) {
+                this.collapsedLabelNodes = new Set();
+            }
+        }
+        if (this.collapsedLabelNodes.has(nodeKey)) {
+            this.collapsedLabelNodes.delete(nodeKey);
+        } else {
+            this.collapsedLabelNodes.add(nodeKey);
+        }
+        try {
+            localStorage.setItem('merkemail_collapsed_label_nodes', JSON.stringify([...this.collapsedLabelNodes]));
+        } catch (e) {}
+        this.renderLabels();
+
+        // Si la etiqueta activa es la que se colapsó o expandió, actualizar la vista de correos
+        if (this.currentLabelId) {
+            const labelPool = (this.allLabels && this.allLabels.length > 0) ? this.allLabels : (this.labels || []);
+            const activeLabel = labelPool.find(l => l.id === this.currentLabelId);
+            if (activeLabel) {
+                const accKey = (this.currentAccountId ? '' : (activeLabel.account_id || 'shared')) + '::';
+                const activeKey = accKey + String(activeLabel.name || '').trim();
+                if (activeKey === nodeKey) {
+                    if (this.isLabelCollapsed(this.currentLabelId)) {
+                        this.activeFilterLabelIds = this.getLabelAndDescendantIds(this.currentLabelId);
+                    } else {
+                        this.activeFilterLabelIds = null;
+                    }
+                    const titleEl = document.getElementById('current-folder-title');
+                    if (titleEl) {
+                        const hasChildren = this.getLabelAndDescendantIds(this.currentLabelId).length > 1;
+                        const suffix = (this.isLabelCollapsed(this.currentLabelId) && hasChildren) ? ' (incluye sub-etiquetas)' : '';
+                        titleEl.textContent = `Etiqueta: ${this.getLabelDisplayName(activeLabel.name)}${suffix}`;
+                    }
+                    this.loadEmails(false);
+                }
+            }
+        }
+    },
+
+    renderLabelNode(node, nameCounts) {
+        const hasChildren = node.children && node.children.length > 0;
+        const isCollapsed = hasChildren && this.collapsedLabelNodes.has(node.key);
+        const l = node.label;
+        const isActive = l && this.currentLabelId === l.id;
+        
+        let unread = 0;
+        if (l) {
+            unread = (this.unreadCounts?.labels && this.unreadCounts.labels[String(l.id)]) || 0;
+        }
+        if (hasChildren && isCollapsed) {
+            unread = this.getLabelTreeTotalUnread(node);
+        }
+
+        // Para raíces mostramos el nombre formateado; para sub-categorías el nombre del concepto hijo
+        const leafDisplayName = node.level === 0 ? this.getLabelDisplayName(node.name) : node.name;
+
+        // En "Todas las cuentas" se indica la cuenta dueña
+        const ownerAcc = (!this.currentAccountId && l && l.account_id)
+            ? (this.accounts || []).find(a => a.id === l.account_id)
+            : null;
+        const isDuplicateName = l && nameCounts[String(l.name || '').trim().toLowerCase()] > 1;
+        const ownerName = ownerAcc ? ownerAcc.name : ((l && !l.account_id && isDuplicateName) ? 'Compartida' : '');
+        const ownerHint = ownerName ? ` (${ownerName})` : '';
+        const color = (l && l.color) ? l.color : '#6366f1';
+
+        const paddingClass = node.level === 0 ? 'px-3 sm:px-4' : 'pl-2 pr-3 sm:pr-4';
+
+        let html = `
+            <div class="label-tree-node flex flex-col">
+                <div class="label-nav-btn group flex items-center justify-between ${paddingClass} py-1.5 rounded-r-full cursor-pointer transition-colors ${
+                    isActive 
+                        ? 'bg-indigo-50 dark:bg-indigo-950/70 font-bold text-indigo-700 dark:text-indigo-300 border-l-2 border-indigo-600 dark:border-indigo-400' 
+                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                }" ${l ? `onclick="EmailManager.filterByLabel(${l.id})"` : `onclick="EmailManager.toggleLabelCollapse('${this.escapeHtml(node.key)}')"`} title="${this.escapeHtml((node.fullPath || leafDisplayName) + ownerHint)}">
+                    
+                    <div class="label-left-content flex items-center gap-1.5 min-w-0 flex-1">
+                        ${hasChildren ? `
+                            <button type="button" 
+                                    class="label-collapse-btn sidebar-text p-0.5 -ml-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded transition-transform cursor-pointer shrink-0" 
+                                    onclick="event.stopPropagation(); EmailManager.toggleLabelCollapse('${this.escapeHtml(node.key)}')" 
+                                    title="${isCollapsed ? 'Desplegar sub-etiquetas' : 'Colapsar sub-etiquetas'}">
+                                <svg class="w-3.5 h-3.5 transition-transform duration-150 ${isCollapsed ? '-rotate-90' : 'rotate-0'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </button>
+                        ` : `
+                            <span class="sidebar-text w-3.5 h-3.5 shrink-0 -ml-1"></span>
+                        `}
+                        <span class="label-dot w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style="background-color: ${color}"></span>
+                        <span class="sidebar-text truncate text-xs">${this.escapeHtml(leafDisplayName)}${ownerName ? `<span class="ml-1 text-[10px] font-normal text-slate-400 dark:text-slate-500">· ${this.escapeHtml(ownerName)}</span>` : ''}</span>
+                    </div>
+
+                    <div class="sidebar-text flex items-center gap-1.5 shrink-0 ml-1">
+                        ${l ? `
+                            <span class="sidebar-badge text-[11px] px-2 py-0.5 rounded-full font-bold bg-slate-200/80 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 ${unread > 0 ? '' : 'hidden'}" id="label-badge-${l.id}">
+                                ${unread > 999 ? '999+' : unread}
+                            </span>
+                            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onclick="event.stopPropagation(); EmailManager.openEditLabelModal(${l.id}, '${this.escapeHtml(l.name)}', '${l.color || '#3b82f6'}')" class="p-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400" title="Editar etiqueta">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                                </button>
+                                <button onclick="event.stopPropagation(); EmailManager.deleteLabel(${l.id}, '${this.escapeHtml(l.name)}')" class="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400" title="Eliminar etiqueta">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                </button>
+                            </div>
+                        ` : `
+                            <span class="sidebar-badge text-[11px] px-2 py-0.5 rounded-full font-bold bg-slate-200/80 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 ${unread > 0 ? '' : 'hidden'}">
+                                ${unread > 999 ? '999+' : unread}
+                            </span>
+                        `}
+                    </div>
+                </div>
+        `;
+
+        if (hasChildren) {
+            html += `
+                <div class="label-children-container flex flex-col space-y-0.5 border-l border-slate-200/70 dark:border-slate-800/70 ml-4 my-0.5 ${isCollapsed ? 'hidden' : ''}">
+                    ${node.children.map(child => this.renderLabelNode(child, nameCounts)).join('')}
+                </div>
+            `;
+        }
+
+        html += `</div>`;
+        return html;
+    },
+
     renderLabels() {
         const container = document.getElementById('sidebar-labels-list');
         const countBadge = document.getElementById('sidebar-labels-count-badge');
@@ -1229,44 +1528,8 @@ const EmailManager = {
             nameCounts[key] = (nameCounts[key] || 0) + 1;
         });
 
-        container.innerHTML = this.labels.map(l => {
-            const isActive = this.currentLabelId === l.id;
-            const unread = (this.unreadCounts?.labels && this.unreadCounts.labels[String(l.id)]) || 0;
-            const displayName = this.getLabelDisplayName(l.name);
-            // En "Todas las cuentas" se indica la cuenta dueña; si el nombre se repite, también
-            // se marca la etiqueta compartida para poder distinguirlas
-            const ownerAcc = (!this.currentAccountId && l.account_id)
-                ? (this.accounts || []).find(a => a.id === l.account_id)
-                : null;
-            const isDuplicateName = nameCounts[String(l.name || '').trim().toLowerCase()] > 1;
-            const ownerName = ownerAcc ? ownerAcc.name : ((!l.account_id && isDuplicateName) ? 'Compartida' : '');
-            const ownerHint = ownerName ? ` (${ownerName})` : '';
-            return `
-                <div class="label-nav-btn group flex items-center justify-between px-3 sm:px-4 py-1.5 rounded-r-full cursor-pointer transition-colors ${
-                    isActive 
-                        ? 'bg-indigo-50 dark:bg-indigo-950/70 font-bold text-indigo-700 dark:text-indigo-300 border-l-2 border-indigo-600 dark:border-indigo-400' 
-                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60'
-                }" onclick="EmailManager.filterByLabel(${l.id})" title="${this.escapeHtml(displayName + ownerHint)}">
-                    <div class="label-left-content flex items-center gap-2.5 min-w-0 flex-1">
-                        <span class="label-dot w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style="background-color: ${l.color || '#3b82f6'}"></span>
-                        <span class="sidebar-text truncate text-xs">${this.escapeHtml(displayName)}${ownerName ? `<span class="ml-1 text-[10px] font-normal text-slate-400 dark:text-slate-500">· ${this.escapeHtml(ownerName)}</span>` : ''}</span>
-                    </div>
-                    <div class="sidebar-text flex items-center gap-1.5 shrink-0 ml-1">
-                        <span class="sidebar-badge text-[11px] px-2 py-0.5 rounded-full font-bold bg-slate-200/80 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 ${unread > 0 ? '' : 'hidden'}" id="label-badge-${l.id}">
-                            ${unread > 999 ? '999+' : unread}
-                        </span>
-                        <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onclick="event.stopPropagation(); EmailManager.openEditLabelModal(${l.id}, '${this.escapeHtml(l.name)}', '${l.color || '#3b82f6'}')" class="p-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400" title="Editar etiqueta">
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-                            </button>
-                            <button onclick="event.stopPropagation(); EmailManager.deleteLabel(${l.id}, '${this.escapeHtml(displayName)}')" class="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400" title="Eliminar etiqueta">
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }).join('');
+        const rootNodes = this.buildLabelTree(this.labels);
+        container.innerHTML = rootNodes.map(node => this.renderLabelNode(node, nameCounts)).join('');
     },
 
     filterByLabel(labelId) {
@@ -1276,6 +1539,13 @@ const EmailManager = {
         this.currentFolder = null;
         this.currentPage = 1;
         this.clearSelection();
+
+        // Si la etiqueta tiene sub-etiquetas y está colapsada, mostrar correos de ella y todos sus descendientes
+        if (this.isLabelCollapsed(labelId)) {
+            this.activeFilterLabelIds = this.getLabelAndDescendantIds(labelId);
+        } else {
+            this.activeFilterLabelIds = null;
+        }
 
         // Asegurar vista de correo
         const sectionMail = document.getElementById('main-mail-section');
@@ -1296,10 +1566,13 @@ const EmailManager = {
         });
 
         // Actualizar título
-        const label = this.labels.find(l => l.id === labelId);
+        const labelPool = (this.allLabels && this.allLabels.length > 0) ? this.allLabels : (this.labels || []);
+        const label = labelPool.find(l => l.id === labelId);
         const titleEl = document.getElementById('current-folder-title');
         if (titleEl && label) {
-            titleEl.textContent = `Etiqueta: ${this.getLabelDisplayName(label.name)}`;
+            const hasChildren = this.getLabelAndDescendantIds(labelId).length > 1;
+            const suffix = (this.isLabelCollapsed(labelId) && hasChildren) ? ' (incluye sub-etiquetas)' : '';
+            titleEl.textContent = `Etiqueta: ${this.getLabelDisplayName(label.name)}${suffix}`;
         }
 
         this.renderLabels();
@@ -1727,6 +2000,8 @@ const EmailManager = {
             // Múltiples etiquetas
             if (f.labelIds && f.labelIds.length > 0) {
                 params.append('label_ids', f.labelIds.join(','));
+            } else if (this.activeFilterLabelIds && this.activeFilterLabelIds.length > 0) {
+                params.append('label_ids', this.activeFilterLabelIds.join(','));
             } else if (this.currentLabelId) {
                 params.append('label_id', this.currentLabelId);
             }
@@ -1748,7 +2023,9 @@ const EmailManager = {
             // Urgencia IA
             if (f.aiUrgency) params.append('ai_urgency', f.aiUrgency);
         } else {
-            if (this.currentLabelId) {
+            if (this.activeFilterLabelIds && this.activeFilterLabelIds.length > 0) {
+                params.append('label_ids', this.activeFilterLabelIds.join(','));
+            } else if (this.currentLabelId) {
                 params.append('label_id', this.currentLabelId);
             } else {
                 params.append('folder', this.currentFolder || 'INBOX');
@@ -2112,6 +2389,13 @@ const EmailManager = {
 
                         <!-- Acciones Rápidas Superior Derecha (Gestión Individual & Redacción) -->
                         <div id="email-top-actions-right" class="relative z-40 flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end overflow-visible">
+                            <!-- 0. Botón Mover a Carpeta -->
+                            <button id="btn-detail-move" onclick="EmailManager.toggleMoveMenu(event, 'detail', ${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer shrink-0" title="Mover a carpeta">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m0 0l-3-3m3 3l-3 3"/>
+                                </svg>
+                            </button>
                             <!-- 1. Botón Archivar / Almacenar (Oculto en Papelera, Spam, Borradores y en "Todos") -->
                             ${canArchiveHere ? `
                                 <button onclick="EmailManager.archiveCurrentEmail(${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Archivar correo (quitar de Recibidos)">
@@ -2176,8 +2460,8 @@ const EmailManager = {
                                 <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                             </button>
 
-                            <!-- 11. Imprimir (solo visible en modo browser y PWA, oculto en modo instalado/desktop) -->
-                            <button id="btn-print-email" onclick="EmailManager.printCurrentEmail()" class="${(window.DesktopBridge && window.DesktopBridge.isDesktop) ? 'hidden' : ''} p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Imprimir correo">
+                            <!-- 11. Imprimir correo (en desktop abre visor con vista previa, en web/PWA usa el navegador nativo) -->
+                            <button id="btn-print-email" onclick="EmailManager.openPrintPreview()" class="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Imprimir correo (Ctrl+P)">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
                             </button>
                         </div>
@@ -2725,15 +3009,18 @@ const EmailManager = {
             margin: 0 !important;
             padding: 0 !important;
             width: 100% !important;
+            min-width: 100% !important;
             height: auto !important;
             min-height: 0 !important;
-            overflow: hidden !important;
+            overflow-x: auto !important;
+            overflow-y: hidden !important;
             background-color: #ffffff;
             color: #1e293b;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             box-sizing: border-box;
             word-wrap: break-word;
             overflow-wrap: break-word;
+            -webkit-text-size-adjust: 100%;
         }
         /* Eliminar margen y espaciado residual de los últimos elementos del correo */
         #merke-email-content > *:last-child,
@@ -2743,10 +3030,39 @@ const EmailManager = {
             margin-bottom: 0 !important;
             padding-bottom: 0 !important;
         }
-        /* Contención segura para respetar el diseño original de tablas e imágenes */
+        /* Tablas: contención adaptativa respetando estructura interna */
+        table {
+            border-collapse: collapse;
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+            max-width: 100%;
+        }
+        /* Imágenes: contención fluida respetando proporciones nativas */
         img {
-            max-width: 100% !important;
+            border: 0;
+            outline: none;
+            text-decoration: none;
+            -ms-interpolation-mode: bicubic;
+            max-width: 100%;
+        }
+        /* Si la imagen no tiene height explícito en atributos, permitir auto-proporción */
+        img:not([height]) {
             height: auto;
+        }
+        /* Eliminar espacio fantasma bajo imágenes en celdas de tabla */
+        td > img, th > img, a > img {
+            vertical-align: middle;
+        }
+        /* Spacers y píxeles de seguimiento de 0 o 1px no deben expandirse */
+        img[width="0"], img[width="1"], img[height="0"], img[height="1"],
+        img[width="1px"], img[height="1px"],
+        img[style*="width: 1px"], img[style*="height: 1px"],
+        img[style*="width:1px"], img[style*="height:1px"] {
+            max-width: 1px !important;
+            max-height: 1px !important;
+            width: 1px !important;
+            height: 1px !important;
+            display: inline-block !important;
         }
         ${shouldBlockImages ? `
             img {
@@ -2760,9 +3076,6 @@ const EmailManager = {
                 display: inline-block;
             }
         ` : ''}
-        table {
-            max-width: 100% !important;
-        }
     </style>
 </head>
 <body style="margin: 0; padding: 0;">
@@ -2841,19 +3154,82 @@ const EmailManager = {
             adjustHeight();
             frame.onload = adjustHeight;
 
-            // Manejo de errores de carga de imágenes con fallback al proxy backend
+            // Normalizar y blindar proporciones y dimensiones de imágenes
             const images = doc.images || [];
             Array.from(images).forEach(img => {
-                if (!img.complete) {
-                    img.addEventListener('load', adjustHeight);
+                // 1. Spacers y píxeles de rastreo de 0 o 1px
+                const wAttr = img.getAttribute('width');
+                const hAttr = img.getAttribute('height');
+                const numW = parseInt(wAttr, 10);
+                const numH = parseInt(hAttr, 10);
+
+                const isTracker = (wAttr === '0' || wAttr === '1' || numW === 1 || numW === 0) &&
+                                  (hAttr === '0' || hAttr === '1' || numH === 1 || numH === 0);
+                if (isTracker) {
+                    img.style.setProperty('max-width', '1px', 'important');
+                    img.style.setProperty('max-height', '1px', 'important');
+                    img.style.setProperty('width', '1px', 'important');
+                    img.style.setProperty('height', '1px', 'important');
+                    img.style.setProperty('display', 'inline-block', 'important');
+                    return;
                 }
+
+                // 2. Imágenes con altura fija pero sin ancho (ej. logos o iconos de 20px, 24px, 33px)
+                // Evita que queden desproporcionadas por resoluciones nativas retina
+                if (hAttr && (!wAttr || wAttr === 'auto') && !img.style.width) {
+                    if (numH > 1) {
+                        img.style.setProperty('height', `${numH}px`, 'important');
+                        img.style.setProperty('width', 'auto', 'important');
+                        img.style.setProperty('max-width', '100%');
+                    }
+                }
+
+                // 3. Imágenes con dimensiones fijas (atributos o estilo en píxeles)
+                // Si el contenedor se reduce por debajo de su ancho, asegurar que la altura escale
+                // proporcionalmente con aspect-ratio en lugar de estirarse o aplastarse
+                let explicitW = numW;
+                let explicitH = numH;
+                if (!explicitW && img.style.width && img.style.width.endsWith('px')) {
+                    explicitW = parseInt(img.style.width, 10);
+                }
+                if (!explicitH && img.style.height && img.style.height.endsWith('px')) {
+                    explicitH = parseInt(img.style.height, 10);
+                }
+
+                if (explicitW > 0 && explicitH > 0) {
+                    img.style.aspectRatio = `${explicitW} / ${explicitH}`;
+                    // Si tiene altura fija en style y es un banner/imagen grande (>100px),
+                    // permitir que la altura escale cuando el ancho se restrinja por max-width: 100%
+                    if (explicitW > 100 && img.style.height && img.style.height !== 'auto' && !img.style.height.includes('%')) {
+                        img.style.height = 'auto';
+                        img.style.maxWidth = '100%';
+                    }
+                }
+
+                // 4. Asegurar que al cargar, imágenes sin dimensiones nativas calculen su aspect-ratio
+                const onImageReady = () => {
+                    if (img.naturalWidth && img.naturalHeight && img.naturalWidth > 0 && img.naturalHeight > 0) {
+                        if (!img.style.aspectRatio && !isTracker) {
+                            img.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+                        }
+                    }
+                    adjustHeight();
+                };
+
+                if (img.complete) {
+                    onImageReady();
+                } else {
+                    img.addEventListener('load', onImageReady);
+                }
+
+                // Manejo de errores de carga de imágenes con fallback al proxy backend
                 img.addEventListener('error', function onImgError() {
                     img.removeEventListener('error', onImgError);
                     const originalSrc = this.getAttribute('src') || this.src;
                     if (originalSrc && !this.dataset.fallbackTried && (originalSrc.startsWith('http://') || originalSrc.startsWith('https://'))) {
                         this.dataset.fallbackTried = "true";
                         this.src = `/api/image-proxy?url=${encodeURIComponent(originalSrc)}`;
-                        this.addEventListener('load', adjustHeight);
+                        this.addEventListener('load', onImageReady);
                     } else {
                         adjustHeight();
                     }
@@ -3207,19 +3583,33 @@ const EmailManager = {
         // Si el correo ya está en la Papelera, la acción lo elimina definitivamente de MerkeMail
         const opened = (this.currentOpenedEmail && this.currentOpenedEmail.id === emailId) ? this.currentOpenedEmail : null;
         const inTrash = ((opened && opened.folder) || '').toUpperCase() === 'TRASH';
-        const confirmed = await UI.confirm(inTrash ? {
-            title: '¿Eliminar definitivamente?',
-            message: 'El correo se eliminará de MerkeMail. Esta acción no se puede deshacer.',
-            confirmText: 'Eliminar definitivamente',
-            isDanger: true
-        } : {
-            title: '¿Mover a la papelera?',
-            message: 'El correo seleccionado se moverá a la papelera.',
-            confirmText: 'Mover a papelera',
-            isDanger: true
-        });
 
-        if (!confirmed) return;
+        if (inTrash) {
+            // La eliminación definitiva de papelera siempre solicita confirmación por seguridad
+            const confirmed = await UI.confirm({
+                title: '¿Eliminar definitivamente?',
+                message: 'El correo se eliminará de MerkeMail. Esta acción no se puede deshacer.',
+                confirmText: 'Eliminar definitivamente',
+                isDanger: true
+            });
+            if (!confirmed) return;
+        } else if (!this.skipDeleteConfirm) {
+            // Mover a papelera: solicitar confirmación si no se ha activado la omisión previa
+            const confirmed = await UI.confirm({
+                title: '¿Mover a la papelera?',
+                message: 'El correo seleccionado se moverá a la papelera.',
+                confirmText: 'Mover a papelera',
+                isDanger: true,
+                showDontAskAgain: true,
+                dontAskAgainLabel: 'No volver a preguntar al eliminar correos',
+                onDontAskAgain: (checked) => {
+                    if (checked) {
+                        this.setSkipDeleteConfirm(true, true);
+                    }
+                }
+            });
+            if (!confirmed) return;
+        }
 
         try {
             const res = await fetch(`/api/emails/${emailId}`, { method: 'DELETE' });
@@ -3430,6 +3820,17 @@ const EmailManager = {
         if (listContainer) {
             listContainer.classList.toggle('batch-archive-disabled', !this.canBatchArchiveInCurrentFolder());
         }
+
+        // Si el menú flotante de mover está visible en modo selección masiva, actualizar cantidad y opciones reactivamente
+        const moveDrop = document.getElementById('universal-move-dropdown');
+        if (moveDrop && !moveDrop.classList.contains('hidden') && this.pendingMoveContext && this.pendingMoveContext.source === 'batch') {
+            if (count === 0) {
+                this.closeMoveMenu();
+            } else {
+                this.pendingMoveContext.emailIds = this.getSelectedEmailIds();
+                this.renderMoveMenuContent(moveDrop, 'batch', this.pendingMoveContext.emailIds);
+            }
+        }
     },
 
     // Carpetas donde NO se permite archivar en lote: Spam, Papelera, Borradores y "Todos" (ALL),
@@ -3567,18 +3968,298 @@ const EmailManager = {
         if (drop) drop.classList.add('hidden');
     },
 
+    pendingMoveContext: null,
+
+    renderMoveMenuContent(drop, source, targetIds) {
+        if (!drop) return;
+        const count = targetIds.length;
+        if (count === 0) {
+            this.closeMoveMenu();
+            return;
+        }
+
+        const normFolder = (f) => {
+            if (!f) return '';
+            const u = String(f).toUpperCase().trim();
+            if (['INBOX', 'RECIBIDOS', 'CATEGORY_PERSONAL'].includes(u)) return 'INBOX';
+            if (['ARCHIVE', 'ARCHIVED', 'ARCHIVO'].includes(u)) return 'ARCHIVE';
+            if (['SPAM'].includes(u)) return 'SPAM';
+            if (['TRASH', 'PAPELERA'].includes(u)) return 'TRASH';
+            if (['CATEGORY_PROMOTIONS', 'PROMOCIONES', 'PROMOTIONS'].includes(u)) return 'CATEGORY_PROMOTIONS';
+            if (['CATEGORY_SOCIAL', 'SOCIAL'].includes(u)) return 'CATEGORY_SOCIAL';
+            if (['CATEGORY_UPDATES', 'NOTIFICACIONES', 'ACTUALIZACIONES', 'UPDATES'].includes(u)) return 'CATEGORY_UPDATES';
+            if (['CATEGORY_FORUMS', 'FOROS', 'FORUMS'].includes(u)) return 'CATEGORY_FORUMS';
+            return u;
+        };
+
+        const excluded = new Set();
+
+        // 1. Excluir la vista actual de la carpeta o categoría (no tiene sentido mover a donde ya estás)
+        const viewF = normFolder(this.currentFolder);
+        if (viewF && !['ALL', 'TODOS', 'STARRED', 'DESTACADOS', 'IMPORTANT', 'IMPORTANTES'].includes(viewF)) {
+            excluded.add(viewF);
+        }
+
+        // 2. Excluir la carpeta/categoría intrínseca del correo
+        if (source === 'detail') {
+            const email = (this.currentOpenedEmail && this.currentOpenedEmail.id === targetIds[0])
+                ? this.currentOpenedEmail
+                : this.emails.find(e => e.id === targetIds[0]);
+            if (email) {
+                if (email.folder) {
+                    excluded.add(normFolder(email.folder));
+                }
+                if (email.labels && Array.isArray(email.labels)) {
+                    email.labels.forEach(l => {
+                        const lname = typeof l === 'string' ? l : (l.name || l.remote_id || '');
+                        const norm = normFolder(lname);
+                        if (norm.startsWith('CATEGORY_')) {
+                            excluded.add(norm);
+                        }
+                    });
+                }
+            }
+        } else {
+            // Modo lote: si todos los correos seleccionados pertenecen a la misma carpeta o categoría, excluirla
+            const batchFolders = new Set();
+            targetIds.forEach(id => {
+                const item = this.emails.find(e => e.id === id);
+                if (item && item.folder) {
+                    batchFolders.add(normFolder(item.folder));
+                }
+            });
+            if (batchFolders.size === 1) {
+                excluded.add([...batchFolders][0]);
+            }
+        }
+
+        const systemButtons = [
+            {
+                key: 'INBOX',
+                label: 'Recibidos',
+                icon: '<svg class="w-4 h-4 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>',
+                hover: 'hover:bg-indigo-50 dark:hover:bg-indigo-950/50 hover:text-indigo-600 dark:hover:text-indigo-400'
+            },
+            {
+                key: 'ARCHIVE',
+                label: 'Archivo',
+                icon: '<svg class="w-4 h-4 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>',
+                hover: 'hover:bg-slate-100 dark:hover:bg-slate-700/60'
+            },
+            {
+                key: 'SPAM',
+                label: 'Spam',
+                icon: '<svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>',
+                hover: 'hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:text-amber-600 dark:hover:text-amber-400'
+            },
+            {
+                key: 'TRASH',
+                label: 'Papelera',
+                icon: '<svg class="w-4 h-4 text-rose-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>',
+                hover: 'hover:bg-rose-50 dark:hover:bg-rose-950/40 hover:text-rose-600 dark:hover:text-rose-400'
+            }
+        ];
+
+        const categoryButtons = [
+            {
+                key: 'CATEGORY_PROMOTIONS',
+                label: 'Promociones',
+                icon: '<svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>',
+                hover: 'hover:bg-emerald-50 dark:hover:bg-emerald-950/40 hover:text-emerald-600 dark:hover:text-emerald-400'
+            },
+            {
+                key: 'CATEGORY_SOCIAL',
+                label: 'Social',
+                icon: '<svg class="w-4 h-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>',
+                hover: 'hover:bg-blue-50 dark:hover:bg-blue-950/40 hover:text-blue-600 dark:hover:text-blue-400'
+            },
+            {
+                key: 'CATEGORY_UPDATES',
+                label: 'Notificaciones',
+                icon: '<svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>',
+                hover: 'hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:text-amber-600 dark:hover:text-amber-400'
+            },
+            {
+                key: 'CATEGORY_FORUMS',
+                label: 'Foros',
+                icon: '<svg class="w-4 h-4 text-purple-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"/></svg>',
+                hover: 'hover:bg-purple-50 dark:hover:bg-purple-950/40 hover:text-purple-600 dark:hover:text-purple-400'
+            }
+        ];
+
+        const visibleSystem = systemButtons.filter(b => !excluded.has(b.key));
+        const visibleCategories = categoryButtons.filter(b => !excluded.has(b.key));
+
+        let html = `
+            <div class="px-3 py-1 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-100 dark:border-slate-700/80 mb-1 flex items-center justify-between">
+                <span>Mover a carpeta</span>
+                <span id="universal-move-count" class="text-[10px] font-normal text-slate-400">${count === 1 ? '1 correo' : `${count} correos`}</span>
+            </div>
+        `;
+
+        if (visibleSystem.length > 0) {
+            html += `<div class="space-y-0.5">`;
+            visibleSystem.forEach(b => {
+                html += `
+                    <button type="button" onclick="EmailManager.applyMoveToFolder('${b.key}')" class="w-full text-left px-3 py-1.5 ${b.hover} text-slate-700 dark:text-slate-200 flex items-center gap-2.5 transition-colors cursor-pointer">
+                        ${b.icon}
+                        <span class="font-medium">${b.label}</span>
+                    </button>
+                `;
+            });
+            html += `</div>`;
+        }
+
+        if (visibleCategories.length > 0) {
+            if (visibleSystem.length > 0) {
+                html += `<div class="my-1 border-t border-slate-100 dark:border-slate-700/80"></div>`;
+            }
+            html += `
+                <div class="px-3 py-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Categorías</div>
+                <div class="space-y-0.5">
+            `;
+            visibleCategories.forEach(b => {
+                html += `
+                    <button type="button" onclick="EmailManager.applyMoveToFolder('${b.key}')" class="w-full text-left px-3 py-1.5 ${b.hover} text-slate-700 dark:text-slate-200 flex items-center gap-2.5 transition-colors cursor-pointer">
+                        ${b.icon}
+                        <span>${b.label}</span>
+                    </button>
+                `;
+            });
+            html += `</div>`;
+        }
+
+        drop.innerHTML = html;
+    },
+
+    toggleMoveMenu(e, source, emailId = null) {
+        if (e) {
+            e.stopPropagation();
+            e.preventDefault();
+        }
+        let drop = document.getElementById('universal-move-dropdown');
+        if (drop && !drop.classList.contains('hidden') && this.pendingMoveContext && this.pendingMoveContext.source === source && (!emailId || this.pendingMoveContext.emailIds[0] === emailId)) {
+            this.closeMoveMenu();
+            return;
+        }
+
+        let targetIds = [];
+        if (source === 'batch') {
+            targetIds = this.getSelectedEmailIds();
+            if (targetIds.length === 0) {
+                UI.showStickyToast('Sin selección', 'Selecciona uno o más correos para mover', 'warning');
+                return;
+            }
+        } else {
+            const id = emailId || (this.currentOpenedEmail && this.currentOpenedEmail.id);
+            if (!id) return;
+            targetIds = [id];
+        }
+
+        this.pendingMoveContext = { source, emailIds: targetIds };
+
+        if (!drop) {
+            drop = document.createElement('div');
+            drop.id = 'universal-move-dropdown';
+            drop.className = 'fixed w-52 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-[9999] py-1.5 text-xs select-none';
+            document.body.appendChild(drop);
+        }
+
+        this.renderMoveMenuContent(drop, source, targetIds);
+
+        const btn = e ? e.currentTarget : null;
+        if (btn && btn.getBoundingClientRect) {
+            const rect = btn.getBoundingClientRect();
+            drop.style.top = `${Math.round(rect.bottom + 6)}px`;
+            const rightOffset = Math.max(12, Math.round(window.innerWidth - rect.right));
+            if (rect.left + 215 > window.innerWidth) {
+                drop.style.right = `${rightOffset}px`;
+                drop.style.left = 'auto';
+            } else {
+                drop.style.left = `${Math.round(rect.left)}px`;
+                drop.style.right = 'auto';
+            }
+        }
+        drop.classList.remove('hidden');
+    },
+
+    closeMoveMenu() {
+        const drop = document.getElementById('universal-move-dropdown');
+        if (drop) drop.classList.add('hidden');
+        this.pendingMoveContext = null;
+    },
+
+    async applyMoveToFolder(targetFolder) {
+        if (!this.pendingMoveContext) return;
+        const { source, emailIds } = this.pendingMoveContext;
+        this.closeMoveMenu();
+        if (!emailIds || emailIds.length === 0) return;
+
+        if (targetFolder === 'TRASH') {
+            if (source === 'batch') {
+                await this.deleteSelectedBatch();
+            } else {
+                await this.deleteCurrentEmail(emailIds[0]);
+            }
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/emails/batch-action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'move_folder',
+                    email_ids: emailIds,
+                    folder: targetFolder
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                UI.showStickyToast('Correo movido', data.message || `Movido a ${this.getFolderDisplayName(targetFolder)}`, 'success');
+                if (source === 'batch') {
+                    this.clearSelection();
+                } else if (this.currentOpenedEmail && this.currentOpenedEmail.id === emailIds[0]) {
+                    this.currentOpenedEmail.folder = targetFolder;
+                    this.emailDetailCache.delete(emailIds[0]);
+                    const curF = (this.currentFolder || 'INBOX').toUpperCase();
+                    if (curF !== 'ALL' && curF !== targetFolder && targetFolder !== 'INBOX') {
+                        this.selectedEmailId = null;
+                        this.backToList();
+                    } else {
+                        await this.openEmailDetail(emailIds[0]);
+                    }
+                }
+                await this.loadEmails(false);
+                await this.updateUnreadCounts();
+            } else {
+                UI.showStickyToast('Error', data.detail || 'No se pudo mover el correo', 'error');
+            }
+        } catch (err) {
+            UI.showStickyToast('Error', err.message || 'Error al mover correo', 'error');
+        }
+    },
+
     async deleteSelectedBatch() {
         const ids = this.getSelectedEmailIds();
         if (ids.length === 0) return;
 
-        const confirmed = await UI.confirm({
-            title: `¿Eliminar ${ids.length} correos?`,
-            message: `Los ${ids.length} correos seleccionados se moverán a la papelera.`,
-            confirmText: 'Mover a papelera',
-            isDanger: true
-        });
-
-        if (!confirmed) return;
+        if (!this.skipDeleteConfirm) {
+            const confirmed = await UI.confirm({
+                title: `¿Eliminar ${ids.length} correos?`,
+                message: `Los ${ids.length} correos seleccionados se moverán a la papelera.`,
+                confirmText: 'Mover a papelera',
+                isDanger: true,
+                showDontAskAgain: true,
+                dontAskAgainLabel: 'No volver a preguntar al eliminar correos',
+                onDontAskAgain: (checked) => {
+                    if (checked) {
+                        this.setSkipDeleteConfirm(true, true);
+                    }
+                }
+            });
+            if (!confirmed) return;
+        }
 
         try {
             const res = await fetch('/api/emails/batch-action', {
@@ -3878,8 +4559,602 @@ const EmailManager = {
         }
     },
 
-    printCurrentEmail() {
+    printPreviewState: {
+        destination: 'pdf',
+        layout: 'portrait',
+        color: 'color',
+        paperSize: 'letter',
+        margins: 'default',
+        scale: 100,
+        headersFooters: true,
+        backgroundGraphics: true,
+        zoomLevel: 100
+    },
+
+    openPrintPreview() {
+        if (!this.currentOpenedEmail) {
+            if (window.UI) UI.showStickyToast('Impresión', 'Abre primero un correo para imprimir', 'info', 2000);
+            return;
+        }
+
+        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop) || (window.location.port === '6524');
+        if (!isDesktop) {
+            // En versión web y PWA: usar directamente la opción e interfaz nativa de impresión del navegador (Chrome / navegador del usuario)
+            this.printCurrentEmail();
+            return;
+        }
+
+        const email = this.currentOpenedEmail;
+
+        const dateFormatted = new Date(email.date).toLocaleString('es-ES', { 
+            dateStyle: 'full', 
+            timeStyle: 'short' 
+        });
+
+        // Contenido del cuerpo formateado
+        let bodyContent = '';
+        if (email.body_html) {
+            bodyContent = email.body_html;
+        } else {
+            const escaped = this.escapeHtml(email.body_text || email.snippet || '');
+            bodyContent = `<div style="white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 13.5px; line-height: 1.6; color: #1e293b;">${escaped}</div>`;
+        }
+
+        // Restablecer estado inicial de opciones
+        this.printPreviewState = {
+            destination: isDesktop ? 'pdf' : 'system',
+            layout: 'portrait',
+            color: 'color',
+            paperSize: 'letter',
+            margins: 'default',
+            scale: 100,
+            headersFooters: true,
+            backgroundGraphics: true,
+            zoomLevel: 100
+        };
+
+        // Eliminar modal previo si existiese
+        const prevModal = document.getElementById('print-preview-modal');
+        if (prevModal) prevModal.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'print-preview-modal';
+        modal.className = 'fixed inset-0 z-[99999] bg-[#202124]/90 backdrop-blur-xs flex flex-col md:flex-row overflow-hidden font-sans select-none';
+        modal.innerHTML = `
+            <!-- Panel Lateral de Ajustes estilo Google Chrome -->
+            <div class="w-full md:w-[340px] md:min-w-[340px] bg-[#292a2d] text-[#e8eaed] flex flex-col h-full border-r border-[#3c4043] shadow-2xl z-20 shrink-0">
+                <!-- Cabecera -->
+                <div class="px-5 py-4 border-b border-[#3c4043] flex items-center justify-between shrink-0">
+                    <div class="flex items-center gap-3">
+                        <button type="button" onclick="EmailManager.closePrintPreview()" class="p-1.5 -ml-1 text-[#9aa0a6] hover:text-white hover:bg-[#3c4043] rounded-full transition-colors cursor-pointer" title="Cerrar vista previa (Esc)">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+                        </button>
+                        <div>
+                            <h2 class="text-base font-medium text-white tracking-wide">Imprimir</h2>
+                            <p id="print-preview-pages-subtitle" class="text-[11px] text-[#9aa0a6]">1 hoja de papel &bull; Vista previa</p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="EmailManager.closePrintPreview()" class="text-[#9aa0a6] hover:text-white p-1 rounded-full hover:bg-[#3c4043] transition-colors cursor-pointer" title="Cerrar (Esc)">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+
+                <!-- Botones de Acción Principales -->
+                <div class="px-5 py-3 border-b border-[#3c4043] flex items-center gap-3 shrink-0 bg-[#292a2d]">
+                    <button type="button" id="btn-modal-print-action" onclick="EmailManager.executePrint()" class="flex-1 inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#1a73e8] hover:bg-[#1557b0] active:bg-[#174ea6] text-white font-medium text-xs rounded-full shadow-sm transition-all cursor-pointer">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+                        <span id="btn-modal-print-label">Imprimir</span>
+                    </button>
+                    <button type="button" onclick="EmailManager.closePrintPreview()" class="px-5 py-2.5 border border-[#5f6368] hover:bg-[#3c4043] active:bg-[#4a4d51] text-[#e8eaed] font-medium text-xs rounded-full transition-colors cursor-pointer">
+                        Cancelar
+                    </button>
+                </div>
+
+                <!-- Lista de Controles Chrome -->
+                <div class="p-5 space-y-4 text-xs text-[#bdc1c6] flex-1 overflow-y-auto">
+                    <!-- Destino -->
+                    <div>
+                        <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Destino</label>
+                        <select id="print-opt-destination" onchange="EmailManager.updatePrintOption('destination', this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#8ab4f8] transition-colors cursor-pointer">
+                            <option value="pdf" ${this.printPreviewState.destination === 'pdf' ? 'selected' : ''}>Guardar como PDF</option>
+                            <option value="system" ${this.printPreviewState.destination === 'system' ? 'selected' : ''}>Impresora del sistema / predeterminada</option>
+                        </select>
+                    </div>
+
+                    <!-- Páginas -->
+                    <div>
+                        <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Páginas</label>
+                        <select id="print-opt-pages" onchange="EmailManager.onPageSelectionChange(this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none cursor-pointer">
+                            <option value="all">Todas</option>
+                        </select>
+                    </div>
+
+                    <!-- Diseño / Orientación -->
+                    <div>
+                        <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Diseño</label>
+                        <select id="print-opt-layout" onchange="EmailManager.updatePrintOption('layout', this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#8ab4f8] transition-colors cursor-pointer">
+                            <option value="portrait" selected>Vertical (Retrato)</option>
+                            <option value="landscape">Horizontal (Paisaje)</option>
+                        </select>
+                    </div>
+
+                    <!-- Color -->
+                    <div>
+                        <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Color</label>
+                        <select id="print-opt-color" onchange="EmailManager.updatePrintOption('color', this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#8ab4f8] transition-colors cursor-pointer">
+                            <option value="color" selected>Color</option>
+                            <option value="monochrome">Blanco y negro</option>
+                        </select>
+                    </div>
+
+                    <!-- Más Ajustes -->
+                    <div class="pt-2 border-t border-[#3c4043]">
+                        <button type="button" onclick="document.getElementById('print-more-settings-box').classList.toggle('hidden')" class="flex items-center justify-between w-full py-1 text-xs text-[#8ab4f8] hover:text-[#aecbfa] font-medium transition-colors cursor-pointer">
+                            <span>Más opciones</span>
+                            <svg class="w-3.5 h-3.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        </button>
+                    </div>
+
+                    <!-- Contenedor Desplegable de Más Ajustes -->
+                    <div id="print-more-settings-box" class="space-y-4 pt-1">
+                        <!-- Tamaño de papel -->
+                        <div>
+                            <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Tamaño de papel</label>
+                            <select id="print-opt-paper" onchange="EmailManager.updatePrintOption('paperSize', this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none cursor-pointer">
+                                <option value="letter" selected>Carta (Letter - 21.6 &times; 27.9 cm)</option>
+                                <option value="a4">A4 (21.0 &times; 29.7 cm)</option>
+                                <option value="legal">Oficio (Legal - 21.6 &times; 35.6 cm)</option>
+                            </select>
+                        </div>
+
+                        <!-- Márgenes -->
+                        <div>
+                            <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Márgenes</label>
+                            <select id="print-opt-margins" onchange="EmailManager.updatePrintOption('margins', this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none cursor-pointer">
+                                <option value="default" selected>Predeterminado (Normal)</option>
+                                <option value="minimum">Mínimo</option>
+                                <option value="none">Ninguno</option>
+                            </select>
+                        </div>
+
+                        <!-- Escala -->
+                        <div>
+                            <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Escala</label>
+                            <select id="print-opt-scale" onchange="EmailManager.updatePrintOption('scale', this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none cursor-pointer">
+                                <option value="100" selected>Predeterminado (100%)</option>
+                                <option value="90">90%</option>
+                                <option value="80">80%</option>
+                                <option value="70">70%</option>
+                                <option value="fit">Ajustar a la página</option>
+                            </select>
+                        </div>
+
+                        <!-- Opciones (Checkboxes) -->
+                        <div class="space-y-2.5 pt-2">
+                            <label class="flex items-center gap-2.5 text-xs text-[#e8eaed] cursor-pointer">
+                                <input type="checkbox" id="print-opt-headers" checked onchange="EmailManager.updatePrintOption('headersFooters', this.checked)" class="rounded text-[#1a73e8] focus:ring-0 bg-[#35363a] border-[#5f6368]">
+                                <span>Encabezados y pies de página</span>
+                            </label>
+                            <label class="flex items-center gap-2.5 text-xs text-[#e8eaed] cursor-pointer">
+                                <input type="checkbox" id="print-opt-backgrounds" checked onchange="EmailManager.updatePrintOption('backgroundGraphics', this.checked)" class="rounded text-[#1a73e8] focus:ring-0 bg-[#35363a] border-[#5f6368]">
+                                <span>Gráficos de fondo</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Canvas Central estilo Chrome Print Preview -->
+            <div class="flex-1 bg-[#323639] flex flex-col h-full overflow-hidden relative">
+                <!-- Área con scroll de las hojas de papel -->
+                <div class="flex-1 overflow-auto p-4 sm:p-8 md:p-12 flex justify-center items-start print-preview-canvas" id="print-preview-scroll-area">
+                    <!-- Medidor invisible para calcular la altura exacta del contenido y dividir páginas -->
+                    <div id="print-measure-container" style="position: absolute; visibility: hidden; pointer-events: none; left: -9999px; top: 0; box-sizing: border-box;"></div>
+
+                    <!-- Contenedor reactivo de hojas de papel separadas -->
+                    <div id="print-preview-sheets-container" class="flex flex-col items-center transition-transform duration-150 origin-top">
+                        <!-- Las hojas divididas se generan dinámicamente mediante renderPrintPreviewPages() -->
+                    </div>
+                </div>
+
+                <!-- Barra de Zoom Flotante estilo Chrome en esquina inferior derecha -->
+                <div class="absolute bottom-5 right-6 bg-[#202124]/90 backdrop-blur-md border border-[#3c4043] rounded-full px-3 py-1.5 flex items-center gap-3 text-xs text-white shadow-xl z-30">
+                    <button type="button" onclick="EmailManager.changePrintZoom(-10)" class="p-1 hover:bg-[#3c4043] rounded-full text-slate-300 hover:text-white transition-colors cursor-pointer" title="Alejar (-)">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
+                    </button>
+                    <span id="print-zoom-label" class="text-[11px] font-mono text-slate-200 min-w-[36px] text-center">100%</span>
+                    <button type="button" onclick="EmailManager.changePrintZoom(10)" class="p-1 hover:bg-[#3c4043] rounded-full text-slate-300 hover:text-white transition-colors cursor-pointer" title="Acercar (+)">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    </button>
+                    <div class="h-3 w-px bg-[#5f6368]"></div>
+                    <button type="button" onclick="EmailManager.resetPrintZoom()" class="hover:text-[#8ab4f8] text-[11px] font-medium transition-colors cursor-pointer" title="Ajustar hoja al ancho">
+                        Ajustar
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // Actualizar texto del botón según destino inicial
+        const btnLabel = document.getElementById('btn-modal-print-label');
+        if (btnLabel && this.printPreviewState.destination === 'pdf') {
+            btnLabel.textContent = 'Guardar';
+        }
+
+        // Renderizar las páginas divididas de la vista previa
+        this.renderPrintPreviewPages();
+    },
+
+    renderPrintPreviewPages() {
         if (!this.currentOpenedEmail) return;
+        const email = this.currentOpenedEmail;
+        const state = this.printPreviewState || {};
+        const container = document.getElementById('print-preview-sheets-container');
+        const measure = document.getElementById('print-measure-container');
+        if (!container || !measure) return;
+
+        const isLandscape = state.layout === 'landscape';
+        const isMono = state.color === 'monochrome';
+        const showHF = state.headersFooters !== false;
+        const paperSize = state.paperSize || 'letter';
+        const margins = state.margins || 'default';
+
+        // Dimensiones estándar en px de la hoja a 96 DPI
+        let sheetW = 680;
+        let sheetH = (paperSize === 'a4') ? 960 : ((paperSize === 'legal') ? 1080 : 880);
+        if (isLandscape) {
+            const tmp = sheetW;
+            sheetW = sheetH;
+            sheetH = tmp;
+        }
+
+        // Márgenes / Relleno interior
+        let padX = 28;
+        let padY = 28;
+        if (margins === 'minimum') {
+            padX = 14;
+            padY = 14;
+        } else if (margins === 'none') {
+            padX = 0;
+            padY = 0;
+        }
+
+        const dateFormatted = new Date(email.date).toLocaleString('es-ES', { 
+            dateStyle: 'full', 
+            timeStyle: 'short' 
+        });
+
+        let bodyContent = '';
+        if (email.body_html) {
+            bodyContent = email.body_html;
+        } else {
+            const escaped = this.escapeHtml(email.body_text || email.snippet || '');
+            bodyContent = `<div style="white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 1.6; color: #1e293b;">${escaped}</div>`;
+        }
+
+        // Medir altura total del cuerpo en un contenedor del mismo ancho útil
+        const usableW = Math.max(300, sheetW - (padX * 2));
+        measure.style.width = `${usableW}px`;
+        measure.innerHTML = `<div id="print-measure-inner" style="width: 100%; font-size: 13px; line-height: 1.45; word-break: break-word;">${bodyContent}</div>`;
+        
+        // Ajustar imágenes en la medición y escuchar su carga para re-calcular con altura exacta
+        const measureImgs = measure.querySelectorAll('img');
+        measureImgs.forEach(img => {
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+            img.style.objectFit = 'contain';
+            if (!img.complete || img.naturalHeight === 0) {
+                img.addEventListener('load', () => {
+                    if (document.getElementById('print-preview-modal')) {
+                        this.renderPrintPreviewPages();
+                    }
+                }, { once: true });
+                img.addEventListener('error', () => {
+                    if (document.getElementById('print-preview-modal')) {
+                        this.renderPrintPreviewPages();
+                    }
+                }, { once: true });
+            }
+        });
+
+        const measureInner = document.getElementById('print-measure-inner') || measure;
+        const totalBodyH = Math.max(100, measureInner.scrollHeight);
+
+        // Altura disponible de contenido para la primera hoja y las siguientes
+        const header1H = showHF ? 84 : 0;
+        const headerSubH = showHF ? 26 : 0;
+        const footerH = showHF ? 32 : 0;
+
+        const contentH1 = Math.max(200, sheetH - (padY * 2) - header1H - footerH);
+        const contentHSub = Math.max(200, sheetH - (padY * 2) - headerSubH - footerH);
+
+        // Obtener elementos bloque para calcular saltos limpios que no corten imágenes ni tarjetas
+        const blockElements = [];
+        measureInner.querySelectorAll('img, table, tr, p, h1, h2, h3, h4, h5, h6, blockquote, figure, div').forEach(el => {
+            if (el.offsetHeight > 20) {
+                const rect = el.getBoundingClientRect();
+                const containerRect = measureInner.getBoundingClientRect();
+                const top = rect.top - containerRect.top;
+                blockElements.push({
+                    top: top,
+                    height: el.offsetHeight,
+                    isCritical: (el.tagName === 'IMG' || el.tagName === 'TABLE' || el.tagName === 'TR')
+                });
+            }
+        });
+        blockElements.sort((a, b) => a.top - b.top);
+
+        // Calcular rebanadas inteligentes (slices) para cada página evitando partir elementos críticos
+        const pageSlices = [];
+        let curY = 0;
+        let safetyMaxPages = 60;
+
+        while (curY < totalBodyH && safetyMaxPages-- > 0) {
+            const isFirst = (pageSlices.length === 0);
+            const availH = isFirst ? contentH1 : contentHSub;
+            const idealEnd = curY + availH;
+
+            if (idealEnd >= totalBodyH) {
+                // Última página: incluye todo el resto del documento sin recortar nada
+                pageSlices.push({
+                    start: curY,
+                    end: totalBodyH,
+                    height: Math.min(availH, totalBodyH - curY)
+                });
+                break;
+            }
+
+            // Buscar si algún elemento crítico (imagen, tabla, fila) cruza el límite idealEnd
+            let breakY = idealEnd;
+            for (const el of blockElements) {
+                const elBottom = el.top + el.height;
+                if (el.top < idealEnd && elBottom > idealEnd) {
+                    // Si el elemento empieza dejando al menos 80px de contenido previo en esta página
+                    if (el.top > curY + 80) {
+                        breakY = el.top;
+                        break;
+                    }
+                }
+            }
+
+            pageSlices.push({
+                start: curY,
+                end: breakY,
+                height: Math.min(availH, breakY - curY)
+            });
+            curY = breakY;
+        }
+
+        const numPages = Math.max(1, pageSlices.length);
+
+        // Actualizar subtítulo y selector de páginas en el panel lateral
+        const subtitle = document.getElementById('print-preview-pages-subtitle');
+        if (subtitle) {
+            subtitle.textContent = `${numPages} ${numPages === 1 ? 'hoja de papel' : 'hojas de papel'} • Vista previa`;
+        }
+
+        const pagesSelect = document.getElementById('print-opt-pages');
+        if (pagesSelect) {
+            const currentVal = pagesSelect.value;
+            pagesSelect.innerHTML = `
+                <option value="all">Todas (${numPages})</option>
+                ${numPages > 1 ? Array.from({length: numPages}, (_, i) => `<option value="${i+1}">Solo página ${i+1}</option>`).join('') : ''}
+            `;
+            if (currentVal && (currentVal === 'all' || parseInt(currentVal, 10) <= numPages)) {
+                pagesSelect.value = currentVal;
+            }
+        }
+
+        // Construir las hojas individuales de papel
+        let sheetsHtml = '';
+        const subjectEsc = this.escapeHtml(email.subject || '(Sin Asunto)');
+        const senderEsc = this.escapeHtml(email.sender || '');
+        const recipientEsc = this.escapeHtml(email.recipient || '');
+
+        for (let p = 0; p < numPages; p++) {
+            const slice = pageSlices[p];
+            const isFirst = (p === 0);
+            const curHeaderH = isFirst ? header1H : headerSubH;
+            const sliceH = slice ? slice.height : (isFirst ? contentH1 : contentHSub);
+            const offsetTop = slice ? slice.start : 0;
+
+            sheetsHtml += `
+                <div class="print-page-sheet bg-white text-slate-900 shadow-2xl relative flex flex-col shrink-0 mb-8 transition-all duration-150 select-text"
+                     data-page="${p + 1}"
+                     id="print-sheet-page-${p + 1}"
+                     style="width: ${sheetW}px; height: ${sheetH}px; padding: ${padY}px ${padX}px; box-sizing: border-box; overflow: hidden; border-radius: 2px; ${isMono ? 'filter: grayscale(100%);' : ''}">
+                    
+                    <!-- Encabezado -->
+                    ${isFirst ? `
+                        <div class="print-sheet-header border-b border-slate-300 pb-2.5 mb-3 shrink-0" style="${showHF ? '' : 'display: none;'}">
+                            <h1 class="text-base font-bold text-slate-900 leading-snug break-words mb-1.5">${subjectEsc}</h1>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px] text-slate-600">
+                                <div><strong class="text-slate-800">De:</strong> ${senderEsc}</div>
+                                <div><strong class="text-slate-800">Fecha:</strong> ${dateFormatted}</div>
+                                <div class="sm:col-span-2"><strong class="text-slate-800">Para:</strong> ${recipientEsc}</div>
+                            </div>
+                        </div>
+                    ` : `
+                        <div class="print-sheet-header border-b border-slate-200 pb-1 mb-2 shrink-0 flex justify-between items-center text-[10px] text-slate-400" style="${showHF ? '' : 'display: none;'}">
+                            <span class="truncate max-w-[70%] font-medium text-slate-500">${subjectEsc}</span>
+                            <span>Página ${p + 1}</span>
+                        </div>
+                    `}
+
+                    <!-- Contenedor recortado de contenido de la página -->
+                    <div class="print-page-viewport flex-1 relative overflow-hidden" style="height: ${sliceH}px; max-height: ${sliceH}px;">
+                        <div class="print-page-content-slice" style="position: absolute; top: -${offsetTop}px; left: 0; right: 0; width: 100%;">
+                            <div style="font-size: 13px; line-height: 1.45; word-break: break-word;">
+                                ${bodyContent}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Pie de página -->
+                    <div class="print-sheet-footer border-t border-slate-200 pt-2 mt-2 text-[10px] text-slate-400 flex items-center justify-between shrink-0" style="${showHF ? '' : 'display: none;'}">
+                        <span>MerkeMail &bull; Correo Inteligente</span>
+                        <span>Página ${p + 1} de ${numPages}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        container.innerHTML = sheetsHtml;
+
+        // Proteger imágenes en todas las hojas generadas
+        container.querySelectorAll('img').forEach(img => {
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+            img.style.objectFit = 'contain';
+        });
+
+        // Aplicar el zoom actual al contenedor de hojas
+        this.applyPrintZoom(this.printPreviewState.zoomLevel || 100);
+    },
+
+    onPageSelectionChange(val) {
+        if (val === 'all') {
+            document.querySelectorAll('.print-page-sheet').forEach(sheet => {
+                sheet.style.display = 'flex';
+            });
+            const first = document.getElementById('print-sheet-page-1');
+            if (first) first.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+            const pageNum = parseInt(val, 10);
+            document.querySelectorAll('.print-page-sheet').forEach(sheet => {
+                const p = parseInt(sheet.getAttribute('data-page'), 10);
+                if (p === pageNum) {
+                    sheet.style.display = 'flex';
+                    sheet.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else {
+                    sheet.style.display = 'none';
+                }
+            });
+        }
+    },
+
+    closePrintPreview() {
+        const modal = document.getElementById('print-preview-modal');
+        if (modal) modal.remove();
+    },
+
+    updatePrintOption(key, val) {
+        this.printPreviewState[key] = val;
+        const btnLabel = document.getElementById('btn-modal-print-label');
+
+        if (key === 'destination' && btnLabel) {
+            btnLabel.textContent = (val === 'pdf') ? 'Guardar' : 'Imprimir';
+        }
+
+        if (key === 'scale') {
+            if (val === 'fit') {
+                this.resetPrintZoom();
+            } else {
+                const pct = parseInt(val, 10) || 100;
+                this.applyPrintZoom(pct);
+            }
+            return;
+        }
+
+        // Re-calcular la división y renderizado de hojas
+        this.renderPrintPreviewPages();
+    },
+
+    applyPrintZoom(pct) {
+        this.printPreviewState.zoomLevel = Math.max(50, Math.min(180, pct));
+        const container = document.getElementById('print-preview-sheets-container');
+        const label = document.getElementById('print-zoom-label');
+        if (label) label.textContent = `${this.printPreviewState.zoomLevel}%`;
+        if (container) {
+            container.style.transform = `scale(${this.printPreviewState.zoomLevel / 100})`;
+        }
+    },
+
+    changePrintZoom(delta) {
+        const next = (this.printPreviewState.zoomLevel || 100) + delta;
+        this.applyPrintZoom(next);
+    },
+
+    resetPrintZoom() {
+        const area = document.getElementById('print-preview-scroll-area');
+        if (!area) {
+            this.applyPrintZoom(100);
+            return;
+        }
+        const availW = area.clientWidth - 48;
+        const sheetW = (this.printPreviewState.layout === 'landscape') ? 880 : 680;
+        if (availW > 0 && availW < sheetW) {
+            const fitPct = Math.round((availW / sheetW) * 100);
+            this.applyPrintZoom(fitPct);
+        } else {
+            this.applyPrintZoom(100);
+        }
+    },
+
+    async executePrint() {
+        if (!this.currentOpenedEmail) return;
+        const email = this.currentOpenedEmail;
+        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop) || (window.location.port === '6524');
+        const state = this.printPreviewState || {};
+        const subject = email.subject || 'correo';
+        const printDocHtml = this.getPrintDocHtml(state);
+        const printOpts = {
+            layout: state.layout || 'portrait',
+            paperSize: state.paperSize || 'letter',
+            margins: state.margins || 'default'
+        };
+
+        if (state.destination === 'pdf' && isDesktop) {
+            // Guardar directamente como PDF en la versión de escritorio cargando el buffer aislado y opciones
+            try {
+                await fetch('/api/desktop/print-buffer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ html: printDocHtml, title: subject, options: printOpts })
+                });
+            } catch (err) {
+                console.warn('Error al enviar buffer de impresión:', err);
+            }
+
+            console.log(`__PYQT_ACTION__:save_pdf:${subject}`);
+            if (window.DesktopBridge && typeof window.DesktopBridge.save_pdf === 'function') {
+                window.DesktopBridge.save_pdf(subject, printDocHtml);
+            }
+            if (window.UI) UI.showStickyToast('Guardar PDF', 'Elige la ubicación para guardar el documento', 'success', 3000);
+            this.closePrintPreview();
+            return;
+        }
+
+        if (state.destination === 'system' && isDesktop) {
+            // Enviar al diálogo de impresión nativo del sistema cargando el buffer aislado y opciones
+            try {
+                await fetch('/api/desktop/print-buffer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ html: printDocHtml, title: subject, options: printOpts })
+                });
+            } catch (err) {
+                console.warn('Error al enviar buffer de impresión:', err);
+            }
+
+            console.log('__PYQT_ACTION__:print_dialog');
+            if (window.DesktopBridge && typeof window.DesktopBridge.print_dialog === 'function') {
+                window.DesktopBridge.print_dialog();
+            }
+            if (window.UI) UI.showStickyToast('Imprimiendo', 'Abriendo diálogo de impresión del sistema...', 'info', 2500);
+            this.closePrintPreview();
+            return;
+        }
+
+        // En navegador estándar / fallback: generar impresión aislada con los ajustes elegidos
+        if (window.UI) UI.showStickyToast('Imprimiendo', 'Preparando documento para imprimir...', 'info', 2000);
+        this.printCurrentEmail(state);
+        this.closePrintPreview();
+    },
+
+    getPrintDocHtml(customOptions = {}) {
+        if (!this.currentOpenedEmail) return '';
         const email = this.currentOpenedEmail;
 
         const dateFormatted = new Date(email.date).toLocaleString('es-ES', { 
@@ -3896,24 +5171,30 @@ const EmailManager = {
             bodyContent = `<div style="white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 1.6; color: #1e293b;">${escaped}</div>`;
         }
 
-        // Crear documento HTML autónomo y profesional para la impresión
-        const printDoc = `
-<!DOCTYPE html>
+        const isLandscape = customOptions.layout === 'landscape';
+        const isMono = customOptions.color === 'monochrome';
+        const showHeaders = customOptions.headersFooters !== false;
+        const marginChoice = customOptions.margins || 'default';
+        const marginVal = marginChoice === 'minimum' ? '0.6cm' : (marginChoice === 'none' ? '0cm' : '1.4cm 1.6cm');
+        const bodyPad = marginChoice === 'minimum' ? '4px' : (marginChoice === 'none' ? '0px' : '12px');
+        const paperSize = customOptions.paperSize === 'a4' ? 'A4' : 'letter';
+
+        return `<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <title>${this.escapeHtml(email.subject || 'Correo')}</title>
     <style>
         @page {
-            margin: 0.6cm 0.8cm;
-            size: auto;
+            margin: ${marginVal};
+            size: ${paperSize} ${isLandscape ? 'landscape' : 'portrait'};
         }
         *, *:before, *:after {
             box-sizing: border-box;
         }
         body {
             margin: 0;
-            padding: 0;
+            padding: ${bodyPad};
             background: #ffffff !important;
             color: #111827 !important;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -3921,27 +5202,29 @@ const EmailManager = {
             print-color-adjust: exact !important;
             font-size: 12px;
             line-height: 1.4;
+            ${isMono ? 'filter: grayscale(100%);' : ''}
         }
         .print-header {
             border-bottom: 1px solid #cbd5e1;
-            padding-bottom: 4px;
-            margin-bottom: 8px;
+            padding-bottom: 6px;
+            margin-bottom: 10px;
+            ${showHeaders ? '' : 'display: none !important;'}
         }
         .print-subject {
-            font-size: 13.5px;
+            font-size: 14px;
             font-weight: 700;
             color: #0f172a;
-            margin: 0 0 3px 0;
-            line-height: 1.25;
+            margin: 0 0 4px 0;
+            line-height: 1.3;
             word-break: break-word;
         }
         .print-meta-grid {
             display: flex;
             flex-wrap: wrap;
-            gap: 2px 14px;
-            font-size: 10.5px;
+            gap: 2px 16px;
+            font-size: 11px;
             color: #475569;
-            line-height: 1.3;
+            line-height: 1.35;
         }
         .print-meta-item strong {
             color: #0f172a;
@@ -3958,38 +5241,20 @@ const EmailManager = {
             height: auto !important;
             max-height: 25cm !important;
             object-fit: contain;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
         }
         .print-body table {
             max-width: 100% !important;
-            break-inside: auto;
-            page-break-inside: auto;
         }
-        .print-body figure {
-            break-inside: auto;
-            page-break-inside: auto;
-        }
-        .print-body h1, .print-body h2, .print-body h3, .print-body h4 {
-            break-after: avoid;
-            page-break-after: avoid;
-        }
-        /* Permitir flujo continuo y evitar que contenedores responsivos (Klaviyo, MJML, etc.) bloqueen saltos de página */
-        .print-body .kl-row,
-        .print-body .kl-column,
-        .print-body .colstack,
-        .print-body [style*="display:table"],
-        .print-body [style*="display: table"],
-        .print-body [style*="display:table-cell"],
-        .print-body [style*="display: table-cell"],
-        .print-body [style*="inline-block"][style*="width: 100%"],
-        .print-body [style*="inline-block"][style*="width:100%"],
-        .print-body .mj-column-per-100 {
-            display: block !important;
-            width: 100% !important;
-            break-inside: auto !important;
-            page-break-inside: auto !important;
+        .print-body tr,
+        .print-body figure,
+        .print-body blockquote {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
         }
         .print-footer {
-            margin-top: 12px;
+            margin-top: 14px;
             padding-top: 6px;
             border-top: 1px solid #e2e8f0;
             font-size: 9.5px;
@@ -3998,6 +5263,7 @@ const EmailManager = {
             justify-content: space-between;
             break-inside: avoid;
             page-break-inside: avoid;
+            ${showHeaders ? '' : 'display: none !important;'}
         }
         @media print {
             body {
@@ -4032,8 +5298,12 @@ const EmailManager = {
         <span>Impreso el ${new Date().toLocaleDateString('es-ES')}</span>
     </div>
 </body>
-</html>
-        `;
+</html>`;
+    },
+
+    printCurrentEmail(customOptions = {}) {
+        if (!this.currentOpenedEmail) return;
+        const printDoc = this.getPrintDocHtml(customOptions);
 
         // Crear un iframe invisible para aislar la impresión y no tocar el layout de la pantalla
         const iframe = document.createElement('iframe');
@@ -4050,7 +5320,6 @@ const EmailManager = {
         frameDoc.write(printDoc);
         frameDoc.close();
 
-        // Control de impresión asegurando que las imágenes remotas terminen de renderizar sus dimensiones
         let printed = false;
         const doPrint = () => {
             if (printed) return;
@@ -4081,7 +5350,6 @@ const EmailManager = {
                 img.addEventListener('load', onImgDone, { once: true });
                 img.addEventListener('error', onImgDone, { once: true });
             });
-            // Timeout de seguridad máximo de 800ms para no demorar al usuario si alguna imagen falla o tarda
             setTimeout(doPrint, 800);
         }
     },

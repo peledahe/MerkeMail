@@ -234,6 +234,14 @@ function setupEventListeners() {
             const drop = document.getElementById('batch-labels-dropdown');
             if (drop) drop.classList.add('hidden');
         }
+
+        const moveDrop = document.getElementById('universal-move-dropdown');
+        if (moveDrop && !moveDrop.classList.contains('hidden')) {
+            const isInsideBtn = e.target.closest('#btn-batch-move, #btn-detail-move, #batch-more-item-move, .email-checkbox, #split-select-all, #select-all-checkbox, .select-checkbox-cell');
+            if (!moveDrop.contains(e.target) && !isInsideBtn) {
+                if (window.EmailManager) EmailManager.closeMoveMenu();
+            }
+        }
     });
 
     // Paginación
@@ -295,6 +303,7 @@ function setupEventListeners() {
             EmailManager.clearAdvancedFiltersState();
             EmailManager.currentFolder = folder;
             EmailManager.currentLabelId = null;
+            EmailManager.activeFilterLabelIds = null;
             EmailManager.currentPage = 1;
             EmailManager.clearSelection();
             EmailManager.renderLabels();
@@ -541,11 +550,22 @@ function setupEventListeners() {
         }
     });
 
-    // Cerrar modales con Tecla Escape
+    // Cerrar modales con Tecla Escape y atajos globales de teclado
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
+            const printModal = document.getElementById('print-preview-modal');
+            if (printModal) {
+                printModal.remove();
+                return;
+            }
             UI.closeAllDrawers();
             document.querySelectorAll('.fixed-modal').forEach(m => m.classList.add('hidden'));
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+            // Atajo Ctrl+P / Cmd+P para imprimir el correo actualmente abierto con vista previa Chrome
+            if (window.EmailManager && EmailManager.currentOpenedEmail) {
+                e.preventDefault();
+                EmailManager.openPrintPreview();
+            }
         }
     });
 }

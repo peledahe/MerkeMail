@@ -267,6 +267,14 @@ const GeminiAI = {
                 EmailManager.loadEmails(false);
             }
 
+            // Sincronizar preferencia de omisión de confirmación al eliminar correos
+            const savedSkipDeleteConfirm = data.skip_delete_confirm !== undefined 
+                ? Boolean(data.skip_delete_confirm)
+                : (localStorage.getItem('merkemail_skip_delete_confirm') === 'true');
+            if (window.EmailManager && typeof EmailManager.setSkipDeleteConfirm === 'function') {
+                EmailManager.setSkipDeleteConfirm(savedSkipDeleteConfirm, false);
+            }
+
             // Poblar y seleccionar el calendario predeterminado
             const defaultCalSelect = document.getElementById('settings-default-calendar-select');
             if (defaultCalSelect) {
@@ -392,7 +400,8 @@ const GeminiAI = {
                     gemini_model: model,
                     ai_prompt_tone: tone,
                     default_calendar_id: defaultCalendarId,
-                    emails_page_size: emailsPageSize
+                    emails_page_size: emailsPageSize,
+                    skip_delete_confirm: window.EmailManager ? (EmailManager.skipDeleteConfirm ? 'true' : 'false') : 'false'
                 })
             });
             if (res.ok) {

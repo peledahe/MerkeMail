@@ -892,9 +892,12 @@ class GoogleOAuthService:
                 name = glbl.get("name")
                 lbl_type = glbl.get("type", "user")
 
-                # Sincronizamos las etiquetas creadas por el usuario
-                if lbl_type != "user":
+                # Sincronizamos las etiquetas creadas por el usuario y la de sistema IMPORTANT
+                if lbl_type != "user" and remote_id != "IMPORTANT":
                     continue
+                if remote_id == "IMPORTANT":
+                    name = "Importante"
+                    lbl_type = "system"
 
                 color = glbl.get("color", {}).get("backgroundColor") if glbl.get("color") else None
                 if not color or not str(color).startswith("#"):
@@ -1264,23 +1267,42 @@ class GoogleOAuthService:
                         add_lbls.append("STARRED")
                     else:
                         rem_lbls.append("STARRED")
-                if existing["folder"] != msg_folder:
-                    if existing["folder"] == "TRASH":
+                all_cats = {"CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS"}
+                target_f = (existing["folder"] or "INBOX").upper()
+                if target_f != (msg_folder or "").upper():
+                    if target_f == "TRASH":
                         add_lbls.append("TRASH")
-                        if "INBOX" in msg_label_ids:
-                            rem_lbls.append("INBOX")
-                    elif existing["folder"] == "SPAM":
+                        for rm in ("INBOX", "SPAM", *all_cats):
+                            if rm in msg_label_ids:
+                                rem_lbls.append(rm)
+                    elif target_f == "SPAM":
                         add_lbls.append("SPAM")
-                        if "INBOX" in msg_label_ids:
-                            rem_lbls.append("INBOX")
-                    elif existing["folder"] == "ARCHIVE":
-                        if "INBOX" in msg_label_ids:
-                            rem_lbls.append("INBOX")
-                    elif existing["folder"] == "INBOX":
-                        add_lbls.append("INBOX")
+                        for rm in ("INBOX", "TRASH", *all_cats):
+                            if rm in msg_label_ids:
+                                rem_lbls.append(rm)
+                    elif target_f == "ARCHIVE":
+                        for rm in ("INBOX", "TRASH", "SPAM"):
+                            if rm in msg_label_ids:
+                                rem_lbls.append(rm)
+                    elif target_f.startswith("CATEGORY_"):
+                        add_lbls.append(target_f)
+                        if "INBOX" not in msg_label_ids:
+                            add_lbls.append("INBOX")
+                        for c in all_cats:
+                            if c != target_f and c in msg_label_ids:
+                                rem_lbls.append(c)
+                        for rm in ("TRASH", "SPAM"):
+                            if rm in msg_label_ids:
+                                rem_lbls.append(rm)
+                    elif target_f == "INBOX":
+                        if "INBOX" not in msg_label_ids:
+                            add_lbls.append("INBOX")
                         for sys_rm in ("TRASH", "SPAM"):
                             if sys_rm in msg_label_ids:
                                 rem_lbls.append(sys_rm)
+                        for c in all_cats:
+                            if c in msg_label_ids:
+                                rem_lbls.append(c)
                 # Etiquetas de usuario: las asignadas en MerkeMail prevalecen y se envían a Gmail
                 # (reintenta también envíos que fallaron al asignar/quitar la etiqueta)
                 local_user = local_remote_labels_by_email.get(existing["id"], set())
@@ -1517,6 +1539,11 @@ class GoogleOAuthService:
                 body['removeLabelIds'] = remove_labels
             if body:
                 service.users().messages().modify(userId='me', id=message_uid, body=body).execute()
+            # Al sincronizar exitosamente con Gmail, restablecemos local_modified = 0
+            conn = get_db()
+            conn.execute("UPDATE emails SET local_modified = 0 WHERE account_id = ? AND uid = ?", (account_id, message_uid))
+            conn.commit()
+            conn.close()
         except Exception as e:
             print(f"Aviso modificando etiquetas en Gmail remoto: {e}")
 

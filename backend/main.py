@@ -487,6 +487,26 @@ def desktop_open_url(data: dict = Body(...)):
             return {"success": False, "error": str(e)}
     return {"success": False, "error": "URL no válida"}
 
+class DesktopPrintPayload(BaseModel):
+    html: str
+    title: Optional[str] = "correo"
+    options: Optional[Dict[str, Any]] = None
+
+@app.post("/api/desktop/print-buffer")
+def set_desktop_print_buffer(payload: DesktopPrintPayload):
+    buffer_path = "/tmp/merkemail_print_doc.html"
+    options_path = "/tmp/merkemail_print_options.json"
+    try:
+        with open(buffer_path, "w", encoding="utf-8") as f:
+            f.write(payload.html)
+        if payload.options:
+            import json
+            with open(options_path, "w", encoding="utf-8") as f:
+                json.dump(payload.options, f)
+        return {"success": True, "path": buffer_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al escribir buffer de impresión: {e}")
+
 @app.get("/api/desktop/window/state")
 def window_state():
     is_max = False
@@ -986,42 +1006,65 @@ def get_unread_counts(account_id: Optional[int] = None):
 
     # Consulta única agrupada por carpeta y destacado para máxima velocidad
     grouped_rows = conn.execute(
-        f"SELECT folder, is_starred, COUNT(*) as cnt FROM emails WHERE is_read = 0{acc_filter} GROUP BY folder, is_starred",
+        f"SELECT UPPER(COALESCE(folder, '')) as folder, is_starred, COUNT(*) as cnt FROM emails WHERE is_read = 0{acc_filter} GROUP BY UPPER(COALESCE(folder, '')), is_starred",
         acc_param
     ).fetchall()
 
     inbox_folders = {"INBOX", "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS"}
+    excluded_from_all = {"TRASH", "SPAM", "DRAFT", "DRAFTS"}
     inbox_cnt = 0
     starred_cnt = 0
     all_cnt = 0
     folder_totals: Dict[str, int] = {}
 
     for r in grouped_rows:
-        f = r["folder"] or "INBOX"
+        f = (r["folder"] or "INBOX").upper()
         c = r["cnt"] or 0
-        all_cnt += c
-        if r["is_starred"]:
-            starred_cnt += c
+        if f not in excluded_from_all:
+            all_cnt += c
+            if r["is_starred"]:
+                starred_cnt += c
         if f in inbox_folders:
             inbox_cnt += c
         folder_totals[f] = folder_totals.get(f, 0) + c
+
+    # Conteo para IMPORTANT (de inbox, categorías y archivo, excluyendo TRASH, SPAM, DRAFT, DRAFTS)
+    acc_e_filter = " AND emails.account_id = ?" if account_id else ""
+    imp_row = conn.execute(
+        f"""SELECT COUNT(DISTINCT emails.id) as cnt FROM emails 
+            WHERE emails.is_read = 0{acc_e_filter}
+            AND (
+                UPPER(COALESCE(emails.folder, '')) = 'IMPORTANT'
+                OR emails.ai_urgency = 'alta'
+                OR emails.id IN (
+                    SELECT email_id FROM email_labels el
+                    JOIN labels l ON el.label_id = l.id
+                    WHERE UPPER(l.name) IN ('IMPORTANT', 'IMPORTANTE') OR UPPER(l.remote_id) = 'IMPORTANT'
+                )
+            )
+            AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')""",
+        acc_param
+    ).fetchone()
+    important_cnt = imp_row["cnt"] if imp_row else 0
 
     folders_dict = {
         "INBOX": inbox_cnt,
         "STARRED": starred_cnt,
         "ALL": all_cnt,
-        "SENT": 0,
-        "DRAFT": 0,
-        "SPAM": 0,
-        "TRASH": 0,
-        "IMPORTANT": 0,
-        "CATEGORY_PROMOTIONS": 0,
-        "CATEGORY_SOCIAL": 0,
-        "CATEGORY_UPDATES": 0,
-        "CATEGORY_FORUMS": 0
+        "SENT": folder_totals.get("SENT", 0),
+        "DRAFT": folder_totals.get("DRAFT", 0) + folder_totals.get("DRAFTS", 0),
+        "SPAM": folder_totals.get("SPAM", 0),
+        "TRASH": folder_totals.get("TRASH", 0),
+        "IMPORTANT": important_cnt,
+        "CATEGORY_PROMOTIONS": folder_totals.get("CATEGORY_PROMOTIONS", 0),
+        "CATEGORY_SOCIAL": folder_totals.get("CATEGORY_SOCIAL", 0),
+        "CATEGORY_UPDATES": folder_totals.get("CATEGORY_UPDATES", 0),
+        "CATEGORY_FORUMS": folder_totals.get("CATEGORY_FORUMS", 0),
+        "ACTUALIZACIONES": folder_totals.get("CATEGORY_UPDATES", 0),
+        "NOTIFICACIONES": folder_totals.get("CATEGORY_UPDATES", 0)
     }
     for f_name, f_cnt in folder_totals.items():
-        if f_name != "INBOX":
+        if f_name not in folders_dict:
             folders_dict[f_name] = f_cnt
 
     # Conteos por etiquetas (labels)
@@ -1098,18 +1141,77 @@ def get_emails(
         params.append(label_id)
 
     # 2. Filtro de Carpeta
-    if folder == "STARRED":
-        query += " AND emails.is_starred = 1"
-        count_query += " AND emails.is_starred = 1"
-    elif not folder or folder in ["ALL", "TODOS"]:
-        pass
-    elif folder == "INBOX":
-        query += " AND emails.folder IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS')"
-        count_query += " AND emails.folder IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS')"
+    folder_upper = folder.upper() if folder else ""
+    if folder_upper in ["ACTUALIZACIONES", "NOTIFICACIONES", "UPDATES"]:
+        folder_upper = "CATEGORY_UPDATES"
+    elif folder_upper in ["PROMOCIONES", "PROMOTIONS"]:
+        folder_upper = "CATEGORY_PROMOTIONS"
+    elif folder_upper in ["FOROS", "FORUMS"]:
+        folder_upper = "CATEGORY_FORUMS"
+    elif folder_upper in ["DESTACADOS", "STARRED"]:
+        folder_upper = "STARRED"
+    elif folder_upper in ["IMPORTANTES", "IMPORTANTE", "IMPORTANT"]:
+        folder_upper = "IMPORTANT"
+    elif folder_upper in ["ENVIADOS", "SENT"]:
+        folder_upper = "SENT"
+    elif folder_upper in ["BORRADORES", "DRAFT", "DRAFTS"]:
+        folder_upper = "DRAFT"
+    elif folder_upper in ["PAPELERA", "TRASH"]:
+        folder_upper = "TRASH"
+    elif folder_upper in ["RECIBIDOS", "INBOX"]:
+        folder_upper = "INBOX"
+    if folder_upper == "STARRED":
+        query += " AND emails.is_starred = 1 AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+        count_query += " AND emails.is_starred = 1 AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+    elif not folder or folder_upper in ["ALL", "TODOS"]:
+        query += " AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+        count_query += " AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+    elif folder_upper == "IMPORTANT":
+        imp_filter = """ AND (
+            UPPER(COALESCE(emails.folder, '')) = 'IMPORTANT'
+            OR emails.ai_urgency = 'alta'
+            OR emails.id IN (
+                SELECT email_id FROM email_labels el
+                JOIN labels l ON el.label_id = l.id
+                WHERE UPPER(l.name) IN ('IMPORTANT', 'IMPORTANTE') OR UPPER(l.remote_id) = 'IMPORTANT'
+            )
+        ) AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"""
+        query += imp_filter
+        count_query += imp_filter
+    elif folder_upper in ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS"]:
+        cat_filter = """ AND (
+            UPPER(emails.folder) = ?
+            OR emails.id IN (
+                SELECT email_id FROM email_labels el
+                JOIN labels l ON el.label_id = l.id
+                WHERE UPPER(l.name) = ? OR UPPER(l.remote_id) = ?
+            )
+        ) AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"""
+        query += cat_filter
+        count_query += cat_filter
+        params.extend([folder_upper, folder_upper, folder_upper])
+    elif folder_upper == "SENT":
+        query += " AND UPPER(emails.folder) = 'SENT'"
+        count_query += " AND UPPER(emails.folder) = 'SENT'"
+    elif folder_upper in ["DRAFT", "DRAFTS"]:
+        query += " AND UPPER(emails.folder) IN ('DRAFT', 'DRAFTS')"
+        count_query += " AND UPPER(emails.folder) IN ('DRAFT', 'DRAFTS')"
+    elif folder_upper == "SPAM":
+        query += " AND UPPER(emails.folder) = 'SPAM'"
+        count_query += " AND UPPER(emails.folder) = 'SPAM'"
+    elif folder_upper == "TRASH":
+        query += " AND UPPER(emails.folder) = 'TRASH'"
+        count_query += " AND UPPER(emails.folder) = 'TRASH'"
+    elif folder_upper == "INBOX":
+        query += " AND UPPER(emails.folder) IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS') AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+        count_query += " AND UPPER(emails.folder) IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS') AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+    elif folder_upper in ["ARCHIVE", "ARCHIVED"]:
+        query += " AND UPPER(emails.folder) IN ('ARCHIVE', 'ARCHIVED') AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+        count_query += " AND UPPER(emails.folder) IN ('ARCHIVE', 'ARCHIVED') AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
     elif folder:
-        query += " AND emails.folder = ?"
-        count_query += " AND emails.folder = ?"
-        params.append(folder)
+        query += " AND UPPER(emails.folder) = ?"
+        count_query += " AND UPPER(emails.folder) = ?"
+        params.append(folder_upper)
     
     # 3. Cuenta
     if account_id:
@@ -1274,7 +1376,7 @@ def get_email_detail(email_id: int):
         SELECT l.id, l.name, l.color
         FROM labels l
         JOIN email_labels el ON l.id = el.label_id
-        WHERE el.email_id = ?
+        WHERE el.email_id = ? AND COALESCE(l.type, 'user') != 'system'
         ORDER BY l.name ASC
     ''', (email_id,)).fetchall()
     email_data["labels"] = [dict(lr) for lr in label_rows]
@@ -1610,6 +1712,7 @@ def batch_action_emails(req: BatchActionRequest):
             f"""
             UPDATE emails 
             SET folder = CASE WHEN folder = 'ARCHIVE' THEN 'INBOX' ELSE 'ARCHIVE' END,
+                source_folder = COALESCE(source_folder, folder, 'INBOX'),
                 updated_at = ?, local_modified = 1
             WHERE id IN ({placeholders}) AND UPPER(COALESCE(folder, '')) NOT IN ('SPAM', 'TRASH', 'DRAFT', 'DRAFTS')
             """,
@@ -1624,7 +1727,7 @@ def batch_action_emails(req: BatchActionRequest):
         msg = f"{cursor.rowcount} correos procesados (Archivado / Restaurar a Recibidos)"
     elif req.action == "spam":
         conn.execute(
-            f"UPDATE emails SET folder = CASE WHEN folder = 'SPAM' THEN 'INBOX' ELSE 'SPAM' END, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
+            f"UPDATE emails SET folder = CASE WHEN folder = 'SPAM' THEN 'INBOX' ELSE 'SPAM' END, source_folder = COALESCE(source_folder, folder, 'INBOX'), updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
             [now_iso] + req.email_ids
         )
         for t in targets:
@@ -1636,7 +1739,7 @@ def batch_action_emails(req: BatchActionRequest):
         msg = f"{len(req.email_ids)} correos procesados (Spam / Restaurar a Recibidos)"
     elif req.action == "trash":
         conn.execute(
-            f"UPDATE emails SET folder = CASE WHEN folder = 'TRASH' THEN 'INBOX' ELSE 'TRASH' END, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
+            f"UPDATE emails SET folder = CASE WHEN folder = 'TRASH' THEN 'INBOX' ELSE 'TRASH' END, source_folder = COALESCE(source_folder, folder, 'INBOX'), updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
             [now_iso] + req.email_ids
         )
         for t in targets:
@@ -1713,8 +1816,70 @@ def batch_action_emails(req: BatchActionRequest):
         conn.execute(f"UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + req.email_ids)
         msg = f"Etiqueta removida de {len(req.email_ids)} correos"
     elif req.action == "move_folder" and req.folder:
-        conn.execute(f"UPDATE emails SET folder = ?, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [req.folder, now_iso] + req.email_ids)
-        msg = f"{len(req.email_ids)} correos movidos a {req.folder}"
+        dest_folder = req.folder.upper()
+        conn.execute(
+            f"UPDATE emails SET folder = ?, source_folder = COALESCE(source_folder, folder, 'INBOX'), updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
+            [dest_folder, now_iso] + req.email_ids
+        )
+        all_cats = ("CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS")
+        for t in targets:
+            if not t.get("uid"):
+                continue
+            old_f = (t.get("folder") or "INBOX").upper()
+            add_l = []
+            rem_l = []
+
+            if dest_folder == "INBOX":
+                add_l.append("INBOX")
+                if old_f in ("SPAM", "TRASH"):
+                    rem_l.append(old_f)
+                for c in all_cats:
+                    if old_f == c:
+                        rem_l.append(c)
+            elif dest_folder == "ARCHIVE":
+                rem_l.append("INBOX")
+                if old_f in ("SPAM", "TRASH"):
+                    rem_l.append(old_f)
+            elif dest_folder == "SPAM":
+                add_l.append("SPAM")
+                rem_l.append("INBOX")
+                if old_f == "TRASH":
+                    rem_l.append("TRASH")
+                for c in all_cats:
+                    if old_f == c:
+                        rem_l.append(c)
+            elif dest_folder == "TRASH":
+                add_l.append("TRASH")
+                rem_l.append("INBOX")
+                if old_f == "SPAM":
+                    rem_l.append("SPAM")
+                for c in all_cats:
+                    if old_f == c:
+                        rem_l.append(c)
+            elif dest_folder.startswith("CATEGORY_"):
+                add_l.append(dest_folder)
+                add_l.append("INBOX")
+                for c in all_cats:
+                    if c != dest_folder and (old_f == c or old_f.startswith("CATEGORY_")):
+                        rem_l.append(c)
+                if old_f in ("SPAM", "TRASH"):
+                    rem_l.append(old_f)
+
+            if add_l or rem_l:
+                bg_label_ops.append((t["account_id"], t["uid"], add_l or None, rem_l or None))
+
+        folder_names = {
+            "INBOX": "Recibidos",
+            "ARCHIVE": "Archivo",
+            "TRASH": "Papelera",
+            "SPAM": "Spam",
+            "CATEGORY_PROMOTIONS": "Promociones",
+            "CATEGORY_SOCIAL": "Social",
+            "CATEGORY_UPDATES": "Notificaciones",
+            "CATEGORY_FORUMS": "Foros"
+        }
+        dest_display = folder_names.get(dest_folder, dest_folder)
+        msg = f"{len(req.email_ids)} correo(s) movido(s) a {dest_display}"
     else:
         conn.close()
         raise HTTPException(status_code=400, detail="Acción no soportada")
@@ -2416,7 +2581,7 @@ def list_labels(account_id: Optional[int] = None):
                 daemon=True
             ).start()
 
-    rows = conn.execute("SELECT * FROM labels ORDER BY name COLLATE NOCASE ASC, account_id ASC").fetchall()
+    rows = conn.execute("SELECT * FROM labels WHERE COALESCE(type, 'user') != 'system' ORDER BY name COLLATE NOCASE ASC, account_id ASC").fetchall()
     usage_rows = conn.execute(
         """SELECT DISTINCT el.label_id, e.account_id
            FROM email_labels el
