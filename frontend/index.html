@@ -102,7 +102,7 @@
             </button>
 
             <!-- Logo en Header (Oculto en móvil < 768px para evitar saturar la barra superior; visible en menú móvil y en >= 768px) -->
-            <div class="hidden md:flex items-center gap-2 cursor-pointer mr-0.5 sm:mr-1" onclick="EmailManager.currentFolder='INBOX'; EmailManager.loadEmails();">
+            <div class="hidden md:flex items-center gap-2 cursor-pointer mr-0.5 sm:mr-1" onclick="EmailManager.onBrandClick()" title="Inicio - Resumen de Elio">
                 <img src="/img/merke.svg" alt="MerkeMail Logo" class="w-8 h-8 rounded-lg shadow-sm" onerror="this.onerror=null; this.src='/img/merke.png';">
                 <div class="hidden sm:block">
                     <span class="font-bold text-base tracking-tight text-slate-900 dark:text-white flex items-center gap-1.5">
@@ -162,8 +162,8 @@
                 <span id="sync-status-text">Activo</span>
             </button>
 
-            <!-- Sincronizar Correos (Visible en >= 768px; en móvil está en el menú lateral) -->
-            <button onclick="EmailManager.syncCurrentView()" class="hidden md:flex p-1.5 sm:p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs" title="Sincronizar correos nuevos">
+            <!-- Sincronizar Correos / Calendario / Contactos según la vista activa -->
+            <button id="btn-global-sync" onclick="EmailManager.syncCurrentView()" class="hidden md:flex p-1.5 sm:p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs cursor-pointer" title="Sincronizar ahora (correos, calendario o contactos según la vista)">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
             </button>
 
@@ -247,9 +247,14 @@
                         </div>
                     </div>
 
-                    <!-- Botón para Colapsar / Ampliar Barra Lateral -->
-                    <button onclick="UI.toggleSidebarCollapse()" id="btn-sidebar-collapse" class="p-1.5 text-slate-400 hover:text-indigo-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors shrink-0" title="Contraer o ampliar barra lateral">
+                    <!-- Botón para Colapsar / Ampliar Barra Lateral (Desktop >= 768px) -->
+                    <button onclick="UI.toggleSidebarCollapse()" id="btn-sidebar-collapse" class="hidden md:flex p-1.5 text-slate-400 hover:text-indigo-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors shrink-0" title="Contraer o ampliar barra lateral">
                         <svg id="sidebar-collapse-chevron" class="w-4 h-4 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                    </button>
+
+                    <!-- Botón para Cerrar Menú Deslizante en Móvil (< 768px) -->
+                    <button onclick="UI.closeMobileSidebar()" id="btn-mobile-sidebar-close" class="flex md:hidden p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors shrink-0" title="Cerrar menú">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                     </button>
                 </div>
 
@@ -414,6 +419,16 @@
                             <svg class="w-4 h-4 shrink-0 text-indigo-500 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
                             <span class="sidebar-text truncate">Contactos</span>
                         </span>
+                        <span id="sidebar-contacts-pending-badge" class="hidden px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500 text-white animate-pulse shrink-0">0</span>
+                    </button>
+
+                    <!-- Pizarra de Notas (Organizer) -->
+                    <button id="nav-item-notes" class="w-full flex items-center justify-between px-4 py-2 rounded-r-full text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 transition-colors" title="Pizarra de Notas Adhesivas">
+                        <span class="flex items-center gap-3">
+                            <svg class="w-4 h-4 shrink-0 text-amber-500 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                            <span class="sidebar-text truncate">Notas</span>
+                        </span>
+                        <span id="notes-total-badge" class="hidden px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shrink-0">0</span>
                     </button>
 
                     <!-- Accesos rápidos en Móvil/Tablet para Cuentas y Firmas (ocultos en Desktop >= 768px donde ya están en el Header) -->
@@ -464,7 +479,7 @@
 
             <!-- ================= INDICADOR DE SINCRONIZACIÓN EN BACKGROUND Y PIE DE AUTORÍA ================= -->
             <div class="mt-auto shrink-0">
-                <div id="sidebar-sync-progress" class="hidden p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/95 dark:bg-slate-850/95 shrink-0 transition-all select-none" title="Sincronización en segundo plano activa">
+                <div id="sidebar-sync-progress" onclick="UI.syncOtherApps()" class="hidden p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/95 dark:bg-slate-850/95 shrink-0 transition-all select-none cursor-pointer" title="Sincronización en segundo plano activa. Clic para forzar actualización.">
                     <div class="flex items-center justify-between gap-1.5 mb-1">
                         <div class="flex items-center gap-2 min-w-0">
                             <svg class="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
@@ -707,7 +722,7 @@
 
                 <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
                     <!-- Botón Modal Lateral de Mis Calendarios -->
-                    <button onclick="UI.openDrawer('drawer-calendars')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 text-xs font-semibold shadow-2xs transition-all cursor-pointer" title="Configurar y filtrar calendarios de Google">
+                    <button onclick="CalendarManager.openCalendarsDrawer()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 text-xs font-semibold shadow-2xs transition-all cursor-pointer" title="Configurar y filtrar calendarios de Google">
                         <svg class="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                         <span>Mis Calendarios</span>
                         <span id="calendar-active-count-badge" class="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">0</span>
@@ -792,6 +807,47 @@
                 </div>
             </div>
         </div>
+
+        <!-- ================= SECCIÓN DE PIZARRA DE NOTAS (ORGANIZER) ================= -->
+        <div id="main-notes-section" class="hidden flex-1 flex flex-col min-h-0 overflow-hidden bg-slate-50/50 dark:bg-slate-950/30">
+            <!-- Header / Toolbar de la Pizarra de Notas -->
+            <header class="h-auto py-3 px-4 md:px-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 bg-white dark:bg-slate-900 shrink-0">
+                <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-2">
+                        <span class="text-xl">📌</span>
+                        <h1 class="text-base font-bold text-slate-900 dark:text-white tracking-tight">Pizarra de Notas</h1>
+                    </div>
+                    <span id="notes-total" class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">0</span>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <button id="notes-new-btn" class="px-3 py-1.5 text-xs font-semibold rounded-xl bg-amber-500 hover:bg-amber-600 text-white transition-colors shadow-2xs flex items-center gap-1.5 cursor-pointer" title="Crear nueva nota adhesiva">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                        <span>Nueva nota</span>
+                    </button>
+                    <button id="notes-arrange-btn" class="px-3 py-1.5 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-750 transition-colors shadow-2xs flex items-center gap-1.5 cursor-pointer" title="Alinear notas en cuadrícula">
+                        <svg class="w-4 h-4 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+                        <span class="hidden sm:inline">Auto-organizar</span>
+                    </button>
+                    <button id="notes-sync-btn" class="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer" title="Sincronizar notas">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    </button>
+                    <button onclick="NotesManager.hide()" class="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors cursor-pointer" title="Cerrar notas y volver a correos">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Tablero / Pizarra de Notas con Lienzo Radial -->
+            <div id="notes-board" class="notes-board">
+                <div id="notes-canvas" class="notes-canvas">
+                    <div id="notes-hint" class="notes-hint">
+                        <div class="hint-icon">📌</div>
+                        <p class="font-medium text-slate-500 dark:text-slate-400">Haz doble clic en la pizarra<br>o usa el botón para crear una nota</p>
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>
     </div>
 
@@ -857,6 +913,10 @@
 
                 <!-- Sugerencias Rápidas -->
                 <div id="antigravity-quick-suggestions" class="p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/40 flex flex-nowrap gap-1.5 overflow-x-auto text-[11px]">
+                    <button onclick="AntigravityCopilot.showExecutiveSummaryPrompt()" class="whitespace-nowrap px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:border-indigo-500 font-semibold transition-colors cursor-pointer flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                        <span>Resumen del día</span>
+                    </button>
                     <button onclick="AntigravityCopilot.sendQuickPrompt('¿Tengo algún correo pendiente de facturación o pagos?')" class="whitespace-nowrap px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-indigo-500 transition-colors cursor-pointer">
                         💳 Facturas pendientes
                     </button>
@@ -1674,6 +1734,66 @@
                         </div>
                     </div>
 
+                    <!-- Notificaciones y Recordatorios del Sistema -->
+                    <div class="p-4 bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-700/60 rounded-xl space-y-3.5 shadow-2xs">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <div class="w-7 h-7 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+                                </div>
+                                <div class="min-w-0">
+                                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Notificaciones &amp; Alertas</h4>
+                                    <p class="text-[11px] text-slate-400">Avisos del sistema operativo, tray y recordatorios de citas</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Interruptor 1: Notificaciones de Nuevos Correos -->
+                        <div class="flex items-center justify-between pt-2 border-t border-slate-200/80 dark:border-slate-800 gap-3">
+                            <div class="min-w-0">
+                                <span class="text-xs font-semibold text-slate-700 dark:text-slate-200 block">Notificar nuevos correos</span>
+                                <span class="text-[11px] text-slate-400 leading-tight block">Alertas del sistema (System Tray / OS / Notificaciones Web) al recibir nuevos mensajes.</span>
+                            </div>
+                            <button type="button" role="switch" id="settings-notify-emails-switch" onclick="NotificationManager.toggleNewEmails()" class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-indigo-600 transition-colors duration-200 ease-in-out focus:outline-none shadow-2xs" title="Activar/desactivar notificaciones de correo">
+                                <span id="settings-notify-emails-thumb" class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out translate-x-5"></span>
+                            </button>
+                        </div>
+
+                        <!-- Filtro de Correos a Notificar -->
+                        <div class="pl-0.5 space-y-1">
+                            <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300">Filtro de avisos de correo</label>
+                            <select id="settings-notify-filter-select" onchange="NotificationManager.setFilter(this.value)" class="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-900 dark:text-slate-100">
+                                <option value="all">Todos los correos nuevos entrantes</option>
+                                <option value="primary">Solo bandeja de entrada principal y prioritarios</option>
+                            </select>
+                        </div>
+
+                        <!-- Interruptor 2: Recordatorios de Citas y Calendario -->
+                        <div class="flex items-center justify-between pt-2 border-t border-slate-200/80 dark:border-slate-800 gap-3">
+                            <div class="min-w-0">
+                                <span class="text-xs font-semibold text-slate-700 dark:text-slate-200 block">Recordatorios de calendario</span>
+                                <span class="text-[11px] text-slate-400 leading-tight block">Avisos anticipados para citas, reuniones y tareas programadas.</span>
+                            </div>
+                            <button type="button" role="switch" id="settings-notify-calendar-switch" onclick="NotificationManager.toggleCalendarEvents()" class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-indigo-600 transition-colors duration-200 ease-in-out focus:outline-none shadow-2xs" title="Activar/desactivar recordatorios de calendario">
+                                <span id="settings-notify-calendar-thumb" class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out translate-x-5"></span>
+                            </button>
+                        </div>
+
+                        <!-- Interruptor 3: Sonido Suave de Notificación -->
+                        <div class="flex items-center justify-between pt-2 border-t border-slate-200/80 dark:border-slate-800 gap-3">
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-xs font-semibold text-slate-700 dark:text-slate-200">Sonido de alerta suave</span>
+                                    <button type="button" onclick="NotificationManager.testSound()" class="text-[10px] text-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-400 underline font-medium cursor-pointer" title="Escuchar sonido de muestra">(Probar)</button>
+                                </div>
+                                <span class="text-[11px] text-slate-400 leading-tight block">Reproducir un tono suave y agradable al recibir notificaciones.</span>
+                            </div>
+                            <button type="button" role="switch" id="settings-notify-sound-switch" onclick="NotificationManager.toggleSound()" class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-indigo-600 transition-colors duration-200 ease-in-out focus:outline-none shadow-2xs" title="Activar/desactivar sonido">
+                                <span id="settings-notify-sound-thumb" class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out translate-x-5"></span>
+                            </button>
+                        </div>
+                    </div>
+
                     <!-- Aplicación de Escritorio Nativa (Linux / Ubuntu) -->
                     <div class="p-4 bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-750 rounded-2xl space-y-3.5 shadow-2xs">
                         <div class="flex items-center justify-between">
@@ -1966,7 +2086,7 @@
     </div>
 
     <!-- DRAWER: Detalle de Evento / Cita del Calendario -->
-    <div id="drawer-event-detail" class="drawer-root hidden fixed inset-0 z-[70] overflow-hidden">
+    <div id="drawer-event-detail" class="drawer-root hidden fixed inset-0 z-[110] overflow-hidden">
         <div class="absolute inset-0 bg-slate-950/60 backdrop-blur-sm drawer-backdrop" onclick="UI.closeDrawer('drawer-event-detail')"></div>
         <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
             <div class="w-screen max-w-md bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col drawer-panel">
@@ -2114,9 +2234,15 @@
                             <p class="text-[11px] text-slate-500">Google Calendar agrupado por conexión</p>
                         </div>
                     </div>
-                    <button onclick="UI.closeDrawer('drawer-calendars')" class="text-slate-400 hover:text-slate-600 dark:hover:text-white p-1 rounded-lg transition-colors cursor-pointer" title="Cerrar">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                    </button>
+                    <div class="flex items-center gap-1 shrink-0">
+                        <!-- Botón de Sincronización dentro del Cajón de Calendarios -->
+                        <button id="btn-sync-calendars-drawer" onclick="CalendarManager.syncNow(this)" class="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer" title="Sincronizar calendarios ahora">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        </button>
+                        <button onclick="UI.closeDrawer('drawer-calendars')" class="text-slate-400 hover:text-slate-600 dark:hover:text-white p-1 rounded-lg transition-colors cursor-pointer" title="Cerrar">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Contenido con scroll agrupado por cuenta -->
@@ -3204,6 +3330,8 @@
     <script src="/static/js/signatures.js?v=114"></script>
     <script src="/static/js/user_profile.js?v=114"></script>
     <script src="/static/js/desktop.js?v=114"></script>
+    <script src="/static/js/notifications.js?v=125"></script>
+    <script src="/static/js/notes.js?v=101"></script>
     <script src="/static/js/app.js?v=114"></script>
 </body>
 </html>

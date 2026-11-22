@@ -222,9 +222,19 @@ const EmailManager = {
             if (window.CalendarManager) await CalendarManager.init();
             this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
 
+            // Monitorear y alertar de correos nuevos recibidos
+            if (window.NotificationManager && typeof NotificationManager.checkNewEmails === 'function') {
+                NotificationManager.checkNewEmails(this.emails, this.currentFolder);
+            }
+
             // Actualizar la descripción de bienvenida del asistente Elio
             if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
                 AntigravityCopilot.updateConnectedServices();
+            }
+
+            // Actualizar badge de contactos pendientes en el menú lateral
+            if (window.ContactsManager && typeof ContactsManager.loadContacts === 'function') {
+                ContactsManager.loadContacts();
             }
             UI.showStickyToast('Conectado', 'Conexión con el servidor restablecida con éxito', 'success');
         } catch (e) {
@@ -240,9 +250,19 @@ const EmailManager = {
         if (this.autoSyncEnabled) {
             this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
 
+            // Monitorear y alertar de correos nuevos recibidos
+            if (window.NotificationManager && typeof NotificationManager.checkNewEmails === 'function') {
+                NotificationManager.checkNewEmails(this.emails, this.currentFolder);
+            }
+
             // Actualizar la descripción de bienvenida del asistente Elio
             if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
                 AntigravityCopilot.updateConnectedServices();
+            }
+
+            // Actualizar badge de contactos pendientes en el menú lateral
+            if (window.ContactsManager && typeof ContactsManager.loadContacts === 'function') {
+                ContactsManager.loadContacts();
             }
             UI.showStickyToast('Sincronización Automática', 'Sincronización periódica reanudada', 'success');
             this.checkAutoSync();
@@ -599,6 +619,9 @@ const EmailManager = {
     },
 
     clearMainSearch() {
+        if (window.UI && typeof UI.switchMainView === 'function') {
+            UI.switchMainView('mail');
+        }
         const mainInput = document.getElementById('main-search-input');
         const clearBtn = document.getElementById('btn-clear-search');
         const elioBtn = document.getElementById('btn-submit-to-elio');
@@ -772,9 +795,19 @@ const EmailManager = {
 
             this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
 
+            // Monitorear y alertar de correos nuevos recibidos
+            if (window.NotificationManager && typeof NotificationManager.checkNewEmails === 'function') {
+                NotificationManager.checkNewEmails(this.emails, this.currentFolder);
+            }
+
             // Actualizar la descripción de bienvenida del asistente Elio
             if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
                 AntigravityCopilot.updateConnectedServices();
+            }
+
+            // Actualizar badge de contactos pendientes en el menú lateral
+            if (window.ContactsManager && typeof ContactsManager.loadContacts === 'function') {
+                ContactsManager.loadContacts();
             }
         } catch (e) {
             console.error("Error al cargar cuentas:", e);
@@ -929,6 +962,9 @@ const EmailManager = {
 
     selectAccount(accountId) {
         if (window.innerWidth < 768 && window.UI) UI.closeMobileSidebar();
+        if (window.UI && typeof UI.switchMainView === 'function') {
+            UI.switchMainView('mail');
+        }
         this.currentAccountId = accountId;
         this.currentPage = 1;
         this.selectedEmailId = null;
@@ -1034,6 +1070,46 @@ const EmailManager = {
     },
 
     async syncCurrentView() {
+        const globalBtn = document.getElementById('btn-global-sync');
+        const globalIcon = globalBtn ? globalBtn.querySelector('svg') : null;
+        if (globalIcon) globalIcon.classList.add('animate-spin');
+
+        // Detección del contexto activo: Calendario, Contactos o Bandeja de Correos
+        const sectionCalendar = document.getElementById('main-calendar-section');
+        const isCalendarVisible = sectionCalendar && !sectionCalendar.classList.contains('hidden');
+        const drawerContacts = document.getElementById('drawer-contacts');
+        const isContactsVisible = drawerContacts && !drawerContacts.classList.contains('hidden');
+
+        if (isCalendarVisible) {
+            try {
+                if (window.CalendarManager && typeof CalendarManager.syncNow === 'function') {
+                    await CalendarManager.syncNow(globalBtn);
+                } else {
+                    await fetch('/api/calendars/sync', { method: 'POST' });
+                }
+            } catch (err) {
+                console.warn('Error sincronizando calendario desde barra global:', err);
+            } finally {
+                if (globalIcon) setTimeout(() => globalIcon.classList.remove('animate-spin'), 600);
+            }
+            return;
+        }
+
+        if (isContactsVisible) {
+            try {
+                if (window.ContactsManager && typeof ContactsManager.syncNow === 'function') {
+                    await ContactsManager.syncNow(globalBtn);
+                } else {
+                    await fetch('/api/contacts/sync', { method: 'POST' });
+                }
+            } catch (err) {
+                console.warn('Error sincronizando contactos desde barra global:', err);
+            } finally {
+                if (globalIcon) setTimeout(() => globalIcon.classList.remove('animate-spin'), 600);
+            }
+            return;
+        }
+
         try {
             UI.showStickyToast('Sincronizando', 'Actualizando correos desde el servidor...', 'info', 2500);
             const params = new URLSearchParams();
@@ -1058,10 +1134,10 @@ const EmailManager = {
                 }
                 this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
 
-            // Actualizar la descripción de bienvenida del asistente Elio
-            if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
-                AntigravityCopilot.updateConnectedServices();
-            }
+                // Actualizar la descripción de bienvenida del asistente Elio
+                if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
+                    AntigravityCopilot.updateConnectedServices();
+                }
                 UI.showStickyToast('Sincronización Exitosa', `${data.synced_count || 0} correos actualizados`, 'success');
                 await this.loadEmails();
                 await this.loadLabels();
@@ -1076,6 +1152,8 @@ const EmailManager = {
             this.updateSystemSyncPill('inactive', 'Sin conexión con el servidor backend');
             if (window.GeminiAI) GeminiAI.setDisconnectedState();
             UI.showStickyToast('Error de sincronización', e.message, 'error');
+        } finally {
+            if (globalIcon) setTimeout(() => globalIcon.classList.remove('animate-spin'), 600);
         }
     },
 
@@ -1547,16 +1625,16 @@ const EmailManager = {
             this.activeFilterLabelIds = null;
         }
 
-        // Asegurar vista de correo
-        const sectionMail = document.getElementById('main-mail-section');
-        const sectionCalendar = document.getElementById('main-calendar-section');
-        const btnNavCalendar = document.getElementById('nav-item-calendar');
-        if (sectionMail && sectionCalendar) {
-            sectionMail.classList.remove('hidden');
-            sectionCalendar.classList.add('hidden');
-        }
-        if (btnNavCalendar) {
-            btnNavCalendar.classList.remove('bg-indigo-50', 'dark:bg-indigo-950/60', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
+        // Asegurar vista de correo y desaparecer cualquier otra vista activa (notas o calendario)
+        if (window.UI && typeof UI.switchMainView === 'function') {
+            UI.switchMainView('mail');
+        } else {
+            const sectionMail = document.getElementById('main-mail-section');
+            const sectionCalendar = document.getElementById('main-calendar-section');
+            const sectionNotes = document.getElementById('main-notes-section');
+            if (sectionMail) sectionMail.classList.remove('hidden');
+            if (sectionCalendar) sectionCalendar.classList.add('hidden');
+            if (sectionNotes) sectionNotes.classList.add('hidden');
         }
 
         // Quitar active-folder de carpetas
@@ -2064,9 +2142,19 @@ const EmailManager = {
                 }, 2200);
             }
 
+            // Monitorear y alertar de correos nuevos recibidos
+            if (window.NotificationManager && typeof NotificationManager.checkNewEmails === 'function') {
+                NotificationManager.checkNewEmails(this.emails, this.currentFolder);
+            }
+
             // Actualizar la descripción de bienvenida del asistente Elio
             if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
                 AntigravityCopilot.updateConnectedServices();
+            }
+
+            // Actualizar badge de contactos pendientes en el menú lateral
+            if (window.ContactsManager && typeof ContactsManager.loadContacts === 'function') {
+                ContactsManager.loadContacts();
             }
         } catch (e) {
             this.resetDetailView();
@@ -2120,6 +2208,25 @@ const EmailManager = {
                 }
             }
 
+            // Obtener datos del remitente y cuenta receptora
+            const accId = email.account_id;
+            const matchedAcc = (this.accounts && this.accounts.length > 0)
+                ? this.accounts.find(a => a.id === accId)
+                : null;
+            const accName = email.account_name || (matchedAcc ? matchedAcc.name : '') || 'Cuenta';
+
+            // En Enviados/Borradores mostrar avatar del destinatario; en Bandeja de Entrada/resto mostrar del remitente que lo envió
+            const isSentOrDraft = ['SENT', 'DRAFT', 'DRAFTS', 'BORRADORES', 'ENVIADOS'].includes(String(email.folder || '').toUpperCase());
+            const contactTarget = isSentOrDraft ? (email.recipient || email.sender) : (email.sender || email.recipient);
+            const contactName = isSentOrDraft ? (email.recipient_name || contactTarget) : (email.sender_name || contactTarget);
+            const cleanTargetEmail = (window.AvatarService ? AvatarService.cleanEmail(contactTarget) : contactTarget) || contactTarget;
+            const displayName = contactName || cleanTargetEmail.split('@')[0] || 'U';
+            const safeAvatarTitle = `${this.escapeHtml(displayName)}${cleanTargetEmail ? ' (' + this.escapeHtml(cleanTargetEmail) + ')' : ''}${accName ? ' • Cuenta: ' + this.escapeHtml(accName) : ''}`;
+
+            const senderAvatarHtml = (window.AvatarService)
+                ? `<div class="email-sender-avatar shrink-0 flex items-center justify-center" title="${safeAvatarTitle}">${AvatarService.render(cleanTargetEmail, displayName, 'w-5 h-5 text-[10px]', 'shadow-2xs', accColor)}</div>`
+                : `<span class="email-sender-avatar w-5 h-5 rounded-full shrink-0 flex items-center justify-center font-bold text-white text-[10px] shadow-2xs select-none" style="background-color: ${accColor}" title="${safeAvatarTitle}">${(displayName || 'U').charAt(0).toUpperCase()}</span>`;
+
             return `
                 <div onclick="EmailManager.openEmailDetail(${email.id})" id="email-item-${email.id}" data-account-color="${accColor}" style="--account-accent-color: ${accColor}; ${isSelected ? `border-left-color: ${accColor} !important;` : ''}" class="email-list-item group relative px-3 py-2.5 cursor-pointer transition-all select-none ${isSelected ? 'selected' : ''} ${
                     isUnread 
@@ -2135,8 +2242,8 @@ const EmailManager = {
                             <svg class="w-3.5 h-3.5 ${isStarred ? 'text-amber-400 fill-amber-400' : 'fill-none'}" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
                         </button>
 
-                        <!-- Indicativo Color Cuenta -->
-                        <span class="w-2 h-2 rounded-full shrink-0 shadow-2xs" style="background-color: ${email.account_color || '#3b82f6'}" title="${this.escapeHtml(email.account_name || 'Cuenta')}"></span>
+                        <!-- Avatar del Remitente -->
+                        ${senderAvatarHtml}
 
                         <!-- Remitente -->
                         <span class="email-item-sender text-xs truncate flex-1 min-w-0 ${isUnread ? 'font-bold text-slate-900 dark:text-white' : 'font-medium text-slate-700 dark:text-slate-300'}">
@@ -2243,6 +2350,14 @@ const EmailManager = {
         // Cancelar cualquier temporizador de lectura en curso si se cambia de correo antes de los 7s
         this.cancelReadTimer();
 
+        // Al abrir un correo, asegurar que la vista de correos esté activa y desaparecer notas o calendario
+        if (window.UI && typeof UI.switchMainView === 'function') {
+            const sectionNotes = document.getElementById('main-notes-section');
+            if (sectionNotes && !sectionNotes.classList.contains('hidden')) {
+                UI.switchMainView('mail');
+            }
+        }
+
         this.selectedEmailId = emailId;
         this.highlightSelectedItem(emailId);
         
@@ -2348,13 +2463,8 @@ const EmailManager = {
                 <div class="h-full flex flex-col min-w-0 bg-white dark:bg-slate-950 overflow-hidden select-text">
                     <!-- Top Action Bar del Correo -->
                     <div class="email-top-action-bar relative z-40 h-12 px-3 md:px-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-900/60 shrink-0 min-w-0 overflow-visible">
-                        <!-- Sección Izquierda: Botón Volver + Slot Superior de Etiquetas -->
+                        <!-- Sección Izquierda: Slot Superior de Etiquetas -->
                         <div class="flex items-center min-w-0 flex-1 mr-2 sm:mr-3 overflow-hidden">
-                            <!-- Volver (visible en móviles y vistas estrechas) -->
-                            <button onclick="EmailManager.backToList()" class="p-1.5 text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-lg md:hidden shrink-0 mr-1.5" title="Volver a la lista">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
-                            </button>
-
                             <!-- Slot Superior de Etiquetas (con scroll horizontal si cabe arriba) -->
                             <div id="email-labels-top-slot" class="email-labels-scroll flex-1 min-w-0 flex items-center gap-1.5 sm:gap-2 overflow-x-auto flex-nowrap py-1 select-none" onwheel="if(event.deltaY !== 0){this.scrollLeft += event.deltaY; event.preventDefault();}">
                                 <!-- Indicador Carpeta / Recibidos con botón de archivar -->
@@ -2389,6 +2499,13 @@ const EmailManager = {
 
                         <!-- Acciones Rápidas Superior Derecha (Gestión Individual & Redacción) -->
                         <div id="email-top-actions-right" class="relative z-40 flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end overflow-visible">
+                            <!-- Botón Volver a la Lista de Correos (Exclusivo en Móvil < 768px) -->
+                            <button id="btn-detail-back-mobile" onclick="EmailManager.backToList()" class="md:hidden flex items-center justify-center p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer shrink-0" title="Volver a la lista de correos" aria-label="Return to email list">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                                </svg>
+                            </button>
+
                             <!-- 0. Botón Mover a Carpeta -->
                             <button id="btn-detail-move" onclick="EmailManager.toggleMoveMenu(event, 'detail', ${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer shrink-0" title="Mover a carpeta">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3399,6 +3516,220 @@ const EmailManager = {
             const listPanel = document.getElementById('email-list-container');
             if (listPanel) listPanel.classList.remove('hidden');
         }
+    },
+
+    onBrandClick() {
+        if (window.UI && typeof UI.switchMainView === 'function') {
+            UI.switchMainView('mail');
+        } else {
+            const sectionMail = document.getElementById('main-mail-section');
+            const sectionCalendar = document.getElementById('main-calendar-section');
+            const sectionNotes = document.getElementById('main-notes-section');
+            if (sectionMail) sectionMail.classList.remove('hidden');
+            if (sectionCalendar) sectionCalendar.classList.add('hidden');
+            if (sectionNotes) sectionNotes.classList.add('hidden');
+        }
+        this.currentFolder = 'INBOX';
+        this.currentLabelId = null;
+        this.clearSelection();
+        this.renderLabels();
+        this.resetDetailView();
+        this.loadEmails();
+    },
+
+    async showElioInboxSummary(force = false) {
+        const isAiActive = !!(window.GeminiAI && GeminiAI.isAiActive);
+        if (!isAiActive && !force) return;
+
+        this.cancelReadTimer();
+        this.selectedEmailId = null;
+        this.currentOpenedEmail = null;
+        document.querySelectorAll('.email-item-container').forEach(el => el.classList.remove('bg-indigo-50/60', 'dark:bg-slate-800/80', 'border-indigo-400/50'));
+
+        const detailPanel = document.getElementById('email-detail-container');
+        if (!detailPanel) return;
+
+        if (window.innerWidth < 768) {
+            const listPanel = document.getElementById('email-list-container');
+            if (listPanel) listPanel.classList.add('hidden');
+            detailPanel.classList.remove('hidden');
+            detailPanel.classList.add('flex');
+        } else {
+            detailPanel.classList.remove('hidden');
+            detailPanel.classList.add('flex');
+        }
+
+        detailPanel.innerHTML = `
+            <div class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400 animate-pulse">
+                <div class="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-indigo-500">
+                    <svg class="w-7 h-7 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </div>
+                <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">Elio está analizando tu bandeja...</h3>
+                <p class="text-xs text-slate-500 mt-1 max-w-sm">Generando resumen inteligente en tiempo real de correos, asuntos prioritarios y agenda.</p>
+            </div>
+        `;
+
+        try {
+            const res = await fetch('/api/agent/summary');
+            if (!res.ok) throw new Error('Error al obtener resumen de Elio');
+            const data = await res.json();
+            this.renderElioInboxSummaryView(data, detailPanel);
+        } catch (err) {
+            console.error('Error cargando resumen de Elio:', err);
+            if (force) {
+                detailPanel.innerHTML = `
+                    <div class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400">
+                        <div class="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mb-4 text-rose-500">
+                            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                        </div>
+                        <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">No se pudo generar el resumen</h3>
+                        <p class="text-xs text-slate-500 mt-1 max-w-sm">${err.message || 'Error de conexión con el agente.'}</p>
+                        <button onclick="EmailManager.showElioInboxSummary(true)" class="mt-4 px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">Reintentar</button>
+                    </div>
+                `;
+            } else {
+                this.resetDetailView();
+            }
+        }
+    },
+
+    renderElioInboxSummaryView(data, detailPanel) {
+        const unreadCount = data.unread_count || 0;
+        const inboxTotal = data.inbox_total || 0;
+        const upcoming = data.upcoming_event;
+        const recommendation = data.recommendation || 'Todo está en orden en tu bandeja de entrada.';
+        const priorityEmails = (data.priority_emails && data.priority_emails.length > 0) ? data.priority_emails : (data.recent_unreads || []);
+
+        let priorityCardsHtml = '';
+        if (priorityEmails.length === 0) {
+            priorityCardsHtml = `
+                <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 text-center text-xs text-slate-500">
+                    No tienes correos con avisos de pago, facturas o alertas pendientes en este momento.
+                </div>
+            `;
+        } else {
+            priorityCardsHtml = priorityEmails.map(em => {
+                const subject = this.escapeHtml(em.subject || 'Sin Asunto');
+                const sender = this.escapeHtml(em.sender || 'Remitente Desconocido');
+                const snippet = this.escapeHtml(em.snippet || '');
+                const date = em.date ? new Date(em.date).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+                return `
+                    <div class="group p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500/60 hover:shadow-sm transition-all cursor-pointer flex flex-col gap-1.5" onclick="EmailManager.openEmailDetail(${em.id})">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[70%]">${sender}</span>
+                            <span class="text-[11px] text-slate-400 font-mono shrink-0">${date}</span>
+                        </div>
+                        <h4 class="text-xs font-medium text-slate-900 dark:text-white line-clamp-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">${subject}</h4>
+                        <p class="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">${snippet}</p>
+                        <div class="flex items-center justify-end gap-1 mt-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span>Abrir correo</span>
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        let upcomingEventHtml = '';
+        if (upcoming) {
+            const evTitle = this.escapeHtml(upcoming.title || 'Evento programado');
+            const evTime = upcoming.start_time ? upcoming.start_time.replace('T', ' ') : '';
+            upcomingEventHtml = `
+                <div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-500 flex items-center justify-center shrink-0 mt-0.5">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                            <span class="text-[10px] font-bold uppercase tracking-wider text-amber-500">Próxima cita en Agenda</span>
+                            <span class="text-[11px] text-amber-600/80 dark:text-amber-400/80 font-mono">${evTime}</span>
+                        </div>
+                        <p class="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate mt-0.5">${evTitle}</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        detailPanel.innerHTML = `
+            <div class="flex-1 flex flex-col h-full overflow-y-auto bg-slate-50/50 dark:bg-slate-950/40 p-4 sm:p-6 lg:p-8 space-y-5">
+                <!-- Header del Resumen con Elio -->
+                <div class="flex items-start justify-between gap-4 pb-4 border-b border-slate-200/80 dark:border-slate-800">
+                    <div class="flex items-center gap-3.5">
+                        <div class="relative">
+                            <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                            </div>
+                            <span class="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900" title="Elio en línea"></span>
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight">Resumen Ejecutivo de Elio</h2>
+                                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">IA Activa</span>
+                            </div>
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Visión global e inteligente de tu bandeja de entrada</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="EmailManager.showElioInboxSummary(true)" class="p-2 rounded-xl text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="Actualizar resumen">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Tarjetas de Estadísticas Clave -->
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Sin Leer</span>
+                        <div class="mt-1 flex items-baseline gap-2">
+                            <span class="text-2xl font-bold \${unreadCount > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-700 dark:text-slate-300'}">\${unreadCount}</span>
+                            <span class="text-[10px] text-slate-400">correos</span>
+                        </div>
+                    </div>
+                    <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">En Bandeja</span>
+                        <div class="mt-1 flex items-baseline gap-2">
+                            <span class="text-2xl font-bold text-slate-700 dark:text-slate-300">\${inboxTotal}</span>
+                            <span class="text-[10px] text-slate-400">totales</span>
+                        </div>
+                    </div>
+                    <div class="col-span-2 sm:col-span-1 p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Prioritarios</span>
+                        <div class="mt-1 flex items-baseline gap-2">
+                            <span class="text-2xl font-bold \${priorityEmails.length > 0 ? 'text-amber-500' : 'text-emerald-500'}">\${priorityEmails.length}</span>
+                            <span class="text-[10px] text-slate-400">requieren foco</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recomendación de Elio -->
+                <div class="p-4 rounded-xl bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-transparent border border-indigo-500/20 flex items-start gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-500 flex items-center justify-center shrink-0 mt-0.5">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                    </div>
+                    <div class="flex-1">
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">Recomendación de Elio</span>
+                        <p class="text-xs text-slate-700 dark:text-slate-300 mt-1 leading-relaxed">\${this.escapeHtml(recommendation)}</p>
+                    </div>
+                </div>
+
+                <!-- Próxima cita si existe -->
+                \${upcomingEventHtml}
+
+                <!-- Correos prioritarios / pendientes de lectura -->
+                <div class="space-y-2.5">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Correos que requieren tu atención</h3>
+                        <span class="text-[11px] text-slate-400">Haz clic para leer</span>
+                    </div>
+                    <div class="space-y-2">
+                        \${priorityCardsHtml}
+                    </div>
+                </div>
+            </div>
+        `;
     },
 
     backToList() {

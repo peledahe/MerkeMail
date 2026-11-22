@@ -175,10 +175,60 @@ const UI = {
         });
     },
 
+    // Conmutador Centralizado de Vistas Principales (Correos, Calendario y Notas)
+    switchMainView(viewName) {
+        const sectionMail = document.getElementById('main-mail-section');
+        const sectionCalendar = document.getElementById('main-calendar-section');
+        const sectionNotes = document.getElementById('main-notes-section');
+        const btnNavMail = document.getElementById('nav-item-mail');
+        const btnNavCalendar = document.getElementById('nav-item-calendar');
+        const btnNavNotes = document.getElementById('nav-item-notes');
+
+        // Asegurar que siempre se oculte la Pizarra de Notas y las demás vistas incompatibles
+        if (sectionMail) sectionMail.classList.add('hidden');
+        if (sectionCalendar) sectionCalendar.classList.add('hidden');
+        if (sectionNotes) sectionNotes.classList.add('hidden');
+
+        // Quitar estilos activos de navegación
+        if (btnNavCalendar) btnNavCalendar.classList.remove('bg-indigo-50', 'dark:bg-indigo-950/60', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
+        if (btnNavNotes) btnNavNotes.classList.remove('bg-amber-50', 'dark:bg-amber-950/60', 'text-amber-600', 'dark:text-amber-400', 'font-bold');
+
+        if (viewName === 'notes') {
+            if (sectionNotes) sectionNotes.classList.remove('hidden');
+            if (btnNavNotes) btnNavNotes.classList.add('bg-amber-50', 'dark:bg-amber-950/60', 'text-amber-600', 'dark:text-amber-400', 'font-bold');
+            document.querySelectorAll('.folder-nav-btn').forEach(b => {
+                b.classList.remove('active-folder', 'bg-indigo-50', 'dark:bg-indigo-950/70', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
+                b.classList.add('text-slate-700', 'dark:text-slate-300');
+            });
+            if (btnNavMail) btnNavMail.classList.remove('active-folder', 'bg-indigo-50', 'dark:bg-indigo-950/70', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
+            if (window.NotesManager) NotesManager.renderNotes();
+        } else if (viewName === 'calendar') {
+            if (sectionCalendar) sectionCalendar.classList.remove('hidden');
+            if (btnNavCalendar) btnNavCalendar.classList.add('bg-indigo-50', 'dark:bg-indigo-950/60', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
+            document.querySelectorAll('.folder-nav-btn').forEach(b => {
+                b.classList.remove('active-folder', 'bg-indigo-50', 'dark:bg-indigo-950/70', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
+                b.classList.add('text-slate-700', 'dark:text-slate-300');
+            });
+            if (btnNavMail) btnNavMail.classList.remove('active-folder', 'bg-indigo-50', 'dark:bg-indigo-950/70', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
+            if (window.CalendarManager) CalendarManager.renderCalendar();
+        } else {
+            // 'mail' (predeterminado)
+            if (sectionMail) sectionMail.classList.remove('hidden');
+            if (btnNavMail) btnNavMail.classList.add('active-folder', 'bg-indigo-50', 'dark:bg-indigo-950/70', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
+        }
+    },
+
     // Manejo de Modales Laterales (Drawers)
     openDrawer(drawerId) {
         const drawer = document.getElementById(drawerId);
         if (!drawer) return;
+
+        // Si la Pizarra de Notas estaba activa y se abre cualquier opción, desaparecer notas y restaurar correo
+        const sectionNotes = document.getElementById('main-notes-section');
+        if (sectionNotes && !sectionNotes.classList.contains('hidden')) {
+            this.switchMainView('mail');
+        }
+
         drawer.classList.remove('hidden');
         document.body.classList.add('overflow-hidden');
         if (drawerId === 'drawer-antigravity-copilot' && window.AntigravityCopilot) {
@@ -532,6 +582,8 @@ const UI = {
         const sidebar = document.getElementById('sidebar-container');
         const backdrop = document.getElementById('sidebar-mobile-backdrop');
         if (!sidebar) return;
+        sidebar.classList.remove('collapsed');
+        sidebar.style.width = '';
         const isOpen = sidebar.classList.toggle('mobile-open');
         if (backdrop) {
             backdrop.classList.toggle('hidden', !isOpen);
@@ -541,7 +593,11 @@ const UI = {
     closeMobileSidebar() {
         const sidebar = document.getElementById('sidebar-container');
         const backdrop = document.getElementById('sidebar-mobile-backdrop');
-        if (sidebar) sidebar.classList.remove('mobile-open');
+        if (sidebar) {
+            sidebar.classList.remove('mobile-open');
+            sidebar.classList.remove('collapsed');
+            sidebar.style.width = '';
+        }
         if (backdrop) backdrop.classList.add('hidden');
     },
 
@@ -552,6 +608,9 @@ const UI = {
         if (btn && btn.disabled) return;
         if (btn) btn.disabled = true;
         if (icon) icon.classList.add('animate-spin', 'text-indigo-600', 'dark:text-indigo-400');
+
+        const allSyncIcons = document.querySelectorAll('#btn-sync-other-apps svg, #btn-sync-calendars svg, #btn-sync-contacts svg, #btn-global-sync svg, #btn-sync-calendars-drawer svg');
+        allSyncIcons.forEach(ic => ic.classList.add('animate-spin'));
 
         this.showStickyToast('Sincronizando Otras Apps', 'Sincronizando Calendario, Tareas y Contactos en segundo plano...', 'info', 2500);
 
@@ -567,36 +626,40 @@ const UI = {
                     CalendarManager.loadEvents(),
                     CalendarManager.loadTasks()
                 ]).catch(() => {});
-                CalendarManager.renderCalendarSidebarList();
-                CalendarManager.renderCurrentView();
-                CalendarManager.renderUpcomingList();
-                CalendarManager.renderTasks();
-                setTimeout(async () => {
-                    try {
-                        await Promise.all([
-                            CalendarManager.loadCalendars(),
-                            CalendarManager.loadEvents(),
-                            CalendarManager.loadTasks()
-                        ]);
-                        CalendarManager.renderCalendarSidebarList();
-                        CalendarManager.renderCurrentView();
-                        CalendarManager.renderUpcomingList();
-                        CalendarManager.renderTasks();
-                    } catch (_) {}
-                }, 2800);
+                if (typeof CalendarManager.updateActiveCountBadge === 'function') CalendarManager.updateActiveCountBadge();
+                if (typeof CalendarManager.renderCalendarsDrawer === 'function') CalendarManager.renderCalendarsDrawer();
+                if (typeof CalendarManager.renderCalendar === 'function') CalendarManager.renderCalendar();
+                if (typeof CalendarManager.renderCurrentView === 'function') CalendarManager.renderCurrentView();
+                if (typeof CalendarManager.renderUpcomingList === 'function') CalendarManager.renderUpcomingList();
+                if (typeof CalendarManager.renderTasks === 'function') CalendarManager.renderTasks();
             }
 
             if (typeof ContactsManager !== 'undefined') {
                 await ContactsManager.loadContacts().catch(() => {});
+                const syncLabel = document.getElementById('contacts-last-sync-label');
+                if (syncLabel) {
+                    syncLabel.textContent = `Sincronizado: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+                }
             }
 
-            const totalContacts = contactsRes && contactsRes.total_contacts !== undefined ? ` (${contactsRes.total_contacts} contactos)` : '';
-            this.showStickyToast('Sincronización Completada', `Calendario, Tareas y Contactos actualizados correctamente${totalContacts}.`, 'success', 3500);
+            if (typeof NotesManager !== 'undefined') {
+                await NotesManager.loadNotes().catch(() => {});
+            }
+
+            if (calRes && calRes.api_disabled) {
+                this.showStickyToast('Google Calendar API Deshabilitada', 'Debes habilitar Google Calendar API en Google Cloud Console.', 'warning', 4500);
+            } else {
+                const totalContacts = contactsRes && contactsRes.total_contacts !== undefined ? ` (${contactsRes.total_contacts} contactos)` : '';
+                this.showStickyToast('Sincronización Completada', `Calendario, Tareas, Contactos y Notas actualizados correctamente${totalContacts}.`, 'success', 3500);
+            }
         } catch (e) {
+            console.error('Error sincronizando Otras Apps:', e);
             this.showStickyToast('Error', 'No se pudo completar la sincronización de Calendario y Contactos', 'error');
         } finally {
             if (btn) btn.disabled = false;
-            if (icon) icon.classList.remove('animate-spin', 'text-indigo-600', 'dark:text-indigo-400');
+            setTimeout(() => {
+                allSyncIcons.forEach(ic => ic.classList.remove('animate-spin', 'text-indigo-600', 'dark:text-indigo-400'));
+            }, 600);
         }
     },
 
@@ -684,34 +747,47 @@ const UI = {
             this.toggleSidebarCollapse();
         });
 
-        // Sincronización responsiva al redimensionar la ventana con prioridad al correo
-        window.addEventListener('resize', () => {
-            const listPanel = document.getElementById('email-list-container');
-            const detailPanel = document.getElementById('email-detail-container');
-            if (window.innerWidth >= 768) {
-                this.closeMobileSidebar();
-                if (listPanel) listPanel.classList.remove('hidden');
-                if (detailPanel) {
-                    detailPanel.classList.remove('hidden');
-                    detailPanel.classList.add('flex');
-                }
-                this.syncResponsiveLayoutPriority();
-            } else {
-                if (window.EmailManager && EmailManager.selectedEmailId) {
-                    if (listPanel) listPanel.classList.add('hidden');
+        // Sincronización ultrarrápida al redimensionar o maximizar la ventana (60-120fps)
+        let _resizeTimer = null;
+        let _resizeRaf = null;
+        const handleWindowResizeFast = () => {
+            if (_resizeRaf) cancelAnimationFrame(_resizeRaf);
+            _resizeRaf = requestAnimationFrame(() => {
+                document.body.classList.add('window-resizing');
+                const listPanel = document.getElementById('email-list-container');
+                const detailPanel = document.getElementById('email-detail-container');
+                if (window.innerWidth >= 768) {
+                    this.closeMobileSidebar();
+                    if (listPanel) listPanel.classList.remove('hidden');
                     if (detailPanel) {
                         detailPanel.classList.remove('hidden');
                         detailPanel.classList.add('flex');
                     }
+                    this.syncResponsiveLayoutPriority();
                 } else {
-                    if (listPanel) listPanel.classList.remove('hidden');
-                    if (detailPanel) {
-                        detailPanel.classList.add('hidden');
-                        detailPanel.classList.remove('flex');
+                    if (window.EmailManager && EmailManager.selectedEmailId) {
+                        if (listPanel) listPanel.classList.add('hidden');
+                        if (detailPanel) {
+                            detailPanel.classList.remove('hidden');
+                            detailPanel.classList.add('flex');
+                        }
+                    } else {
+                        if (listPanel) listPanel.classList.remove('hidden');
+                        if (detailPanel) {
+                            detailPanel.classList.add('hidden');
+                            detailPanel.classList.remove('flex');
+                        }
                     }
                 }
-            }
-        });
+                clearTimeout(_resizeTimer);
+                _resizeTimer = setTimeout(() => {
+                    document.body.classList.remove('window-resizing');
+                }, 80);
+            });
+        };
+
+        window.addEventListener('resize', handleWindowResizeFast, { passive: true });
+        this.onWindowResizeFast = handleWindowResizeFast;
 
         // Aplicar jerarquía responsiva inicial
         this.syncResponsiveLayoutPriority();
@@ -730,11 +806,27 @@ const UI = {
         if (!sidebar || !listContainer) return;
 
         const w = window.innerWidth;
-        if (w >= 768 && w < 1200) {
+        if (w < 768) {
+            // MÓVIL (< 768px):
+            // En móvil, la barra lateral funciona como drawer deslizante desplegado completo.
+            // Asegurar que no tenga la clase 'collapsed' ni estilos inline residuales.
+            sidebar.classList.remove('collapsed');
+            sidebar.style.width = '';
+            listContainer.style.width = '100%';
+            listContainer.classList.remove('compact-mode', 'ultra-compact-mode');
+        } else if (w >= 768 && w < 1200) {
             // TABLET / PANTALLAS MEDIANAS:
-            // 1. Reducir PRIMERO la barra lateral (colapsar a 64px)
-            sidebar.classList.add('collapsed');
-            sidebar.style.width = '64px';
+            // 1. Reducir PRIMERO la barra lateral (colapsar a 64px por defecto, salvo que el usuario la haya expandido explícitamente)
+            const isManualExpanded = localStorage.getItem('sidebar_collapsed') === 'false';
+            if (isManualExpanded) {
+                sidebar.classList.remove('collapsed');
+                const savedWidth = localStorage.getItem('sidebar_width') || '240px';
+                const parsedW = parseInt(savedWidth);
+                sidebar.style.width = (isNaN(parsedW) || parsedW < 140) ? '240px' : `${parsedW}px`;
+            } else {
+                sidebar.classList.add('collapsed');
+                sidebar.style.width = '64px';
+            }
 
             // 2. Reducir LUEGO la columna de lista de correos
             if (w < 992) {
@@ -778,6 +870,7 @@ const UI = {
         let activeTarget = null;
 
         const isSidebarCollapsed = () => {
+            if (window.innerWidth < 768) return false;
             return sidebar.classList.contains('collapsed') || sidebar.getBoundingClientRect().width <= 75;
         };
 
@@ -1209,6 +1302,12 @@ const UI = {
     },
 
     async openComposeModal() {
+        // Al abrir el redactor de correo, desaparecer el visor de notas si estaba activo
+        const sectionNotes = document.getElementById('main-notes-section');
+        if (sectionNotes && !sectionNotes.classList.contains('hidden')) {
+            this.switchMainView('mail');
+        }
+
         const modal = document.getElementById('compose-modal');
         if (!modal) return;
         modal.classList.remove('hidden');

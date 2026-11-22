@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Redirect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 
-from backend.database import get_db, init_db, set_setting, get_setting
+from backend.database import get_db, init_db, set_setting, get_setting, AVATARS_DIR
 from backend.email_service import EmailService, deleted_email_key
 from backend.calendar_service import CalendarService
 from backend.gemini_service import GeminiService
@@ -593,32 +593,83 @@ def set_default_account(account_id: int):
 
 @app.get("/api/avatar/{email:path}")
 def get_avatar_for_email(email: str):
-    """Devuelve o redirige al avatar oficial en caché para la cuenta o remitente."""
+    """Devuelve o descarga y almacena en caché en disco el avatar oficial para la cuenta o contacto."""
     clean_email = email.lower().strip()
-    # Si viene con nombre tipo "Google <families-noreply@google.com>", extraer el email
     if "<" in clean_email and ">" in clean_email:
         clean_email = clean_email.split("<")[1].split(">")[0].strip()
 
-    conn = get_db()
-    row = conn.execute("SELECT avatar_url FROM accounts WHERE LOWER(email) = ?", (clean_email,)).fetchone()
-    conn.close()
+    import hashlib
+    email_hash = hashlib.sha256(clean_email.encode("utf-8")).hexdigest()
+    cache_path = AVATARS_DIR / f"{email_hash}.png"
 
-    if row and row["avatar_url"]:
-        return RedirectResponse(
-            url=row["avatar_url"],
-            status_code=307,
-            headers={"Cache-Control": "public, max-age=604800, immutable"}
+    # 1. Comprobar si ya existe en la caché local en disco y no está vacío
+    if cache_path.exists() and cache_path.stat().st_size > 0:
+        return FileResponse(
+            cache_path,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=2592000, immutable"}
         )
 
-    # Extraer dominio para remitentes generales
-    domain = clean_email.split("@")[-1] if "@" in clean_email else clean_email
-    domain = domain.strip("<>[](), ")
-    if domain and "." in domain:
-        favicon_url = f"https://www.google.com/s2/favicons?domain={domain}&sz=128"
+    # 2. Buscar si coincide con alguna cuenta registrada con avatar_url
+    target_url = None
+    conn = get_db()
+    row = conn.execute("SELECT avatar_url FROM accounts WHERE LOWER(email) = ?", (clean_email,)).fetchone()
+    if row and row["avatar_url"]:
+        target_url = row["avatar_url"]
+    else:
+        # 3. Buscar si en la libreta de contactos tiene avatar_url explícito (no autorreferente)
+        crow = conn.execute("""
+            SELECT avatar_url FROM contacts 
+            WHERE LOWER(email) = ? AND avatar_url IS NOT NULL 
+              AND avatar_url != '' AND avatar_url NOT LIKE '/api/avatar%'
+        """, (clean_email,)).fetchone()
+        if crow and crow["avatar_url"]:
+            target_url = crow["avatar_url"]
+    conn.close()
+
+    # 4. Si no hay URL directa, usar favicon en alta resolución del dominio del remitente
+    if not target_url:
+        domain = clean_email.split("@")[-1] if "@" in clean_email else clean_email
+        domain = domain.strip("<>[](), ")
+        if domain and "." in domain:
+            target_url = f"https://www.google.com/s2/favicons?domain={domain}&sz=128"
+
+    if not target_url:
+        raise HTTPException(status_code=404, detail="Avatar no disponible")
+
+    # 5. Descargar imagen y persistirla en caché local en disco
+    try:
+        import urllib.request
+        import urllib.error
+        req = urllib.request.Request(
+            target_url,
+            headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) MerkeMail/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            content_type = response.headers.get("content-type", "image/png")
+            data = response.read()
+            if data and len(data) > 0:
+                with open(cache_path, "wb") as f:
+                    f.write(data)
+                return FileResponse(
+                    cache_path,
+                    media_type=content_type,
+                    headers={"Cache-Control": "public, max-age=2592000, immutable"}
+                )
+    except urllib.error.HTTPError as he:
+        if he.code == 404:
+            raise HTTPException(status_code=404, detail="Avatar no disponible")
         return RedirectResponse(
-            url=favicon_url,
+            url=target_url,
             status_code=307,
-            headers={"Cache-Control": "public, max-age=604800, immutable"}
+            headers={"Cache-Control": "public, max-age=86400"}
+        )
+    except Exception:
+        # Fallback de redirección si no hay conexión o falla la descarga temporalmente
+        return RedirectResponse(
+            url=target_url,
+            status_code=307,
+            headers={"Cache-Control": "public, max-age=86400"}
         )
 
     raise HTTPException(status_code=404, detail="Avatar no disponible")
@@ -1119,7 +1170,8 @@ def get_emails(
         SELECT emails.id, emails.account_id, emails.uid, emails.folder, emails.sender,
                emails.sender_name, emails.recipient, emails.subject, emails.snippet,
                emails.date, emails.is_read, emails.is_starred, emails.has_attachments,
-               emails.ai_urgency, accounts.name as account_name, accounts.color as account_color
+               emails.ai_urgency, accounts.name as account_name, accounts.color as account_color,
+               accounts.email as account_email, accounts.avatar_url as account_avatar_url
         FROM emails
         LEFT JOIN accounts ON emails.account_id = accounts.id
         WHERE 1=1
@@ -2055,6 +2107,14 @@ def get_agent_summary():
         "SELECT COUNT(*) as c FROM emails WHERE is_read = 0 AND UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'DRAFT', 'DRAFTS', 'BORRADORES', 'SPAM', 'JUNK')"
     ).fetchone()["c"]
 
+    # Total de correos en bandeja de entrada
+    inbox_total = conn.execute(
+        "SELECT COUNT(*) as c FROM emails WHERE UPPER(COALESCE(folder, '')) IN ('INBOX', 'RECIBIDOS', '')"
+    ).fetchone()["c"]
+
+    acc_row = conn.execute("SELECT name, email, color FROM accounts LIMIT 1").fetchone()
+    account_info = dict(acc_row) if acc_row else None
+
     # Correos que requieren atención prioritaria (pagos, facturas, alertas de cuenta o seguridad)
     priority_rows = conn.execute("""
         SELECT id, sender, subject, date, snippet
@@ -2111,6 +2171,8 @@ def get_agent_summary():
     return {
         "success": True,
         "unread_count": unread_count,
+        "inbox_total": inbox_total,
+        "account": account_info,
         "priority_emails": [dict(r) for r in priority_rows],
         "recent_unreads": [dict(r) for r in unread_rows],
         "upcoming_event": upcoming_event,
@@ -2137,9 +2199,29 @@ class ContactUpdateRequest(BaseModel):
     address: Optional[str] = None
     notes: Optional[str] = None
 
+class ContactBatchActionRequest(BaseModel):
+    ids: List[int]
+
 @app.get("/api/contacts")
-def list_contacts(q: str = "", limit: int = 300):
-    return ContactsService.get_contacts(q=q, limit=limit)
+def list_contacts(q: str = "", limit: int = 300, include_pending: bool = False):
+    return ContactsService.get_contacts(q=q, limit=limit, include_pending=include_pending)
+
+@app.get("/api/contacts/pending")
+def list_pending_contacts():
+    return ContactsService.get_pending_contacts()
+
+@app.post("/api/contacts/confirm")
+def confirm_contacts(req: ContactBatchActionRequest):
+    return ContactsService.confirm_contacts(req.ids)
+
+@app.post("/api/contacts/reject")
+def reject_contacts(req: ContactBatchActionRequest):
+    return ContactsService.reject_contacts(req.ids)
+
+@app.post("/api/contacts/delete-batch")
+def delete_contacts_batch(req: ContactBatchActionRequest):
+    count = ContactsService.delete_contacts_batch(req.ids)
+    return {"success": True, "deleted_count": count}
 
 @app.get("/api/contacts/{contact_id}")
 def get_contact_detail(contact_id: int):
@@ -2346,28 +2428,47 @@ def sync_calendars():
         
         google_results = []
         any_api_disabled = False
+        any_reauth_needed = False
+        reauth_accounts = []
         enable_url = None
 
         for g_acc in google_accounts:
+            acc_id = g_acc["id"]
             try:
-                res_cal = GoogleOAuthService.sync_google_calendar(g_acc["id"])
-                res_tasks = GoogleOAuthService.sync_google_tasks(g_acc["id"])
-                google_results.append({"account_id": g_acc["id"], "calendar": res_cal, "tasks": res_tasks})
-                if isinstance(res_cal, dict) and res_cal.get("api_disabled"):
-                    any_api_disabled = True
-                    enable_url = res_cal.get("enable_url")
+                res_cal = GoogleOAuthService.sync_google_calendar(acc_id)
+                res_tasks = GoogleOAuthService.sync_google_tasks(acc_id)
+                google_results.append({"account_id": acc_id, "calendar": res_cal, "tasks": res_tasks})
+                if isinstance(res_cal, dict):
+                    if res_cal.get("api_disabled"):
+                        any_api_disabled = True
+                        enable_url = res_cal.get("enable_url")
+                    if res_cal.get("needs_reauth") or "invalid_grant" in str(res_cal.get("error", "")):
+                        any_reauth_needed = True
+                        if acc_id not in reauth_accounts:
+                            reauth_accounts.append(acc_id)
+                if isinstance(res_tasks, dict):
+                    if res_tasks.get("needs_reauth") or "invalid_grant" in str(res_tasks.get("error", "")):
+                        any_reauth_needed = True
+                        if acc_id not in reauth_accounts:
+                            reauth_accounts.append(acc_id)
             except Exception as ge:
-                print(f"[Calendar Sync] Aviso en cuenta Google {g_acc['id']}: {ge}")
+                print(f"[Calendar Sync] Aviso en cuenta Google {acc_id}: {ge}")
 
         if any_api_disabled:
             return {
                 "success": False,
                 "api_disabled": True,
+                "needs_reauth": any_reauth_needed,
+                "reauth_accounts": reauth_accounts,
                 "enable_url": enable_url or GoogleOAuthService.build_api_enable_url("calendar-json.googleapis.com"),
                 "message": "La API de Google Calendar está deshabilitada en la consola de Google Cloud para este proyecto."
             }
 
-        return {"success": True, "message": "Calendarios sincronizados", "details": google_results}
+        return {
+            "success": True,
+            "message": "Calendarios sincronizados",
+            "details": google_results
+        }
     except Exception as e:
         print(f"[Calendar Sync] Error general: {e}")
         return {"success": False, "error": str(e)}
@@ -2758,3 +2859,131 @@ def remove_label_from_email(email_id: int, label_id: int):
         ).start()
 
     return {"success": True, "message": "Etiqueta removida del correo"}
+
+# --- ENDPOINTS DE PIZARRA DE NOTAS ADHESIVAS (ORGANIZER) ---
+class NoteCreateRequest(BaseModel):
+    content: Optional[str] = ""
+    color: Optional[str] = "yellow"
+    x: Optional[int] = 20
+    y: Optional[int] = 20
+    width: Optional[int] = 220
+    height: Optional[int] = 170
+    z_index: Optional[int] = 1
+
+class NoteUpdateRequest(BaseModel):
+    content: Optional[str] = None
+    color: Optional[str] = None
+    x: Optional[int] = None
+    y: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    z_index: Optional[int] = None
+
+class NotePosBatchItem(BaseModel):
+    id: int
+    x: int
+    y: int
+
+class NoteBatchPositionsRequest(BaseModel):
+    positions: List[NotePosBatchItem]
+
+@app.get("/api/notes")
+def get_all_notes():
+    """Retorna todas las notas ordenadas por apilamiento z_index ascendente."""
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM notes ORDER BY z_index ASC, id ASC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@app.post("/api/notes")
+def create_note(req: NoteCreateRequest):
+    """Crea una nueva nota adhesiva en la pizarra."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO notes (content, color, x, y, width, height, z_index)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        req.content or "",
+        req.color or "yellow",
+        req.x if req.x is not None else 20,
+        req.y if req.y is not None else 20,
+        max(220, req.width or 220),
+        max(170, req.height or 170),
+        req.z_index if req.z_index is not None else 1
+    ))
+    new_id = cursor.lastrowid
+    conn.commit()
+    row = conn.execute("SELECT * FROM notes WHERE id = ?", (new_id,)).fetchone()
+    conn.close()
+    return dict(row)
+
+@app.put("/api/notes/{note_id}")
+def update_note(note_id: int, req: NoteUpdateRequest):
+    """Actualiza parcialmente una nota adhesiva."""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Nota no encontrada")
+
+    updates = []
+    params = []
+
+    if req.content is not None:
+        updates.append("content = ?")
+        params.append(req.content)
+    if req.color is not None:
+        updates.append("color = ?")
+        params.append(req.color)
+    if req.x is not None:
+        updates.append("x = ?")
+        params.append(req.x)
+    if req.y is not None:
+        updates.append("y = ?")
+        params.append(req.y)
+    if req.width is not None:
+        updates.append("width = ?")
+        params.append(max(220, req.width))
+    if req.height is not None:
+        updates.append("height = ?")
+        params.append(max(170, req.height))
+    if req.z_index is not None:
+        updates.append("z_index = ?")
+        params.append(req.z_index)
+
+    if updates:
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        query = f"UPDATE notes SET {', '.join(updates)} WHERE id = ?"
+        params.append(note_id)
+        conn.execute(query, params)
+        conn.commit()
+
+    updated_row = conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+    conn.close()
+    return dict(updated_row)
+
+@app.delete("/api/notes/{note_id}")
+def delete_note(note_id: int):
+    """Elimina una nota adhesiva de la pizarra."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Nota no encontrada")
+    return {"success": True, "message": "Nota eliminada exitosamente"}
+
+@app.post("/api/notes/batch-position")
+def batch_update_note_positions(req: NoteBatchPositionsRequest):
+    """Actualiza en lote las posiciones (x, y) de las notas al auto-organizar."""
+    conn = get_db()
+    cursor = conn.cursor()
+    for item in req.positions:
+        cursor.execute("UPDATE notes SET x = ?, y = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (item.x, item.y, item.id))
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": f"{len(req.positions)} notas actualizadas"}
+

@@ -521,8 +521,88 @@ const AntigravityCopilot = {
     onOpenDrawer() {
         this.initResizer();
         this.updateConnectedServices();
-        if (!this.isCleanSession) {
-            this.loadWelcomeBrief();
+        this.loadWelcomeBrief();
+    },
+
+    async showExecutiveSummaryPrompt() {
+        this.appendMessage('user', '📊 Muéstrame el resumen ejecutivo de mi bandeja y agenda');
+        const container = document.getElementById('antigravity-messages-container');
+        const typingId = 'typing-' + Date.now();
+        const typingEl = document.createElement('div');
+        typingEl.id = typingId;
+        typingEl.className = 'flex items-start gap-2.5';
+        typingEl.innerHTML = `
+            <img src="/img/bot.png" alt="Elio" class="w-7 h-7 rounded-full object-cover shrink-0 shadow-xs ring-1 ring-indigo-400/40">
+            <div class="p-3 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-2xl rounded-tl-xs text-xs animate-pulse">
+                Elio está recopilando el resumen ejecutivo...
+            </div>
+        `;
+        if (container) {
+            container.appendChild(typingEl);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        try {
+            const res = await fetch('/api/agent/summary');
+            const data = await res.json();
+            const el = document.getElementById(typingId);
+            if (el) el.remove();
+
+            let summaryHtml = `
+                <div class="p-3 my-1 rounded-2xl bg-white/90 dark:bg-slate-750/90 border border-slate-200/80 dark:border-slate-700/60 shadow-2xs space-y-2.5 not-prose w-full max-w-full min-w-0 overflow-hidden break-words">
+                    <div class="flex items-center justify-between pb-1.5 border-b border-slate-100 dark:border-slate-700/50 min-w-0 gap-2">
+                        <span class="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5 text-xs truncate">
+                            <svg class="w-3.5 h-3.5 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                            <span>Resumen de Bandeja</span>
+                        </span>
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${data.unread_count > 0 ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'}">${data.unread_count} sin leer (${data.inbox_total || 0} en total)</span>
+                    </div>
+            `;
+
+            if (data.priority_emails && data.priority_emails.length > 0) {
+                summaryHtml += `<div class="space-y-1.5 min-w-0 w-full overflow-hidden">`;
+                summaryHtml += `<p class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1"><span>⚠️</span> <span>Requiere atención prioritaria:</span></p>`;
+                for (const em of data.priority_emails) {
+                    summaryHtml += `
+                        <div class="flex items-center gap-1.5 min-w-0 w-full overflow-hidden">
+                            <button type="button" onclick="AntigravityCopilot.openEmailFromChat(${em.id})" class="text-left w-full min-w-0 flex items-center gap-1.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer group" title="Abrir correo #${em.id}">
+                                <span class="shrink-0 text-slate-500 dark:text-slate-400 font-mono">#${em.id}:</span>
+                                <span class="truncate flex-1 min-w-0 text-slate-800 dark:text-slate-200 group-hover:text-indigo-600">${EmailManager.escapeHtml(em.subject || '(Sin Asunto)')}</span>
+                            </button>
+                        </div>
+                    `;
+                }
+                summaryHtml += `</div>`;
+            }
+
+            if (data.upcoming_event) {
+                const ev = data.upcoming_event;
+                const dateStr = ev.start_time ? new Date(ev.start_time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+                summaryHtml += `
+                    <div class="pt-2 border-t border-slate-100 dark:border-slate-700/50 min-w-0 w-full overflow-hidden">
+                        <p class="text-[10px] font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400 flex items-center gap-1"><span>📅</span> <span>Próxima cita en agenda:</span></p>
+                        <button type="button" onclick="AntigravityCopilot.openEventFromChat(${ev.id})" class="text-left w-full min-w-0 flex items-center gap-1.5 mt-0.5 text-[11px] font-semibold text-purple-600 dark:text-purple-400 hover:underline cursor-pointer group" title="Ver cita en el calendario">
+                            <span class="truncate flex-1 min-w-0 text-slate-800 dark:text-slate-200 group-hover:text-purple-600">${EmailManager.escapeHtml(ev.title)}</span>
+                            <span class="text-slate-400 dark:text-slate-500 font-normal text-[10px] shrink-0">(${dateStr})</span>
+                        </button>
+                    </div>
+                `;
+            }
+
+            if (data.recommendation) {
+                summaryHtml += `
+                    <div class="pt-2 border-t border-slate-100 dark:border-slate-700/50 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed min-w-0 w-full break-words whitespace-normal overflow-hidden">
+                        <strong class="text-indigo-600 dark:text-indigo-400 font-bold block sm:inline">💡 Recomendación:</strong> ${EmailManager.escapeHtml(data.recommendation)}
+                    </div>
+                `;
+            }
+
+            summaryHtml += `</div>`;
+            this.appendMessage('assistant', `Aquí tienes tu resumen ejecutivo actualizado:<br>${summaryHtml}`);
+        } catch (err) {
+            const el = document.getElementById(typingId);
+            if (el) el.remove();
+            this.appendMessage('assistant', 'No se pudo obtener el resumen en este momento. Por favor verifica tu conexión.');
         }
     },
 

@@ -432,6 +432,37 @@ input[type="checkbox"]:indeterminate {
     padding-left: 1.25rem !important;
 }
 
+/* Avatar del Remitente / Cuenta en la Lista de Correos */
+.email-sender-avatar,
+.email-account-avatar {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    transition: transform 0.15s ease;
+}
+.email-list-item:hover .email-sender-avatar,
+.email-list-item:hover .email-account-avatar {
+    transform: scale(1.08);
+}
+#email-list-container.ultra-compact-mode .email-sender-avatar,
+#email-list-container.ultra-compact-mode .email-account-avatar {
+    width: 18px;
+    height: 18px;
+}
+
+/* ================= RESPUESTA INSTANTÁNEA EN REDIMENSIONAMIENTO (60-120fps) ================= */
+body.window-resizing *,
+body.window-resizing #sidebar-container,
+body.window-resizing #email-list-container,
+body.window-resizing #email-detail-container {
+    transition: none !important;
+    animation: none !important;
+}
+
 /* ================= BARRA DE ACCIONES MASIVAS RESPONSIVA ================= */
 /* 1. Cuando hay suficiente espacio (ancho normal): todos los iconos están en la barra, y el selector (3) se oculta */
 #batch-more-wrapper {
@@ -529,7 +560,8 @@ input[type="checkbox"]:indeterminate {
 /* ================= DISEÑO RESPONSIVO PRÁCTICO (MOBILE & TABLET) ================= */
 @media (max-width: 767px) {
     /* Barra lateral modo Drawer deslizante */
-    #sidebar-container {
+    #sidebar-container,
+    #sidebar-container.collapsed {
         position: fixed !important;
         top: 0 !important;
         bottom: 0 !important;
@@ -543,8 +575,76 @@ input[type="checkbox"]:indeterminate {
         box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
     }
 
-    #sidebar-container.mobile-open {
+    #sidebar-container.mobile-open,
+    #sidebar-container.collapsed.mobile-open {
         transform: translateX(0) !important;
+    }
+
+    /* En móvil NUNCA ocultar textos ni colapsar elementos en iconos ambiguos */
+    #sidebar-container .sidebar-text,
+    #sidebar-container.collapsed .sidebar-text,
+    #sidebar-container .sidebar-badge,
+    #sidebar-container.collapsed .sidebar-badge,
+    #sidebar-container .sidebar-section-header,
+    #sidebar-container.collapsed .sidebar-section-header,
+    #sidebar-container #btn-toggle-more-folders,
+    #sidebar-container.collapsed #btn-toggle-more-folders,
+    #sidebar-container #sidebar-accounts-mini-list p,
+    #sidebar-container.collapsed #sidebar-accounts-mini-list p,
+    #sidebar-container .label-nav-btn button,
+    #sidebar-container.collapsed .label-nav-btn button,
+    #sidebar-container #sidebar-account-dropdown-wrapper,
+    #sidebar-container.collapsed #sidebar-account-dropdown-wrapper {
+        display: block !important;
+    }
+
+    #sidebar-container .folder-nav-btn,
+    #sidebar-container.collapsed .folder-nav-btn,
+    #sidebar-container .label-nav-btn,
+    #sidebar-container.collapsed .label-nav-btn {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        padding-left: 1rem !important;
+        padding-right: 0.75rem !important;
+        width: 100% !important;
+        height: auto !important;
+        min-height: 2.25rem !important;
+        margin: 2px 0 !important;
+        border-radius: 0 9999px 9999px 0 !important;
+    }
+
+    #sidebar-container .folder-nav-btn span.flex,
+    #sidebar-container.collapsed .folder-nav-btn span.flex {
+        display: flex !important;
+        justify-content: flex-start !important;
+        align-items: center !important;
+        width: auto !important;
+        height: auto !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        gap: 0.75rem !important;
+    }
+
+    #sidebar-container.collapsed .label-nav-btn .label-left-content {
+        display: flex !important;
+        justify-content: flex-start !important;
+        align-items: center !important;
+        width: auto !important;
+        gap: 0.75rem !important;
+    }
+
+    #sidebar-container.collapsed .label-nav-btn .label-dot {
+        margin: 0 !important;
+    }
+
+    /* Ocultar botón de colapso desktop en móvil y mostrar botón cerrar móvil */
+    #sidebar-container #btn-sidebar-collapse {
+        display: none !important;
+    }
+
+    #sidebar-container #btn-mobile-sidebar-close {
+        display: flex !important;
     }
 
     /* Ocultar divisores de arrastre de escritorio en móvil */
@@ -611,6 +711,11 @@ input[type="checkbox"]:indeterminate {
         padding-bottom: 2px !important;
     }
 
+    /* Botón Volver a la lista de correos: visible en móvil */
+    #btn-detail-back-mobile {
+        display: inline-flex !important;
+    }
+
     /* Cabecera del calendario adaptable en pantallas móviles */
     #main-calendar-section > header {
         padding: 0.625rem 0.75rem !important;
@@ -622,6 +727,10 @@ input[type="checkbox"]:indeterminate {
 
 /* Protección del panel de lectura en todas las resoluciones a partir de tablet */
 @media (min-width: 768px) {
+    #btn-detail-back-mobile {
+        display: none !important;
+    }
+
     #email-detail-container {
         flex: 1 1 0% !important;
         min-width: 380px !important;
@@ -629,22 +738,22 @@ input[type="checkbox"]:indeterminate {
 }
 
 /* 1. Tablets horizontales y pantallas intermedias (768px a 1199px):
-   PASO 1: Colapsar primero la barra lateral para priorizar el espacio del correo */
+   PASO 1: Colapsar la barra lateral cuando tiene la clase .collapsed para priorizar el espacio del correo */
 @media (min-width: 768px) and (max-width: 1199px) {
-    #sidebar-container {
+    #sidebar-container.collapsed {
         width: 64px !important;
     }
-    #sidebar-container .sidebar-text,
-    #sidebar-container .sidebar-badge,
-    #sidebar-container .sidebar-section-header,
-    #sidebar-container #more-folders-container,
-    #sidebar-container #btn-toggle-more-folders,
-    #sidebar-container #sidebar-accounts-mini-list p,
-    #sidebar-container .label-nav-btn button,
-    #sidebar-container #sidebar-account-dropdown-wrapper {
+    #sidebar-container.collapsed .sidebar-text,
+    #sidebar-container.collapsed .sidebar-badge,
+    #sidebar-container.collapsed .sidebar-section-header,
+    #sidebar-container.collapsed #more-folders-container,
+    #sidebar-container.collapsed #btn-toggle-more-folders,
+    #sidebar-container.collapsed #sidebar-accounts-mini-list p,
+    #sidebar-container.collapsed .label-nav-btn button,
+    #sidebar-container.collapsed #sidebar-account-dropdown-wrapper {
         display: none !important;
     }
-    #sidebar-container #btn-sidebar-collapse {
+    #sidebar-container.collapsed #btn-sidebar-collapse {
         display: flex !important;
         margin: 0 auto !important;
         width: 38px !important;
@@ -653,13 +762,13 @@ input[type="checkbox"]:indeterminate {
         justify-content: center !important;
         border-radius: 0.75rem !important;
     }
-    #sidebar-container #sidebar-labels-list {
+    #sidebar-container.collapsed #sidebar-labels-list {
         padding-right: 0 !important;
         padding-left: 0 !important;
         overflow-x: hidden !important;
     }
-    #sidebar-container .folder-nav-btn,
-    #sidebar-container .label-nav-btn {
+    #sidebar-container.collapsed .folder-nav-btn,
+    #sidebar-container.collapsed .label-nav-btn {
         justify-content: center !important;
         align-items: center !important;
         padding-left: 0 !important;
@@ -669,8 +778,8 @@ input[type="checkbox"]:indeterminate {
         margin: 2px auto !important;
         border-radius: 0.75rem !important;
     }
-    #sidebar-container .folder-nav-btn span.flex,
-    #sidebar-container .label-nav-btn .label-left-content {
+    #sidebar-container.collapsed .folder-nav-btn span.flex,
+    #sidebar-container.collapsed .label-nav-btn .label-left-content {
         display: flex !important;
         justify-content: center !important;
         align-items: center !important;
@@ -680,7 +789,7 @@ input[type="checkbox"]:indeterminate {
         margin: 0 !important;
         gap: 0 !important;
     }
-    #sidebar-container .label-nav-btn .label-dot {
+    #sidebar-container.collapsed .label-nav-btn .label-dot {
         margin: 0 auto !important;
         width: 10px !important;
         height: 10px !important;
@@ -689,7 +798,7 @@ input[type="checkbox"]:indeterminate {
         display: inline-block !important;
         flex-shrink: 0 !important;
     }
-    #sidebar-container #sidebar-collapse-chevron {
+    #sidebar-container.collapsed #sidebar-collapse-chevron {
         transform: rotate(180deg);
     }
 
@@ -1531,6 +1640,215 @@ html.dark .dark\:hover\:bg-slate-650:hover {
 html.dark .dark\:border-slate-750 {
     border-color: #293548 !important;
 }
+
+/* ==========================================================================
+   PIZARRA DE NOTAS ADHESIVAS FLOTANTES (ORGANIZER EXTENSION EN MERKEMAIL)
+   ========================================================================== */
+.notes-board {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    position: relative;
+    cursor: crosshair;
+    background-size: 28px 28px;
+    background-color: #f8fafc;
+    background-image: radial-gradient(circle, rgba(15, 23, 42, 0.08) 1.2px, transparent 1.2px);
+    transition: background-color 0.2s;
+}
+
+html.dark .notes-board {
+    background-color: #0b0f19;
+    background-image: radial-gradient(circle, rgba(255, 255, 255, 0.08) 1.2px, transparent 1.2px);
+}
+
+.notes-board::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+.notes-board::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.25);
+    border-radius: 4px;
+}
+html.dark .notes-board::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.4);
+}
+
+.notes-canvas {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-width: 100%;
+    min-height: 100%;
+}
+
+/* Nota adhesiva / Post-it */
+.sticky-note {
+    position: absolute;
+    width: 220px;
+    min-width: 220px;
+    min-height: 170px;
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+    overflow: hidden;
+    resize: both;
+    transition: box-shadow 0.15s;
+}
+
+.sticky-note:hover {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22), 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.sticky-note.dragging {
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
+    opacity: 0.94;
+    cursor: grabbing !important;
+}
+
+/* Doblez esquina inferior derecha (efecto post-it) */
+.sticky-note::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0 0 18px 18px;
+    border-color: transparent transparent rgba(0, 0, 0, 0.18) transparent;
+    border-radius: 0 0 4px 0;
+    pointer-events: none;
+}
+
+.note-header {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 8px;
+    border-radius: 6px 6px 0 0;
+    cursor: grab;
+    flex-shrink: 0;
+}
+.note-header:active {
+    cursor: grabbing;
+}
+
+.note-colors {
+    display: flex;
+    gap: 5px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+.sticky-note:hover .note-colors {
+    opacity: 1;
+}
+
+.note-color-dot {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    transition: transform 0.1s, border-color 0.1s;
+    flex-shrink: 0;
+}
+.note-color-dot:hover {
+    transform: scale(1.25);
+    border-color: rgba(255, 255, 255, 0.7);
+}
+.note-color-dot.active {
+    border-color: rgba(0, 0, 0, 0.45);
+    transform: scale(1.15);
+}
+
+.note-delete {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    color: rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    transition: opacity 0.2s, color 0.15s;
+    padding: 0;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.sticky-note:hover .note-delete {
+    opacity: 1;
+}
+.note-delete:hover {
+    color: rgba(220, 38, 38, 0.85);
+}
+
+.note-body {
+    flex: 1;
+    padding: 10px 12px 18px;
+    display: flex;
+}
+.note-body textarea {
+    width: 100%;
+    min-height: 0;
+    height: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    resize: none;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.55;
+    color: #1e1e2e;
+    cursor: text;
+    padding: 0;
+    user-select: text;
+}
+.note-body textarea::placeholder {
+    color: rgba(30, 30, 46, 0.45);
+}
+
+/* Colores de fondo por tipo exacto de Organizer */
+.sticky-note[data-color="yellow"] { background: #ffeaa7; }
+.sticky-note[data-color="yellow"] .note-header { background: #fdcb6e; }
+.sticky-note[data-color="green"]  { background: #c3f4e4; }
+.sticky-note[data-color="green"]  .note-header { background: #81ecec; }
+.sticky-note[data-color="blue"]   { background: #c4dfff; }
+.sticky-note[data-color="blue"]   .note-header { background: #74b9ff; }
+.sticky-note[data-color="pink"]   { background: #ffcee8; }
+.sticky-note[data-color="pink"]   .note-header { background: #fd79a8; }
+.sticky-note[data-color="purple"] { background: #ddd4fe; }
+.sticky-note[data-color="purple"] .note-header { background: #a29bfe; }
+.sticky-note[data-color="orange"] { background: #ffe4c0; }
+.sticky-note[data-color="orange"] .note-header { background: #fab1a0; }
+.sticky-note[data-color="white"]  { background: #f0f0f5; }
+.sticky-note[data-color="white"]  .note-header { background: #dde0e8; }
+
+.notes-hint {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    color: rgba(148, 163, 184, 0.45);
+    pointer-events: none;
+    user-select: none;
+}
+html.dark .notes-hint {
+    color: rgba(255, 255, 255, 0.16);
+}
+.notes-hint .hint-icon {
+    font-size: 3rem;
+    margin-bottom: 12px;
+}
+.notes-hint p {
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
 
 
 

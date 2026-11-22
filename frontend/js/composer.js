@@ -1209,6 +1209,10 @@ const InlineReply = {
                 if (EmailManager.currentFolder === 'SENT') {
                     EmailManager.loadEmails();
                 }
+
+                if (window.ContactsManager && typeof ContactsManager.loadContacts === 'function') {
+                    ContactsManager.loadContacts();
+                }
             } else {
                 if (window.UI) {
                     UI.showStickyToast('Error al enviar', data.detail || 'Verifica credenciales SMTP o cuotas de envío', 'error');

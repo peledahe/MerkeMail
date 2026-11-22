@@ -287,6 +287,11 @@ def run_pyqt_window():
                 if hasattr(page, "save_pdf_dialog"):
                     page.save_pdf_dialog(title)
 
+        @pyqtSlot(str, str)
+        def show_notification(self, title: str, message: str):
+            if hasattr(self.win, "show_notification"):
+                self.win.show_notification(title, message)
+
     class CustomWebEnginePage(QWebEnginePage):
         def __init__(self, window, parent=None):
             super().__init__(parent)
@@ -617,12 +622,19 @@ def run_pyqt_window():
             if wh:
                 wh.startSystemMove()
 
+        def resizeEvent(self, event):
+            super().resizeEvent(event)
+            try:
+                self.view.page().runJavaScript("if (window.UI && typeof UI.onWindowResizeFast === 'function') { UI.onWindowResizeFast(); }")
+            except Exception:
+                pass
+
         def maximize_window(self):
             if not self.isMaximized():
                 self._normal_geom = self.geometry()
                 self.showMaximized()
                 try:
-                    self.view.page().runJavaScript("if (window.DesktopBridge) window.DesktopBridge.onNativeWindowStateChanged(true);")
+                    self.view.page().runJavaScript("if (window.UI && typeof UI.onWindowResizeFast === 'function') { UI.onWindowResizeFast(); } if (window.DesktopBridge) window.DesktopBridge.onNativeWindowStateChanged(true);")
                 except Exception:
                     pass
 
@@ -643,7 +655,7 @@ def run_pyqt_window():
                 except Exception:
                     pass
                 try:
-                    self.view.page().runJavaScript("if (window.DesktopBridge) window.DesktopBridge.onNativeWindowStateChanged(false);")
+                    self.view.page().runJavaScript("if (window.UI && typeof UI.onWindowResizeFast === 'function') { UI.onWindowResizeFast(); } if (window.DesktopBridge) window.DesktopBridge.onNativeWindowStateChanged(false);")
                 except Exception:
                     pass
 
@@ -714,6 +726,20 @@ def run_pyqt_window():
                 self.hide()
             else:
                 self.bring_to_foreground()
+
+        def show_notification(self, title: str, message: str):
+            try:
+                tray = getattr(self, "tray_icon", None)
+                if tray and QSystemTrayIcon.isSystemTrayAvailable():
+                    tray.showMessage(title or "MerkeMail", message or "", QSystemTrayIcon.MessageIcon.Information, 5000)
+                    return
+            except Exception as e:
+                print(f"Aviso en showMessage de bandeja: {e}")
+            try:
+                import subprocess
+                subprocess.run(["notify-send", "-a", "MerkeMail", title or "MerkeMail", message or ""], check=False)
+            except Exception:
+                pass
 
         def showEvent(self, event):
             super().showEvent(event)
@@ -848,6 +874,7 @@ def run_pyqt_window():
         initial_unread = get_unread_count()
         last_notified_unread = initial_unread
         tray_icon = QSystemTrayIcon(QIcon(create_tray_pixmap(initial_unread)), app)
+        window.tray_icon = tray_icon
         if initial_unread > 0:
             tray_icon.setToolTip(f"MerkeMail - {initial_unread} correo{'s' if initial_unread != 1 else ''} sin leer")
         else:

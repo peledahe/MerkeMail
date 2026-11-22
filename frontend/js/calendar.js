@@ -94,9 +94,9 @@ const CalendarManager = {
         if (this.isSyncing) return;
         this.isSyncing = true;
 
-        const icon = btnEl ? btnEl.querySelector('svg') : document.querySelector('#btn-sync-calendars svg');
+        const syncIcons = document.querySelectorAll('#btn-sync-calendars svg, #btn-sync-calendars-drawer svg, #btn-global-sync svg, #btn-sync-other-apps svg');
+        syncIcons.forEach(ic => ic.classList.add('animate-spin'));
         if (btnEl) btnEl.disabled = true;
-        if (icon) icon.classList.add('animate-spin');
 
         try {
             const controller = new AbortController();
@@ -109,34 +109,43 @@ const CalendarManager = {
 
             clearTimeout(timeoutId);
 
+            // Siempre recargar estado local de calendarios y tareas
+            await this.loadCalendars();
+            await this.loadEvents();
+            await this.loadTasks();
+            this.updateActiveCountBadge();
+            this.renderCalendar();
+            this.renderCurrentView();
+            this.renderUpcomingList();
+            this.renderTasks();
+
+            const drawerCal = document.getElementById('drawer-calendars');
+            if (drawerCal && !drawerCal.classList.contains('hidden')) {
+                this.renderCalendarsDrawer();
+            }
+
             if (res.api_disabled) {
                 this.showApiDisabledWarning(res.enable_url);
                 if (window.UI && typeof UI.showStickyToast === 'function') {
                     UI.showStickyToast(
                         'Google Calendar API Deshabilitada',
                         'Debes habilitar la Google Calendar API en Google Cloud Console para sincronizar tus actividades.',
-                        'warning'
+                        'warning',
+                        5000
                     );
                 }
             } else if (res.success) {
                 this.hideApiDisabledWarning();
-                await this.loadCalendars();
-                await this.loadEvents();
-                await this.loadTasks();
-                this.renderCurrentView();
-                this.renderUpcomingList();
-                this.renderTasks();
                 if (window.UI && typeof UI.showStickyToast === 'function') {
                     UI.showStickyToast('Calendario Sincronizado', 'Todos tus calendarios y eventos han sido actualizados.', 'success', 3000);
                 }
             } else {
                 if (window.UI && typeof UI.showStickyToast === 'function') {
-                    UI.showStickyToast('Aviso de Sincronización', res.error || 'No se pudieron sincronizar los calendarios.', 'warning', 3000);
+                    UI.showStickyToast('Aviso de Sincronización', res.error || res.message || 'No se pudieron sincronizar los calendarios.', 'warning', 3000);
                 }
             }
         } catch (e) {
             console.warn('Aviso durante sincronización de calendario:', e);
-            // Si la llamada fue cancelada por timeout o se ejecuta en segundo plano, refrescar datos locales sin alarmar
             if (window.UI && typeof UI.showStickyToast === 'function') {
                 UI.showStickyToast('Sincronización en Proceso', 'La sincronización continúa ejecutándose en segundo plano.', 'info', 3000);
             }
@@ -144,6 +153,8 @@ const CalendarManager = {
                 await this.loadCalendars();
                 await this.loadEvents();
                 await this.loadTasks();
+                this.updateActiveCountBadge();
+                this.renderCalendar();
                 this.renderCurrentView();
                 this.renderUpcomingList();
                 this.renderTasks();
@@ -151,9 +162,9 @@ const CalendarManager = {
         } finally {
             this.isSyncing = false;
             if (btnEl) btnEl.disabled = false;
-            if (icon) {
-                setTimeout(() => icon.classList.remove('animate-spin'), 600);
-            }
+            setTimeout(() => {
+                syncIcons.forEach(ic => ic.classList.remove('animate-spin'));
+            }, 600);
         }
     },
 
@@ -436,6 +447,9 @@ const CalendarManager = {
             this.events = await res.json();
             this.renderCalendar();
             this.renderUpcomingList();
+            if (window.NotificationManager && typeof NotificationManager.checkUpcomingEvents === 'function') {
+                NotificationManager.checkUpcomingEvents();
+            }
         } catch (e) {
             console.error("Error cargando eventos:", e);
         }
@@ -860,7 +874,7 @@ const CalendarManager = {
                 const timeText = startTime ? (endTime ? `${startTime} - ${endTime}` : startTime) : 'Todo el día';
 
                 return `
-                    <div onclick="CalendarManager.viewEventDetail(${ev.id}); document.getElementById('modal-day-events').classList.add('hidden');" class="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850/60 hover:border-indigo-400 dark:hover:border-indigo-600 cursor-pointer transition-all flex items-start justify-between gap-3 group">
+                    <div onclick="CalendarManager.viewEventDetail(${ev.id})" class="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850/60 hover:border-indigo-400 dark:hover:border-indigo-600 cursor-pointer transition-all flex items-start justify-between gap-3 group">
                         <div class="flex items-start gap-2.5 min-w-0">
                             <span class="w-3 h-3 rounded-full mt-1 shrink-0 shadow-2xs" style="background-color: ${color}"></span>
                             <div class="min-w-0">
@@ -874,7 +888,7 @@ const CalendarManager = {
                                 ${ev.location ? `<p class="text-[10px] text-slate-400 truncate mt-1">📍 ${ev.location}</p>` : ''}
                             </div>
                         </div>
-                        <button onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id}); document.getElementById('modal-day-events').classList.add('hidden');" class="text-xs text-indigo-600 dark:text-indigo-400 font-semibold hover:underline shrink-0 p-1 cursor-pointer">
+                        <button type="button" onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id});" class="text-xs text-indigo-600 dark:text-indigo-400 font-semibold hover:underline shrink-0 p-1 cursor-pointer">
                             Ver detalle &rarr;
                         </button>
                     </div>
@@ -1650,206 +1664,237 @@ const CalendarManager = {
         return { dateStr, timeStr, durationStr };
     },
 
-    viewEventDetail(eventId) {
-        const ev = this.events.find(e => e.id === eventId) || this.tasks.find(t => t.id === eventId);
-        if (!ev) return;
-
-        // Si la cita tiene fecha válida, enfocar la vista actual en esa fecha
-        if (ev.start_time) {
-            const evDate = new Date(ev.start_time);
-            if (!isNaN(evDate.getTime())) {
-                this.currentDate = new Date(evDate);
-                this.renderCalendar();
-            }
+    async viewEventDetail(eventId) {
+        // Cerrar modal de día si estuviese abierto
+        const dayModal = document.getElementById('modal-day-events');
+        if (dayModal) {
+            dayModal.classList.add('hidden');
         }
 
-        // Título
-        const titleEl = document.getElementById('event-detail-title');
-        if (titleEl) titleEl.textContent = ev.title || '(Sin título)';
-
-        // Calendario y color
-        const calNameEl = document.getElementById('event-detail-calendar-name');
-        const badgeColorEl = document.getElementById('event-detail-badge-color');
-        const color = this.getEventColor(ev);
-        if (calNameEl) {
-            let nameStr = `${ev.calendar_name || 'Calendario'}`;
-            if (ev.account_name) nameStr += ` (${ev.account_name})`;
-            calNameEl.textContent = nameStr;
-        }
-        if (badgeColorEl) badgeColorEl.style.backgroundColor = color;
-
-        // Fecha, Hora y Duración
-        const dateInfo = this.formatEventDateTime(ev.start_time, ev.end_time, ev.all_day);
-        const dateEl = document.getElementById('event-detail-date');
-        const timeEl = document.getElementById('event-detail-time');
-        const durEl = document.getElementById('event-detail-duration');
-
-        if (dateEl) dateEl.textContent = dateInfo.dateStr;
-        if (timeEl) {
-            timeEl.textContent = dateInfo.timeStr;
-            timeEl.style.display = dateInfo.timeStr ? 'block' : 'none';
-        }
-        if (durEl) {
-            durEl.textContent = dateInfo.durationStr ? `⏱ Duración: ${dateInfo.durationStr}` : '';
-            durEl.style.display = dateInfo.durationStr ? 'block' : 'none';
-        }
-
-        // Ubicación / Videollamada
-        const recBadge = document.getElementById('event-detail-recurrence-badge');
-        const recLabels = {
-            'daily': '🔁 Todos los días',
-            'weekly': '🔁 Cada semana',
-            'monthly': '🔁 Cada mes',
-            'yearly': '🔁 Anualmente',
-            'weekdays': '🔁 Días laborables'
-        };
-        if (recBadge) {
-            if (ev.recurrence && recLabels[ev.recurrence]) {
-                recBadge.textContent = recLabels[ev.recurrence];
-                recBadge.classList.remove('hidden');
-            } else {
-                recBadge.classList.add('hidden');
-            }
-        }
-
-        // Videoconferencia Google Meet
-        const meetContainer = document.getElementById('event-detail-meeting-container');
-        const joinMeetBtn = document.getElementById('btn-event-detail-join-meet');
-        const copyMeetBtn = document.getElementById('btn-event-detail-copy-meet');
-        const meetText = document.getElementById('event-detail-meeting-url-text');
-        if (meetContainer) {
-            if (ev.meeting_url && ev.meeting_url.trim().length > 0) {
-                const url = ev.meeting_url.trim();
-                meetContainer.classList.remove('hidden');
-                if (joinMeetBtn) {
-                    joinMeetBtn.onclick = (e) => {
-                        e.preventDefault();
-                        CalendarManager.openExternal(url);
-                    };
-                }
-                if (meetText) meetText.textContent = url;
-                if (copyMeetBtn) {
-                    copyMeetBtn.onclick = () => {
-                        navigator.clipboard.writeText(url);
-                        UI.showStickyToast('Enlace Copiado', 'Se copió el enlace al portapapeles', 'info', 2000);
-                    };
-                }
-            } else {
-                meetContainer.classList.add('hidden');
-            }
-        }
-
-        // Ubicación / Direcciones (con URLs clickeables que abren en el navegador predeterminado)
-        const locContainer = document.getElementById('event-detail-location-container');
-        const locContent = document.getElementById('event-detail-location-content');
-        if (locContainer && locContent) {
-            if (ev.location && ev.location.trim().length > 0) {
-                locContent.innerHTML = this.formatLocationHtml(ev.location);
-                locContainer.classList.remove('hidden');
-            } else {
-                locContainer.classList.add('hidden');
-                locContent.innerHTML = '';
-            }
-        }
-
-        // Asistentes / Invitados
-        const attContainer = document.getElementById('event-detail-attendees-container');
-        const attList = document.getElementById('event-detail-attendees-list');
-        const attCount = document.getElementById('event-detail-attendees-count');
-        if (attContainer && attList) {
-            const attendees = ev.attendees ? ev.attendees.split(',').map(s => s.trim()).filter(Boolean) : [];
-            if (attendees.length > 0) {
-                attContainer.classList.remove('hidden');
-                if (attCount) attCount.textContent = `Invitados (${attendees.length})`;
-                attList.innerHTML = attendees.map(a => `
-                    <div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200">
-                        <div class="w-6 h-6 rounded-full bg-indigo-500 text-white flex items-center justify-center font-bold text-[10px] shrink-0 uppercase">
-                            ${a.charAt(0)}
-                        </div>
-                        <span class="truncate font-medium">${a}</span>
-                    </div>
-                `).join('');
-            } else {
-                attContainer.classList.add('hidden');
-                attList.innerHTML = '';
-            }
-        }
-
-        // Recordatorio, Disponibilidad y Visibilidad
-        const notifText = document.getElementById('event-detail-notification-text');
-        const notifMap = {
-            '0': 'Sin recordatorio',
-            '10': '10 min antes',
-            '15': '15 min antes',
-            '30': '30 min antes',
-            '60': '1 hora antes',
-            '1440': '1 día antes'
-        };
-        if (notifText) {
-            const mins = ev.notification_minutes !== undefined ? String(ev.notification_minutes) : '10';
-            notifText.textContent = notifMap[mins] || `${mins} min antes`;
-        }
-
-        const availBadge = document.getElementById('event-detail-availability-badge');
-        if (availBadge) {
-            availBadge.textContent = ev.availability === 'free' ? 'Disponible' : 'Ocupado';
-        }
-
-        const visBadge = document.getElementById('event-detail-visibility-badge');
-        const visMap = {
-            'default': 'Predeterminada',
-            'public': 'Pública',
-            'private': 'Privada'
-        };
-        if (visBadge) {
-            visBadge.textContent = visMap[ev.visibility] || 'Predeterminada';
-        }
-
-        // Descripción con URLs convertidas en enlaces seguros
-        const descEl = document.getElementById('event-detail-description');
-        if (descEl) {
-            if (ev.description && ev.description.trim().length > 0) {
-                descEl.innerHTML = this.linkifyText(ev.description);
-            } else {
-                descEl.innerHTML = '<span class="text-slate-400 dark:text-slate-500 italic">Sin notas ni descripción adicional</span>';
-            }
-        }
-
-        // Correo de origen
-        const originContainer = document.getElementById('event-detail-origin-container');
-        const btnOrigin = document.getElementById('btn-event-detail-origin');
-        if (originContainer && btnOrigin) {
-            if (ev.origin_email_id) {
-                originContainer.classList.remove('hidden');
-                btnOrigin.onclick = () => {
-                    UI.closeDrawer('drawer-event-detail');
-                    if (window.EmailManager && typeof EmailManager.openEmailDetail === 'function') {
-                        if (typeof UI.switchMainTab === 'function') {
-                            UI.switchMainTab('emails');
-                        }
-                        EmailManager.openEmailDetail(ev.origin_email_id);
+        let ev = (this.events || []).find(e => e.id == eventId) || (this.tasks || []).find(t => t.id == eventId);
+        if (!ev) {
+            try {
+                const res = await fetch(`/api/events/${eventId}`);
+                if (res.ok) {
+                    ev = await res.json();
+                } else {
+                    const taskRes = await fetch(`/api/tasks`);
+                    if (taskRes.ok) {
+                        const tasks = await taskRes.json();
+                        ev = (tasks || []).find(t => t.id == eventId);
                     }
-                };
-            } else {
-                originContainer.classList.add('hidden');
-                btnOrigin.onclick = null;
+                }
+            } catch (err) {
+                console.error("Error al obtener detalle del evento:", err);
             }
         }
 
-        // Botón editar dentro del detalle
-        const btnEdit = document.getElementById('btn-edit-event-from-detail');
-        if (btnEdit) {
-            btnEdit.onclick = () => {
-                this.openEditEventModal(ev.id);
-            };
+        if (!ev) {
+            if (window.UI && typeof UI.showStickyToast === 'function') {
+                UI.showStickyToast('Evento no encontrado', 'No se pudo cargar la información de la cita.', 'warning');
+            }
+            return;
         }
 
-        // Botón eliminar dentro del detalle
-        const btnDelete = document.getElementById('btn-delete-event-from-detail');
-        if (btnDelete) {
-            btnDelete.onclick = async () => {
-                await this.deleteEvent(ev.id);
+        try {
+            // Actualizar fecha actual sin causar un re-render destructivo
+            if (ev.start_time) {
+                const evDate = new Date(ev.start_time);
+                if (!isNaN(evDate.getTime())) {
+                    this.currentDate = new Date(evDate);
+                }
+            }
+
+            // Título
+            const titleEl = document.getElementById('event-detail-title');
+            if (titleEl) titleEl.textContent = ev.title || '(Sin título)';
+
+            // Calendario y color
+            const calNameEl = document.getElementById('event-detail-calendar-name');
+            const badgeColorEl = document.getElementById('event-detail-badge-color');
+            const color = this.getEventColor(ev);
+            if (calNameEl) {
+                let nameStr = `${ev.calendar_name || 'Calendario'}`;
+                if (ev.account_name) nameStr += ` (${ev.account_name})`;
+                calNameEl.textContent = nameStr;
+            }
+            if (badgeColorEl) badgeColorEl.style.backgroundColor = color;
+
+            // Fecha, Hora y Duración
+            const dateInfo = this.formatEventDateTime(ev.start_time, ev.end_time, ev.all_day);
+            const dateEl = document.getElementById('event-detail-date');
+            const timeEl = document.getElementById('event-detail-time');
+            const durEl = document.getElementById('event-detail-duration');
+
+            if (dateEl) dateEl.textContent = dateInfo.dateStr;
+            if (timeEl) {
+                timeEl.textContent = dateInfo.timeStr;
+                timeEl.style.display = dateInfo.timeStr ? 'block' : 'none';
+            }
+            if (durEl) {
+                durEl.textContent = dateInfo.durationStr ? `⏱ Duración: ${dateInfo.durationStr}` : '';
+                durEl.style.display = dateInfo.durationStr ? 'block' : 'none';
+            }
+
+            // Ubicación / Videollamada
+            const recBadge = document.getElementById('event-detail-recurrence-badge');
+            const recLabels = {
+                'daily': '🔁 Todos los días',
+                'weekly': '🔁 Cada semana',
+                'monthly': '🔁 Cada mes',
+                'yearly': '🔁 Anualmente',
+                'weekdays': '🔁 Días laborables'
             };
+            if (recBadge) {
+                if (ev.recurrence && recLabels[ev.recurrence]) {
+                    recBadge.textContent = recLabels[ev.recurrence];
+                    recBadge.classList.remove('hidden');
+                } else {
+                    recBadge.classList.add('hidden');
+                }
+            }
+
+            // Videoconferencia Google Meet
+            const meetContainer = document.getElementById('event-detail-meeting-container');
+            const joinMeetBtn = document.getElementById('btn-event-detail-join-meet');
+            const copyMeetBtn = document.getElementById('btn-event-detail-copy-meet');
+            const meetText = document.getElementById('event-detail-meeting-url-text');
+            if (meetContainer) {
+                if (ev.meeting_url && ev.meeting_url.trim().length > 0) {
+                    const url = ev.meeting_url.trim();
+                    meetContainer.classList.remove('hidden');
+                    if (joinMeetBtn) {
+                        joinMeetBtn.onclick = (e) => {
+                            e.preventDefault();
+                            CalendarManager.openExternal(url);
+                        };
+                    }
+                    if (meetText) meetText.textContent = url;
+                    if (copyMeetBtn) {
+                        copyMeetBtn.onclick = () => {
+                            navigator.clipboard.writeText(url);
+                            UI.showStickyToast('Enlace Copiado', 'Se copió el enlace al portapapeles', 'info', 2000);
+                        };
+                    }
+                } else {
+                    meetContainer.classList.add('hidden');
+                }
+            }
+
+            // Ubicación / Direcciones (con URLs clickeables que abren en el navegador predeterminado)
+            const locContainer = document.getElementById('event-detail-location-container');
+            const locContent = document.getElementById('event-detail-location-content');
+            if (locContainer && locContent) {
+                if (ev.location && ev.location.trim().length > 0) {
+                    locContent.innerHTML = this.formatLocationHtml(ev.location);
+                    locContainer.classList.remove('hidden');
+                } else {
+                    locContainer.classList.add('hidden');
+                    locContent.innerHTML = '';
+                }
+            }
+
+            // Asistentes / Invitados
+            const attContainer = document.getElementById('event-detail-attendees-container');
+            const attList = document.getElementById('event-detail-attendees-list');
+            const attCount = document.getElementById('event-detail-attendees-count');
+            if (attContainer && attList) {
+                const attendees = ev.attendees ? ev.attendees.split(',').map(s => s.trim()).filter(Boolean) : [];
+                if (attendees.length > 0) {
+                    attContainer.classList.remove('hidden');
+                    if (attCount) attCount.textContent = `Invitados (${attendees.length})`;
+                    attList.innerHTML = attendees.map(a => `
+                        <div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200">
+                            <div class="w-6 h-6 rounded-full bg-indigo-500 text-white flex items-center justify-center font-bold text-[10px] shrink-0 uppercase">
+                                ${a.charAt(0)}
+                            </div>
+                            <span class="truncate font-medium">${a}</span>
+                        </div>
+                    `).join('');
+                } else {
+                    attContainer.classList.add('hidden');
+                    attList.innerHTML = '';
+                }
+            }
+
+            // Recordatorio, Disponibilidad y Visibilidad
+            const notifText = document.getElementById('event-detail-notification-text');
+            const notifMap = {
+                '0': 'Sin recordatorio',
+                '10': '10 min antes',
+                '15': '15 min antes',
+                '30': '30 min antes',
+                '60': '1 hora antes',
+                '1440': '1 día antes'
+            };
+            if (notifText) {
+                const mins = ev.notification_minutes !== undefined ? String(ev.notification_minutes) : '10';
+                notifText.textContent = notifMap[mins] || `${mins} min antes`;
+            }
+
+            const availBadge = document.getElementById('event-detail-availability-badge');
+            if (availBadge) {
+                availBadge.textContent = ev.availability === 'free' ? 'Disponible' : 'Ocupado';
+            }
+
+            const visBadge = document.getElementById('event-detail-visibility-badge');
+            const visMap = {
+                'default': 'Predeterminada',
+                'public': 'Pública',
+                'private': 'Privada'
+            };
+            if (visBadge) {
+                visBadge.textContent = visMap[ev.visibility] || 'Predeterminada';
+            }
+
+            // Descripción con URLs convertidas en enlaces seguros
+            const descEl = document.getElementById('event-detail-description');
+            if (descEl) {
+                if (ev.description && ev.description.trim().length > 0) {
+                    descEl.innerHTML = this.linkifyText(ev.description);
+                } else {
+                    descEl.innerHTML = '<span class="text-slate-400 dark:text-slate-500 italic">Sin notas ni descripción adicional</span>';
+                }
+            }
+
+            // Correo de origen
+            const originContainer = document.getElementById('event-detail-origin-container');
+            const btnOrigin = document.getElementById('btn-event-detail-origin');
+            if (originContainer && btnOrigin) {
+                if (ev.origin_email_id) {
+                    originContainer.classList.remove('hidden');
+                    btnOrigin.onclick = () => {
+                        UI.closeDrawer('drawer-event-detail');
+                        if (window.EmailManager && typeof EmailManager.openEmailDetail === 'function') {
+                            if (typeof UI.switchMainTab === 'function') {
+                                UI.switchMainTab('emails');
+                            }
+                            EmailManager.openEmailDetail(ev.origin_email_id);
+                        }
+                    };
+                } else {
+                    originContainer.classList.add('hidden');
+                    btnOrigin.onclick = null;
+                }
+            }
+
+            // Botón editar dentro del detalle
+            const btnEdit = document.getElementById('btn-edit-event-from-detail');
+            if (btnEdit) {
+                btnEdit.onclick = () => {
+                    this.openEditEventModal(ev.id);
+                };
+            }
+
+            // Botón eliminar dentro del detalle
+            const btnDelete = document.getElementById('btn-delete-event-from-detail');
+            if (btnDelete) {
+                btnDelete.onclick = async () => {
+                    await this.deleteEvent(ev.id);
+                };
+            }
+        } catch (err) {
+            console.error("Error al renderizar drawer de detalle de evento:", err);
         }
 
         // Abrir drawer lateral

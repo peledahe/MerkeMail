@@ -7,6 +7,9 @@ from datetime import datetime
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "merkemail.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+DATA_DIR = DB_PATH.parent
+AVATARS_DIR = DATA_DIR / "avatars"
+AVATARS_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_db():
     conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
@@ -106,6 +109,7 @@ def init_db():
         "ALTER TABLE contacts ADD COLUMN job_title TEXT",
         "ALTER TABLE contacts ADD COLUMN address TEXT",
         "ALTER TABLE contacts ADD COLUMN is_customized INTEGER DEFAULT 0",
+        "ALTER TABLE contacts ADD COLUMN is_pending INTEGER DEFAULT 0",
         "ALTER TABLE contacts ADD COLUMN updated_at TIMESTAMP",
         "ALTER TABLE emails ADD COLUMN updated_at TIMESTAMP",
         "ALTER TABLE emails ADD COLUMN local_modified INTEGER DEFAULT 0",
@@ -275,11 +279,13 @@ def init_db():
             source TEXT DEFAULT 'emails',
             notes TEXT,
             is_customized INTEGER DEFAULT 0,
+            is_pending INTEGER DEFAULT 0,
             interaction_count INTEGER DEFAULT 1,
             last_interacted_at DATETIME,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_contacts_pending ON contacts(is_pending)')
 
     # Registro de Contactos Eliminados deliberadamente para respetar exclusión en sincronizaciones
     cursor.execute('''
@@ -328,6 +334,23 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    # Tabla de Pizarra de Notas Adhesivas Flotantes (Notas Post-it)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT DEFAULT '',
+            color TEXT DEFAULT 'yellow',
+            x INTEGER DEFAULT 20,
+            y INTEGER DEFAULT 20,
+            width INTEGER DEFAULT 220,
+            height INTEGER DEFAULT 170,
+            z_index INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_notes_zindex ON notes(z_index)')
 
     # Índices de alto rendimiento para acelerar listados, búsquedas, filtros y contadores
     indexes = [

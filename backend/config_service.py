@@ -32,6 +32,19 @@ class ConfigService:
         skip_delete_confirm_raw = settings.get("skip_delete_confirm", "false").strip().lower()
         skip_delete_confirm = skip_delete_confirm_raw in ("true", "1", "yes")
 
+        notify_new_emails_raw = settings.get("notify_new_emails", "true").strip().lower()
+        notify_new_emails = notify_new_emails_raw in ("true", "1", "yes")
+
+        notify_calendar_events_raw = settings.get("notify_calendar_events", "true").strip().lower()
+        notify_calendar_events = notify_calendar_events_raw in ("true", "1", "yes")
+
+        notify_sound_enabled_raw = settings.get("notify_sound_enabled", "true").strip().lower()
+        notify_sound_enabled = notify_sound_enabled_raw in ("true", "1", "yes")
+
+        notify_filter = settings.get("notify_filter", "all").strip().lower()
+        if notify_filter not in ("all", "primary"):
+            notify_filter = "all"
+
         return {
             "gemini_api_key": raw_key,
             "gemini_api_key_masked": masked_key,
@@ -45,7 +58,11 @@ class ConfigService:
             "ai_prompt_tone": settings.get("ai_prompt_tone", "formal"),
             "default_calendar_id": default_calendar_id,
             "emails_page_size": emails_page_size,
-            "skip_delete_confirm": skip_delete_confirm
+            "skip_delete_confirm": skip_delete_confirm,
+            "notify_new_emails": notify_new_emails,
+            "notify_calendar_events": notify_calendar_events,
+            "notify_sound_enabled": notify_sound_enabled,
+            "notify_filter": notify_filter
         }
 
     @staticmethod

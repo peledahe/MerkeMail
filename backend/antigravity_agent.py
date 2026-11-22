@@ -588,6 +588,68 @@ def listar_proximos_eventos() -> str:
         res.append(f"- [📅 Ver cita #{ev['id']}: {ev['title']}](event:{ev['id']}) ({ev['calendar_name']}): {ev['start_time']} en {ev['location'] or 'Sin lugar'}")
     return "\n".join(res)
 
+def sincronizar_servicios(modulo: str = "todos") -> str:
+    """Sincroniza en tiempo real los servicios de la aplicación: 'calendario', 'contactos', 'correos' o 'todos'.
+    Útil cuando el usuario pide sincronizar, actualizar o refrescar sus calendarios, eventos, contactos o correos.
+    
+    Args:
+        modulo: 'calendario', 'contactos', 'correos' o 'todos'.
+    """
+    mod = (modulo or "todos").strip().lower()
+    results = []
+
+    # 1. Correos
+    if mod in ("todos", "correos", "emails", "inbox", "correo"):
+        try:
+            from backend.email_service import EmailService
+            EmailService.sync_emails_background()
+            results.append("✉️ Correos: Sincronización en segundo plano iniciada correctamente.")
+        except Exception as e:
+            results.append(f"✉️ Correos: Error al iniciar sincronización ({e})")
+
+    # 2. Contactos
+    if mod in ("todos", "contactos", "contacts"):
+        try:
+            from backend.contacts_service import ContactsService
+            c_res = ContactsService.sync_contacts()
+            synced_count = c_res.get("contacts_count", 0)
+            results.append(f"👥 Contactos: Sincronizados exitosamente ({synced_count} contactos actualizados).")
+        except Exception as e:
+            results.append(f"👥 Contactos: Error al sincronizar ({e})")
+
+    # 3. Calendarios y Tareas
+    if mod in ("todos", "calendario", "calendarios", "calendar", "eventos", "tareas"):
+        try:
+            from backend.calendar_service import CalendarService
+            from backend.google_oauth import GoogleOAuthService
+            CalendarService.ensure_google_calendars()
+            conn = get_db()
+            google_accounts = conn.execute("SELECT id FROM accounts WHERE is_active = 1 AND provider IN ('google', 'gmail')").fetchall()
+            conn.close()
+
+            cal_count = 0
+            task_count = 0
+            warnings = []
+            for g_acc in google_accounts:
+                res_cal = GoogleOAuthService.sync_google_calendar(g_acc["id"])
+                res_tasks = GoogleOAuthService.sync_google_tasks(g_acc["id"])
+                if isinstance(res_cal, dict):
+                    if res_cal.get("success"):
+                        cal_count += res_cal.get("synced", 0)
+                    elif res_cal.get("needs_reauth"):
+                        warnings.append(f"Cuenta #{g_acc['id']}: Sesión Google requiere reautenticación")
+                if isinstance(res_tasks, dict) and res_tasks.get("success"):
+                    task_count += res_tasks.get("synced", 0)
+
+            msg = f"📅 Calendario: Sincronizados {cal_count} eventos y {task_count} tareas."
+            if warnings:
+                msg += f" (Nota: {', '.join(warnings)})"
+            results.append(msg)
+        except Exception as e:
+            results.append(f"📅 Calendario: Error al sincronizar ({e})")
+
+    return "\n".join(results) if results else "No se seleccionó ningún módulo válido para sincronizar."
+
 # --- CLASE PRINCIPAL DEL ASISTENTE ANTIGRAVITY ---
 
 class AntigravityMailAgent:
@@ -755,7 +817,8 @@ class AntigravityMailAgent:
             eliminar_correos,
             gestionar_correos,
             agendar_evento_calendario,
-            listar_proximos_eventos
+            listar_proximos_eventos,
+            sincronizar_servicios
         ]
 
         # Ejecución ultrarrápida con pre-consulta indexada para búsquedas (1 solo roundtrip ~2s) y failover inmediato
@@ -770,7 +833,8 @@ class AntigravityMailAgent:
                 r'\b(borra|borrar|elimina|eliminar|env[ií]a|enviar|redacta|redactar|escribe|escribir|'
                 r'responde|responder|contesta|contestar|archiva|archivar|etiqueta|etiquetar|'
                 r'mueve|mover|marca|marcar|destaca|destacar|agenda|agendar|programa|programar|'
-                r'crea|crear|confirmo|procede|adelante)\b|#\d+',
+                r'crea|crear|confirmo|procede|adelante|sincroniza|sincronizar|actualiza|actualizar|'
+                r'refresca|refrescar)\b|#\d+',
                 lower_msg
             ))
 

@@ -392,10 +392,12 @@ class GoogleOAuthService:
             err_str = str(e)
             print(f"Error sincronizando Google Calendar: {err_str}")
             is_disabled = "accessNotConfigured" in err_str or "Google Calendar API has not been used" in err_str
+            is_reauth = "invalid_grant" in err_str or "Token has been expired or revoked" in err_str or "insufficient authentication scopes" in err_str.lower()
             return {
                 "success": False,
                 "error": err_str,
                 "api_disabled": is_disabled,
+                "needs_reauth": is_reauth,
                 "enable_url": cls.build_api_enable_url("calendar-json.googleapis.com", err_str) if is_disabled else None,
                 "synced": 0
             }
@@ -545,10 +547,13 @@ class GoogleOAuthService:
                     )
                     local_cal_id = cursor.lastrowid
 
-                # Subir primero tareas locales nuevas sin external_id asignadas a esta lista
+                # Subir primero tareas locales nuevas sin external_id asignadas a esta lista o cuenta
                 unsynced_tasks = cursor.execute(
-                    "SELECT * FROM events WHERE calendar_id = ? AND (external_id IS NULL OR external_id = '') AND is_task = 1",
-                    (local_cal_id,)
+                    """SELECT * FROM events 
+                       WHERE (calendar_id = ? OR (account_id = ? AND (calendar_id NOT IN (SELECT id FROM calendars WHERE external_id LIKE 'tasks_%') OR calendar_id IS NULL)))
+                         AND (external_id IS NULL OR external_id = '') 
+                         AND is_task = 1""",
+                    (local_cal_id, account_id)
                 ).fetchall()
                 for ut in unsynced_tasks:
                     new_tid = cls.create_google_task(
@@ -562,7 +567,7 @@ class GoogleOAuthService:
                         }
                     )
                     if new_tid:
-                        cursor.execute("UPDATE events SET external_id = ? WHERE id = ?", (new_tid, ut["id"]))
+                        cursor.execute("UPDATE events SET external_id = ?, calendar_id = ? WHERE id = ?", (new_tid, local_cal_id, ut["id"]))
                 conn.commit()
 
                 # Descargar tareas de esta lista
@@ -638,6 +643,7 @@ class GoogleOAuthService:
             err_str = str(e)
             is_insufficient = "insufficient authentication scopes" in err_str.lower()
             is_disabled = "accessnotconfigured" in err_str.lower() or "google tasks api has not been used" in err_str.lower()
+            is_reauth = is_insufficient or "invalid_grant" in err_str.lower() or "token has been expired" in err_str.lower()
             if is_insufficient:
                 print(f"[Google Tasks] Cuenta {account_id}: El permiso de Tasks se activará al volver a iniciar sesión con Google.")
             else:
@@ -647,7 +653,7 @@ class GoogleOAuthService:
                 "success": not is_disabled,
                 "error": err_str if is_disabled else None,
                 "api_disabled": is_disabled,
-                "needs_reauth": is_insufficient,
+                "needs_reauth": is_reauth,
                 "enable_url": cls.build_api_enable_url("tasks.googleapis.com", err_str) if is_disabled else None,
                 "synced": 0
             }

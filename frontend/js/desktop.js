@@ -391,6 +391,23 @@ const DesktopBridge = {
         });
     },
 
+    showNotification(title, message) {
+        const isPyQt = (navigator.userAgent && navigator.userAgent.includes('QtWebEngine')) || (typeof qt !== 'undefined');
+        if (window.pyqtBridge && window.pyqtBridge.show_notification) {
+            try {
+                window.pyqtBridge.show_notification(title, message);
+                return true;
+            } catch (_) {}
+        }
+        if (isPyQt) {
+            try {
+                console.log(`__PYQT_ACTION__:show_notification:${title}:${message}`);
+                return true;
+            } catch (_) {}
+        }
+        return false;
+    },
+
     onNativeWindowStateChanged(isMaximized) {
         this.isMaximized = !!isMaximized;
         this.updateMaximizeIcons();

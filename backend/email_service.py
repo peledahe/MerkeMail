@@ -776,6 +776,11 @@ class EmailService:
             from backend.google_oauth import GoogleOAuthService
             try:
                 res = GoogleOAuthService.send_gmail(account_id, to_email, subject, body, is_html, cc, bcc, attachments)
+                try:
+                    from backend.contacts_service import ContactsService
+                    ContactsService.register_sent_recipients(to_email=to_email, cc=cc, bcc=bcc, account_id=account_id)
+                except Exception as cr_err:
+                    print(f"[SendEmail] Aviso al verificar contactos: {cr_err}")
                 return {"success": True, "message": "Correo enviado con éxito vía Gmail API"}
             except Exception as e:
                 return {"success": False, "error": f"Error enviando vía Gmail API: {str(e)}"}
@@ -902,6 +907,13 @@ class EmailService:
 
             conn.commit()
             conn.close()
+
+            # Verificar destinatarios y registrar pendientes si no existen en contactos
+            try:
+                from backend.contacts_service import ContactsService
+                ContactsService.register_sent_recipients(to_email=to_email, cc=cc, bcc=bcc, account_id=account_id)
+            except Exception as cr_err:
+                print(f"[SendEmail] Aviso al verificar contactos: {cr_err}")
 
             return {"success": True, "message": "Correo enviado con éxito"}
         except Exception as e:
