@@ -1,4 +1,4 @@
-// Módulo de Integración con Gemini AI SDK - MerkeMail
+// Módulo de Integración con Gemini AI SDK - Senda
 
 const GeminiAI = {
     currentCandidates: [],
@@ -30,7 +30,7 @@ const GeminiAI = {
             }
         }
 
-        // 2. Badge "AI" en el logo MerkeMail
+        // 2. Badge "AI" en el logo Senda
         const brandBadge = document.getElementById('brand-ai-badge');
         if (brandBadge) {
             if (isAiActive) {

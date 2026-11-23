@@ -330,6 +330,81 @@ class GeminiService:
             }
 
     @classmethod
+    def detect_commitments(cls, subject: str, sender: str, body: str) -> List[Dict[str, Any]]:
+        """Extrae compromisos, tareas accionables y acuerdos de un correo."""
+        try:
+            client = cls.get_client()
+            model_name = get_setting("gemini_model", "gemini-3.5-flash-lite")
+
+            system_instruction = (
+                "Analiza el correo electrónico y detecta compromisos, acuerdos, solicitudes o tareas pendientes. "
+                "Devuelve un JSON con una lista 'commitments', donde cada elemento contiene: "
+                "'title' (descripción concisa de la acción, máximo 12 palabras), "
+                "'due_hint' (fecha, día o momento sugerido si se menciona, ej: 'Martes', 'Fin de semana', o cadena vacía), "
+                "'urgency' ('alta', 'media' o 'baja'). "
+                "Si no hay compromisos concretos, devuelve 'commitments': []."
+            )
+            content = f"Remitente: {sender}\nAsunto: {subject}\nCuerpo:\n{body[:3500]}"
+            response = cls._generate_with_fallback(
+                client=client,
+                preferred_model=model_name,
+                contents=content,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    response_mime_type="application/json",
+                    temperature=0.2
+                )
+            )
+            data = json.loads(response.text)
+            return data.get("commitments", [])
+        except Exception as e:
+            logger.warning(f"Error detectando compromisos con IA: {e}")
+            # Heurística de respaldo ante fallo
+            items = []
+            text = f"{subject} {body}".lower()
+            if "favor de" in text or "por favor" in text or "revisar" in text:
+                items.append({"title": f"Revisar solicitud en: {subject[:40]}", "due_hint": "Pronto", "urgency": "media"})
+            if "pago" in text or "factura" in text:
+                items.append({"title": f"Gestionar pago/factura de: {subject[:40]}", "due_hint": "Inmediato", "urgency": "alta"})
+            return items
+
+    @classmethod
+    def classify_email(cls, subject: str, sender: str, snippet: str = "", body: str = "") -> str:
+        """Clasifica un correo en: 'finanzas', 'trabajo', 'personal' o 'boletines'."""
+        text = f"{(subject or '').lower()} {(sender or '').lower()} {(snippet or '').lower()} {(body or '').lower()}"
+
+        if any(k in text for k in ["factura", "pago", "invoice", "payment", "banco", "tarjeta", "receipt", "recibo", "cuenta de facturación", "billing", "subscrip", "total a pagar"]):
+            return "finanzas"
+        if any(k in text for k in ["sprint", "reunión", "meeting", "proyecto", "jira", "github", "gitlab", "desarrollo", "deploy", "ticket", "bug", "teams", "meet.google"]):
+            return "trabajo"
+        if any(k in text for k in ["newsletter", "boletín", "promo", "oferta", "descuento", "update", "digest", "no-reply", "noreply", "linkedin", "computrabajo"]):
+            return "boletines"
+        if any(k in text for k in ["familia", "amigo", "invitación", "fiesta", "cumpleaños", "saludos cordiales"]):
+            return "personal"
+
+        try:
+            client = cls.get_client()
+            model_name = get_setting("gemini_model", "gemini-3.5-flash-lite")
+            prompt = (
+                f"Clasifica este correo en exactamente una palabra: 'trabajo', 'finanzas', 'personal' o 'boletines'. "
+                f"Responde únicamente con la palabra elegida.\n"
+                f"Asunto: {subject}\nRemitente: {sender}\nTexto: {snippet[:200]}"
+            )
+            resp = cls._generate_with_fallback(
+                client=client,
+                preferred_model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=15)
+            )
+            cat = resp.text.strip().lower()
+            for valid in ["finanzas", "trabajo", "boletines", "personal"]:
+                if valid in cat:
+                    return valid
+        except Exception:
+            pass
+        return "trabajo"
+
+    @classmethod
     def analyze_cleanup_by_prompt(cls, prompt: str, emails_metadata: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Analiza exhaustivamente correos de todas las cuentas, carpetas y etiquetas,
@@ -465,3 +540,48 @@ class GeminiService:
             return None
         except Exception:
             return None
+
+    @classmethod
+    def generate_executive_briefing(cls, data: Dict[str, Any]) -> Optional[str]:
+        """Genera una síntesis ejecutiva 360° con IA para la pantalla inicial de Elio."""
+        try:
+            client = cls.get_client()
+            model_name = get_setting("gemini_model", "gemini-3.5-flash-lite")
+
+            unread = data.get("unread_count", 0)
+            inbox_tot = data.get("inbox_total", 0)
+            p_subjects = [em.get("subject", "") for em in data.get("priority_emails", []) if em.get("subject")]
+            w_events = data.get("week_events", [])
+            w_titles = [ev.get("title", "") for ev in w_events[:4] if ev.get("title")]
+            tasks_cnt = data.get("pending_tasks_count", 0)
+            notes_cnt = data.get("notes_count", 0)
+            contacts_cnt = data.get("contacts_count", 0)
+            pending_contacts = data.get("pending_contacts_count", 0)
+            upcoming = data.get("upcoming_event")
+            upcoming_str = f"'{upcoming.get('title')}' a las {upcoming.get('start_time', '')}" if upcoming else "Sin citas próximas"
+
+            prompt = (
+                "Eres Elio, el copiloto inteligente de Senda. Genera una bienvenida ejecutiva concisa, elegante y motivadora "
+                "(máximo 2 párrafos cortos con 1 o 2 emojis sobrios) que ofrezca un panorama 360° del estado de la aplicación:\n"
+                f"- Bandeja de entrada: {unread} sin leer de {inbox_tot} en total. Asuntos clave: {', '.join(p_subjects) if p_subjects else 'Sin alertas críticas'}.\n"
+                f"- Calendario semanal: {len(w_events)} eventos programados ({', '.join(w_titles) if w_titles else 'sin citas'}). Próxima cita: {upcoming_str}.\n"
+                f"- Tareas pendientes: {tasks_cnt} por completar.\n"
+                f"- Notas en pizarra: {notes_cnt} notas adhesivas registradas.\n"
+                f"- Contactos: {contacts_cnt} contactos ({pending_contacts} pendientes de validar).\n"
+                "Destaca las prioridades del día de forma directa y constructiva."
+            )
+
+            resp = cls._generate_with_fallback(
+                client=client,
+                preferred_model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=300
+                )
+            )
+            if resp and resp.text:
+                return resp.text.strip()
+        except Exception as e:
+            logger.warning(f"No se pudo generar briefing ejecutivo con IA: {e}")
+        return None

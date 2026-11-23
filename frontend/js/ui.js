@@ -1,4 +1,4 @@
-// Módulo de Interfaz de Usuario y Controles UI - MerkeMail
+// Módulo de Interfaz de Usuario y Controles UI - Senda
 
 const UI = {
     // Traducción de errores técnicos a mensajes comprensibles y humanos
@@ -102,17 +102,27 @@ const UI = {
     },
 
     // Modal de Confirmación Elegante (Reemplazo obligatorio de confirm() nativo)
-    confirm({
-        title = '¿Confirmar acción?',
-        message = '¿Estás seguro de que deseas proceder con esta acción?',
-        confirmText = 'Confirmar',
-        cancelText = 'Cancelar',
-        isDanger = false,
-        showDontAskAgain = false,
-        dontAskAgainLabel = 'No volver a preguntar',
-        onDontAskAgain = null
-    } = {}) {
+    confirm(options = {}, callback = null) {
+        let opts = typeof options === 'string' ? { message: options } : (options || {});
+        const {
+            title = '¿Confirmar acción?',
+            message = '¿Estás seguro de que deseas proceder con esta acción?',
+            confirmText = 'Confirmar',
+            cancelText = 'Cancelar',
+            isDanger = false,
+            showDontAskAgain = false,
+            dontAskAgainLabel = 'No volver a preguntar',
+            onDontAskAgain = null
+        } = opts;
+
         return new Promise((resolve) => {
+            const finish = (result) => {
+                if (typeof callback === 'function') {
+                    try { callback(result); } catch (e) { console.error('Error en callback confirm:', e); }
+                }
+                resolve(result);
+            };
+
             const modalEl = document.getElementById('confirmation-modal');
             const titleEl = document.getElementById('confirm-modal-title');
             const messageEl = document.getElementById('confirm-modal-message');
@@ -165,12 +175,12 @@ const UI = {
                         console.error('Error en callback onDontAskAgain:', cbErr);
                     }
                 }
-                resolve(true);
+                finish(true);
             };
 
             cancelBtn.onclick = () => {
                 cleanUp();
-                resolve(false);
+                finish(false);
             };
         });
     },
@@ -233,6 +243,9 @@ const UI = {
         document.body.classList.add('overflow-hidden');
         if (drawerId === 'drawer-antigravity-copilot' && window.AntigravityCopilot) {
             AntigravityCopilot.onOpenDrawer();
+        }
+        if (drawerId === 'drawer-settings' && window.VoiceBriefing) {
+            VoiceBriefing.populateVoiceSelect();
         }
     },
 
@@ -648,6 +661,8 @@ const UI = {
 
             if (calRes && calRes.api_disabled) {
                 this.showStickyToast('Google Calendar API Deshabilitada', 'Debes habilitar Google Calendar API en Google Cloud Console.', 'warning', 4500);
+            } else if (calRes && calRes.needs_reauth) {
+                this.showStickyToast('Reconexión Requerida', 'La sesión con Google expiró. Reconecta tu cuenta en Cuentas para sincronizar con la nube.', 'warning', 5000);
             } else {
                 const totalContacts = contactsRes && contactsRes.total_contacts !== undefined ? ` (${contactsRes.total_contacts} contactos)` : '';
                 this.showStickyToast('Sincronización Completada', `Calendario, Tareas, Contactos y Notas actualizados correctamente${totalContacts}.`, 'success', 3500);
@@ -1236,7 +1251,7 @@ const UI = {
         window.addEventListener('appinstalled', () => {
             this.deferredPrompt = null;
             this.updatePWAUIState(true);
-            this.showStickyToast('Instalación Completada', '¡MerkeMail se instaló correctamente en tu dispositivo!', 'success');
+            this.showStickyToast('Instalación Completada', '¡Senda se instaló correctamente en tu dispositivo!', 'success');
         });
     },
 
@@ -1275,7 +1290,7 @@ const UI = {
         if (!this.deferredPrompt) {
             const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
             if (isStandalone) {
-                this.showStickyToast('App Instalada', 'MerkeMail ya se está ejecutando en tu dispositivo como aplicación nativa.', 'info');
+                this.showStickyToast('App Instalada', 'Senda ya se está ejecutando en tu dispositivo como aplicación nativa.', 'info');
                 return;
             }
 
@@ -1283,7 +1298,7 @@ const UI = {
             if (isIOS) {
                 this.showStickyToast('Instalación en iOS', 'Presiona el botón "Compartir" de Safari y selecciona "Agregar al inicio" (+).', 'info');
             } else {
-                this.showStickyToast('Instalar MerkeMail', 'Haz clic en el icono de instalación (⨁) en la barra de direcciones de tu navegador o menú de Chrome/Edge.', 'info');
+                this.showStickyToast('Instalar Senda', 'Haz clic en el icono de instalación (⨁) en la barra de direcciones de tu navegador o menú de Chrome/Edge.', 'info');
             }
             return;
         }
@@ -1291,7 +1306,7 @@ const UI = {
         this.deferredPrompt.prompt();
         const choiceResult = await this.deferredPrompt.userChoice;
         if (choiceResult && choiceResult.outcome === 'accepted') {
-            this.showStickyToast('Instalando', 'Iniciando instalación de MerkeMail...', 'success');
+            this.showStickyToast('Instalando', 'Iniciando instalación de Senda...', 'success');
             this.deferredPrompt = null;
             const btnHeader = document.getElementById('btn-install-pwa');
             if (btnHeader) {

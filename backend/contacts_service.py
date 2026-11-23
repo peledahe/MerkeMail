@@ -121,7 +121,7 @@ class ContactsService:
     def sync_contacts(cls, force: bool = False) -> Dict[str, Any]:
         """
         Sincroniza y extrae contactos de todas las cuentas y correos del sistema en memoria.
-        Prioridad 1: Los cambios de MerkeMail (contactos personalizados is_customized = 1 y
+        Prioridad 1: Los cambios de Senda (contactos personalizados is_customized = 1 y
         eliminaciones en deleted_contacts) prevalecen siempre.
         Prioridad 2: Entre las versiones extraídas, prevalece el nombre y metadatos más
         recientes (según fecha del correo) y finalmente los datos del servidor.
@@ -203,7 +203,7 @@ class ContactsService:
                     # Contacto pendiente de confirmación: NO sincronizar ni modificar hasta autorización del usuario
                     continue
                 if existing.get("is_customized") == 1:
-                    # Prioridad absoluta a los cambios hechos en MerkeMail: solo actualizar conteo/fecha de interacción
+                    # Prioridad absoluta a los cambios hechos en Senda: solo actualizar conteo/fecha de interacción
                     cursor.execute("""
                         UPDATE contacts SET
                             interaction_count = MAX(COALESCE(interaction_count, 1), ?),
@@ -284,7 +284,7 @@ class ContactsService:
 
                     req = urllib.request.Request(
                         target,
-                        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) MerkeMail/1.0"}
+                        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Senda/1.0"}
                     )
                     with urllib.request.urlopen(req, timeout=4) as resp:
                         data = resp.read()

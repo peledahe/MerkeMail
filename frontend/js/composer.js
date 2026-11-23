@@ -1,6 +1,6 @@
 // ========================================================
 // Gestor de Redacción y Editor Enriquecido HTML (WYSIWYG)
-// MerkeMail Composer
+// Senda Composer
 // ========================================================
 
 const Composer = {

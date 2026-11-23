@@ -1,4 +1,4 @@
-// Script Principal de Coordinación - MerkeMail
+// Script Principal de Coordinación - Senda
 
 document.addEventListener('DOMContentLoaded', async () => {
     // Inicializar Tema Claro / Oscuro
@@ -47,6 +47,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         (async () => {
             try {
                 await GeminiAI.initSettings();
+                // Si la IA está activa y aún no se ha seleccionado un correo,
+                // presentar inmediatamente la pantalla inicial con el resumen ejecutivo de Elio
+                if (window.GeminiAI && GeminiAI.isAiActive && window.EmailManager && !EmailManager.selectedEmailId) {
+                    if (window.innerWidth >= 768) {
+                        EmailManager.showElioInboxSummary(false);
+                    }
+                }
             } catch (e) { console.warn("Fallo cargando IA:", e); }
         })(),
         (async () => { try { await CalendarManager.init(); } catch (e) { console.warn("Fallo cargando calendario:", e); } })(),

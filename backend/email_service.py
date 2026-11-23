@@ -30,7 +30,7 @@ def decode_mime_header(header_value: str) -> str:
 
 
 # ---------------------------------------------------------------------------------------------
-# Correspondencia entre buzones IMAP del servidor y carpetas de MerkeMail
+# Correspondencia entre buzones IMAP del servidor y carpetas de Senda
 # ---------------------------------------------------------------------------------------------
 # Marcas estándar RFC 6154 (SPECIAL-USE) -> carpeta de la app. None = buzón virtual que se omite
 # (p. ej. "[Gmail]/Todos", "Destacados", "Importantes": duplicarían correos de otros buzones).
@@ -101,7 +101,7 @@ def parse_imap_list(list_data) -> List[Tuple[str, List[str]]]:
 
 
 def imap_local_folder(server_name: str, flags: Optional[List[str]] = None) -> Optional[str]:
-    """Buzón del servidor -> carpeta de MerkeMail ('INBOX', 'SENT', 'SPAM'...). None = no sincronizar."""
+    """Buzón del servidor -> carpeta de Senda ('INBOX', 'SENT', 'SPAM'...). None = no sincronizar."""
     if server_name.upper() == "INBOX":
         return "INBOX"
     flags = flags or []
@@ -236,7 +236,7 @@ def parse_imap_message(raw_email: bytes, account: Dict[str, Any]) -> Dict[str, A
 # ---------------------------------------------------------------------------------------------
 # Propagación al servidor IMAP de Archivar / Spam / Papelera (modelo de reconciliación)
 # ---------------------------------------------------------------------------------------------
-# La carpeta local (emails.folder) es lo que el usuario decidió en MerkeMail; emails.source_folder es el
+# La carpeta local (emails.folder) es lo que el usuario decidió en Senda; emails.source_folder es el
 # buzón del servidor donde está realmente el mensaje. Si no coinciden, hay un movimiento pendiente que se
 # ejecuta en segundo plano justo después de la acción y se reintenta al inicio de cada sincronización.
 import re as _re
@@ -370,7 +370,7 @@ class _ImapMover:
 
 
 def _push_pending_moves(conn, account_id: int, mover: "_ImapMover", only_ids: Optional[List[int]] = None) -> Dict[str, Any]:
-    """Aplica en el servidor los cambios de carpeta hechos en MerkeMail que aún no están reflejados."""
+    """Aplica en el servidor los cambios de carpeta hechos en Senda que aún no están reflejados."""
     import sqlite3 as _sqlite3
     q = ("SELECT id, uid, folder, source_folder FROM emails WHERE account_id = ? AND source_folder IS NOT NULL "
          "AND uid NOT LIKE 'seed-%' AND (UPPER(folder) IN ('INBOX', 'ARCHIVE', 'SPAM', 'TRASH') OR UPPER(folder) LIKE 'CATEGORY_%')")
@@ -416,7 +416,7 @@ def _push_pending_moves(conn, account_id: int, mover: "_ImapMover", only_ids: Op
 
 
 def _trash_removed_on_server(conn, account_id: int, mover: "_ImapMover", removed: List[Tuple[str, str]]) -> int:
-    """Correos eliminados definitivamente en MerkeMail: en el servidor se mueven a la Papelera (no se destruyen)."""
+    """Correos eliminados definitivamente en Senda: en el servidor se mueven a la Papelera (no se destruyen)."""
     moved = 0
     for source, uid in removed:
         if not source or mover.key_of(source) == "TRASH":
@@ -528,7 +528,7 @@ class EmailService:
     @classmethod
     def push_imap_changes(cls, account_id: int, removed: Optional[List[Tuple[str, str]]] = None,
                           only_ids: Optional[List[int]] = None) -> Dict[str, Any]:
-        """Refleja en el servidor IMAP los cambios de carpeta (Archivar, Spam, Papelera, restaurar) hechos en MerkeMail."""
+        """Refleja en el servidor IMAP los cambios de carpeta (Archivar, Spam, Papelera, restaurar) hechos en Senda."""
         account = cls.get_account(account_id)
         if not account or account.get("auth_type") == "oauth2" or not account.get("imap_host"):
             return {"success": True, "skipped": True}
@@ -665,7 +665,7 @@ class EmailService:
             selected_uids.reverse()
 
             # 3. Correos ya conocidos de ESTE buzón del servidor, estén en la carpeta local que estén
-            #    (archivados, movidos a Spam/Papelera...), más los eliminados en MerkeMail
+            #    (archivados, movidos a Spam/Papelera...), más los eliminados en Senda
             #    (en IMAP los UID son por buzón: la clave de eliminados es "buzón::uid")
             del_rows = conn.execute("SELECT uid FROM deleted_emails WHERE account_id = ?", (account_id,)).fetchall()
             prefix = f"{server_folder}::"
@@ -1023,7 +1023,7 @@ class EmailService:
                 (1, "103", "INBOX", "Sofia Martinez <smartinez@empresa.com>", "usuario@gmail.com",
                  "Reunión de Planificación de Proyecto - Viernes 16:00 hrs",
                  "Hola equipo, propongo coordinar la sesión de seguimiento este viernes 20 de noviembre a las 16:00 en Sala Virtual.",
-                 "Hola equipo,\n\nPropongo que tengamos la sesión de revisión de avances este viernes 20 de noviembre de 16:00 a 17:00 hrs.\nRevisaremos los entregables de MerkeMail y el despliegue del calendario.\n\nFavor de confirmar asistencia.",
+                 "Hola equipo,\n\nPropongo que tengamos la sesión de revisión de avances este viernes 20 de noviembre de 16:00 a 17:00 hrs.\nRevisaremos los entregables de Senda y el despliegue del calendario.\n\nFavor de confirmar asistencia.",
                  "<p>Hola equipo,</p><p>Propongo coordinar la sesión este <strong>viernes 20 de noviembre de 16:00 a 17:00 hrs</strong>.</p>",
                  "2026-11-13 14:20:00", 0, 1, 1, "alta", '["Reunión", "Proyecto"]'),
 
@@ -1067,7 +1067,7 @@ class EmailService:
                 VALUES (?, ?, 1, 1)
             ''', (
                 "Firma Corporativa (Gmail)",
-                "--\nAtentamente,\nUsuario Demo\nLíder de Desarrollo | MerkeMail\nTel: +1 (555) 010-0000\nhttps://ejemplo.com",
+                "--\nAtentamente,\nUsuario Demo\nLíder de Desarrollo | Senda\nTel: +1 (555) 010-0000\nhttps://ejemplo.com",
             ))
 
             conn.execute('''

@@ -1,5 +1,5 @@
 // ========================================================
-// Gestor y Caché Inteligente de Avatares - MerkeMail
+// Gestor y Caché Inteligente de Avatares - Senda
 // ========================================================
 
 const AvatarService = {

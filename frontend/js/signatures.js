@@ -1,4 +1,4 @@
-// Módulo del Gestor de Firmas de Correo - MerkeMail
+// Módulo del Gestor de Firmas de Correo - Senda
 
 const SignatureManager = {
     signatures: [],

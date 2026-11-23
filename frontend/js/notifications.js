@@ -1,4 +1,4 @@
-// Gestor Central de Notificaciones y Recordatorios - MerkeMail
+// Gestor Central de Notificaciones y Recordatorios - Senda
 
 const NotificationManager = {
     notifyNewEmails: true,
@@ -295,7 +295,7 @@ const NotificationManager = {
             });
         } else {
             const count = filteredEmails.length;
-            this.notify(`MerkeMail: ${count} correos nuevos`, `Tienes ${count} nuevos correos en tu bandeja de entrada`, {
+            this.notify(`Senda: ${count} correos nuevos`, `Tienes ${count} nuevos correos en tu bandeja de entrada`, {
                 tag: 'bulk-new-emails',
                 type: 'info',
                 onClick: () => {

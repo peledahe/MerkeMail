@@ -1,4 +1,6 @@
 import os
+import datetime
+import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, Query, Body, BackgroundTasks, Request
@@ -6,6 +8,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
+from google.genai import types
+
+logger = logging.getLogger(__name__)
 
 from backend.database import get_db, init_db, set_setting, get_setting, AVATARS_DIR
 from backend.email_service import EmailService, deleted_email_key
@@ -144,6 +149,16 @@ class AICleanupRequest(BaseModel):
     folder: Optional[str] = "ALL"
     account_id: Optional[int] = None
     all_accounts: bool = True
+
+class CommitmentConvertRequest(BaseModel):
+    email_id: int
+    title: str
+    target_type: str = "task"  # "task" | "note"
+    due_hint: Optional[str] = ""
+
+class AIClassifyBatchRequest(BaseModel):
+    email_ids: Optional[List[int]] = None
+    limit: Optional[int] = 50
 
 class BatchDeleteRequest(BaseModel):
     email_ids: List[int]
@@ -308,6 +323,11 @@ async def on_startup():
 @app.get("/")
 def serve_index():
     return FileResponse(STATIC_DIR / "index.html")
+
+@app.get("/info")
+@app.get("/info.html")
+def serve_info():
+    return FileResponse(STATIC_DIR / "info.html")
 
 @app.get("/manifest.json")
 def serve_manifest():
@@ -2099,7 +2119,7 @@ def reset_agent_context():
 
 @app.get("/api/agent/summary")
 def get_agent_summary():
-    """Genera un resumen inteligente en tiempo real de correos sin leer, asuntos urgentes y citas próximas con recomendaciones de atención."""
+    """Genera un resumen inteligente en tiempo real de correos sin leer, asuntos urgentes, citas de la semana, tareas, notas y recomendaciones con IA."""
     conn = get_db()
     
     # Total de correos sin leer excluyendo Papelera, Borradores y Spam
@@ -2140,33 +2160,108 @@ def get_agent_summary():
             ORDER BY date DESC LIMIT {3 - len(priority_rows)}
         """, p_ids if p_ids else []).fetchall()
 
+    # Notas adhesivas
+    notes_rows = conn.execute("SELECT id, content, color, z_index, created_at, updated_at FROM notes ORDER BY z_index DESC, id DESC").fetchall()
+    notes = [dict(r) for r in notes_rows]
+    notes_count = len(notes)
+
+    # Contactos de la libreta
+    contacts_count = conn.execute("SELECT COUNT(*) as c FROM contacts WHERE (is_pending = 0 OR is_pending IS NULL)").fetchone()["c"]
+    pending_contacts_count = conn.execute("SELECT COUNT(*) as c FROM contacts WHERE is_pending = 1").fetchone()["c"]
+
     conn.close()
 
-    # Próxima cita de la agenda
+    now = datetime.datetime.now()
+    today_prefix = now.strftime("%Y-%m-%d")
+
+    # Próxima cita de la agenda (la más próxima a partir de hoy)
     upcoming_event = None
     try:
-        events = CalendarService.get_events()
-        if events:
-            upcoming_event = events[0]
-    except Exception:
-        pass
+        all_events = CalendarService.get_events()
+        future_events = [e for e in all_events if e.get("start_time") and e["start_time"] >= today_prefix]
+        if future_events:
+            upcoming_event = future_events[0]
+        elif all_events:
+            upcoming_event = all_events[-1]
+    except Exception as e:
+        logger.error(f"Error obteniendo próxima cita: {e}")
 
-    # Generar texto de recomendaciones contextuales
-    recommendations = []
-    has_disney_or_payment = any("pago" in (r["subject"] or "").lower() or "suspensi" in (r["subject"] or "").lower() for r in priority_rows)
-    has_invoice = any("factura" in (r["subject"] or "").lower() for r in priority_rows)
+    # Eventos de la semana actual (lunes a domingo, o próximos 7 días)
+    week_events = []
+    try:
+        start_of_week = (now - datetime.timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_week = (start_of_week + datetime.timedelta(days=6)).replace(hour=23, minute=59, second=59)
+        evs = CalendarService.get_events(start_of_week.isoformat(), end_of_week.isoformat())
+        if now.weekday() >= 5 or len([e for e in evs if e.get("start_time") and e["start_time"] >= today_prefix]) == 0:
+            next_7 = CalendarService.get_events(now.strftime("%Y-%m-%d 00:00:00"), (now + datetime.timedelta(days=7)).strftime("%Y-%m-%d 23:59:59"))
+            seen_ids = set(e["id"] for e in evs)
+            for ue in next_7:
+                if ue["id"] not in seen_ids:
+                    evs.append(ue)
+        week_events = evs
+    except Exception as e:
+        logger.error(f"Error obteniendo eventos de la semana: {e}")
 
-    if has_disney_or_payment:
-        recommendations.append("Revisar prioritariamente los avisos de pagos y alertas de cuenta para prevenir cortes en tus suscripciones.")
-    if has_invoice:
-        recommendations.append("Comprobar los importes y fechas de vencimiento de las facturas recientes.")
-    if upcoming_event:
-        start_fmt = upcoming_event['start_time'].replace('T', ' ')
-        recommendations.append(f"Considerar tu próxima cita: '{upcoming_event['title']}' ({start_fmt}).")
-    if unread_count > 0 and not recommendations:
-        recommendations.append(f"Tienes {unread_count} correos sin leer esperando tu lectura.")
+    # Tareas pendientes
+    pending_tasks = []
+    try:
+        pending_tasks = CalendarService.get_tasks(include_completed=False)
+    except Exception as e:
+        logger.error(f"Error obteniendo tareas pendientes: {e}")
 
-    rec_text = " ".join(recommendations) if recommendations else "Todo está en orden. No tienes asuntos pendientes de alta prioridad."
+    # Generación de síntesis ejecutiva con IA (Gemini) o heurística
+    ai_generated = False
+    rec_text = ""
+    api_key = get_setting("gemini_api_key")
+    if api_key:
+        try:
+            client = GeminiService.get_client()
+            model = get_setting("gemini_model") or "gemini-3.5-flash-lite"
+            
+            p_subjects = [r["subject"] for r in priority_rows if r["subject"]]
+            task_titles = [t["title"].replace("[Tarea]", "").strip() for t in pending_tasks[:3]]
+            next_ev_str = f"'{upcoming_event['title']}' ({upcoming_event['start_time'].replace('T', ' ')})" if upcoming_event else "Sin citas agendadas"
+            
+            prompt_context = f"""Genera una síntesis ejecutiva muy breve (máximo 2 a 3 oraciones directas, tono profesional y en español de Latinoamérica) para el inicio de jornada del usuario con base en sus datos:
+- Correos sin leer: {unread_count} de {inbox_total}. Alertas o asuntos prioritarios: {', '.join(p_subjects) if p_subjects else 'Ninguno urgente'}.
+- Próxima cita: {next_ev_str}.
+- Eventos en agenda esta semana: {len(week_events)}.
+- Tareas pendientes: {len(pending_tasks)} ({', '.join(task_titles) if task_titles else 'al día'}).
+- Notas adhesivas en pizarra: {notes_count}.
+Responde únicamente el texto de la síntesis en español de Latinoamérica, sin encabezados, saludos introductorios ni viñetas."""
+
+            resp = GeminiService._generate_with_fallback(
+                client=client,
+                preferred_model=model,
+                contents=prompt_context,
+                config=types.GenerateContentConfig(temperature=0.3)
+            )
+            if resp and resp.text and resp.text.strip():
+                rec_text = resp.text.strip()
+                ai_generated = True
+        except Exception as e:
+            logger.warning(f"No se pudo generar síntesis con Gemini: {e}")
+
+    if not rec_text:
+        recommendations = []
+        has_disney_or_payment = any("pago" in (r["subject"] or "").lower() or "suspensi" in (r["subject"] or "").lower() for r in priority_rows)
+        has_invoice = any("factura" in (r["subject"] or "").lower() for r in priority_rows)
+
+        if has_disney_or_payment:
+            recommendations.append("Revisar prioritariamente los avisos de pagos y alertas de cuenta para prevenir cortes en tus suscripciones.")
+        if has_invoice:
+            recommendations.append("Comprobar los importes y fechas de vencimiento de las facturas recientes.")
+        if upcoming_event:
+            start_fmt = upcoming_event['start_time'].replace('T', ' ')
+            recommendations.append(f"Considerar tu próxima cita: '{upcoming_event['title']}' ({start_fmt}).")
+        if pending_tasks:
+            recommendations.append(f"Tienes {len(pending_tasks)} tarea(s) pendiente(s) por completar.")
+        if notes_count > 0:
+            recommendations.append(f"Tienes {notes_count} nota(s) activa(s) en tu pizarra.")
+        if unread_count > 0 and not recommendations:
+            recommendations.append(f"Tienes {unread_count} correos sin leer esperando tu lectura.")
+
+        rec_text = " ".join(recommendations) if recommendations else "Todo está en orden. No tienes asuntos pendientes de alta prioridad."
 
     return {
         "success": True,
@@ -2176,7 +2271,14 @@ def get_agent_summary():
         "priority_emails": [dict(r) for r in priority_rows],
         "recent_unreads": [dict(r) for r in unread_rows],
         "upcoming_event": upcoming_event,
-        "recommendation": rec_text
+        "week_events": week_events,
+        "pending_tasks": pending_tasks,
+        "notes": notes,
+        "notes_count": notes_count,
+        "contacts_count": contacts_count,
+        "pending_contacts_count": pending_contacts_count,
+        "recommendation": rec_text,
+        "ai_generated": ai_generated
     }
 
 # --- ENDPOINTS DE LIBRETA DE CONTACTOS / AGENDA DE DIRECCIONES ---
@@ -2330,6 +2432,98 @@ def summarize_email(email_id: int):
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         conn.close()
+
+@app.get("/api/ai/commitments/{email_id}")
+def get_email_commitments(email_id: int):
+    """Detecta compromisos, tareas y acuerdos de un correo mediante IA."""
+    conn = get_db()
+    row = conn.execute("SELECT subject, sender, snippet, body_text FROM emails WHERE id = ?", (email_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+
+    body = row["body_text"] or row["snippet"] or ""
+    try:
+        commitments = GeminiService.detect_commitments(row["subject"], row["sender"], body)
+        return {"success": True, "commitments": commitments}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/ai/commitments/convert")
+def convert_commitment(req: CommitmentConvertRequest):
+    """Convierte un compromiso detectado en una Tarea de Calendario o Nota Adhesiva."""
+    clean_title = (req.title or "Compromiso de correo").strip()
+    conn = get_db()
+    try:
+        if req.target_type == "task":
+            cal_id = CalendarService.get_default_calendar_id()
+            task_event = CalendarService.create_event(
+                calendar_id=cal_id,
+                title=f"[Tarea] {clean_title}",
+                description=f"Compromiso detectado por Elio en correo #{req.email_id}" + (f" (Plazo: {req.due_hint})" if req.due_hint else ""),
+                is_task=1,
+                origin_email_id=req.email_id
+            )
+            return {"success": True, "type": "task", "message": "Tarea agregada a la agenda", "id": task_event["id"]}
+        else:
+            from datetime import datetime
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cur = conn.cursor()
+            note_content = f"📌 {clean_title}" + (f"\n⏳ Plazo: {req.due_hint}" if req.due_hint else "") + f"\n(Ref: Correo #{req.email_id})"
+            cur.execute("""
+                INSERT INTO notes (content, color, x, y, width, height, z_index, created_at, updated_at)
+                VALUES (?, 'yellow', 150, 150, 220, 170, 10, ?, ?)
+            """, (note_content, now_str, now_str))
+            conn.commit()
+            note_id = cur.lastrowid
+            return {"success": True, "type": "note", "message": "Nota añadida a la pizarra", "id": note_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+@app.post("/api/ai/classify/{email_id}")
+def classify_single_email(email_id: int):
+    """Clasifica un correo en categoría ejecutiva inteligente con IA y actualiza ai_tags."""
+    import json
+    conn = get_db()
+    row = conn.execute("SELECT id, subject, sender, snippet, body_text, ai_tags FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+
+    category = GeminiService.classify_email(row["subject"], row["sender"], row["snippet"] or "", row["body_text"] or "")
+    tags = [category]
+    conn.execute("UPDATE emails SET ai_tags = ? WHERE id = ?", (json.dumps(tags), email_id))
+    conn.commit()
+    conn.close()
+    return {"success": True, "email_id": email_id, "category": category, "tags": tags}
+
+@app.post("/api/ai/classify-batch")
+def classify_batch_emails(req: AIClassifyBatchRequest):
+    """Clasifica en lote los correos que no tengan categoría asignada."""
+    import json
+    conn = get_db()
+    if req.email_ids:
+        placeholders = ",".join("?" for _ in req.email_ids)
+        rows = conn.execute(f"SELECT id, subject, sender, snippet, body_text FROM emails WHERE id IN ({placeholders})", req.email_ids).fetchall()
+    else:
+        limit = max(10, min(100, req.limit or 50))
+        rows = conn.execute(
+            "SELECT id, subject, sender, snippet, body_text FROM emails WHERE (ai_tags IS NULL OR ai_tags = '' OR ai_tags = '[]') AND UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'SPAM') ORDER BY date DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+
+    classified = []
+    for r in rows:
+        cat = GeminiService.classify_email(r["subject"], r["sender"], r["snippet"] or "", r["body_text"] or "")
+        tags = [cat]
+        conn.execute("UPDATE emails SET ai_tags = ? WHERE id = ?", (json.dumps(tags), r["id"]))
+        classified.append({"id": r["id"], "category": cat})
+    
+    conn.commit()
+    conn.close()
+    return {"success": True, "count": len(classified), "classified": classified}
 
 @app.post("/api/ai/cleanup-preview")
 def cleanup_preview(req: AICleanupRequest):

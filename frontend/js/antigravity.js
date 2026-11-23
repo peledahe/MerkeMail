@@ -1,4 +1,4 @@
-// Módulo del Asistente Inteligente Elio (Copiloto Autónomo) - MerkeMail
+// Módulo del Asistente Inteligente Elio (Copiloto Autónomo) - Senda
 
 const AntigravityCopilot = {
     async sendMessage(textPrompt = null) {
@@ -525,7 +525,7 @@ const AntigravityCopilot = {
     },
 
     async showExecutiveSummaryPrompt() {
-        this.appendMessage('user', '📊 Muéstrame el resumen ejecutivo de mi bandeja y agenda');
+        this.appendMessage('user', 'Muéstrame el resumen ejecutivo de mi bandeja y agenda');
         const container = document.getElementById('antigravity-messages-container');
         const typingId = 'typing-' + Date.now();
         const typingEl = document.createElement('div');
@@ -561,7 +561,7 @@ const AntigravityCopilot = {
 
             if (data.priority_emails && data.priority_emails.length > 0) {
                 summaryHtml += `<div class="space-y-1.5 min-w-0 w-full overflow-hidden">`;
-                summaryHtml += `<p class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1"><span>⚠️</span> <span>Requiere atención prioritaria:</span></p>`;
+                summaryHtml += `<p class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5"><svg class="w-3.5 h-3.5 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> <span>Requiere atención prioritaria:</span></p>`;
                 for (const em of data.priority_emails) {
                     summaryHtml += `
                         <div class="flex items-center gap-1.5 min-w-0 w-full overflow-hidden">
@@ -580,7 +580,7 @@ const AntigravityCopilot = {
                 const dateStr = ev.start_time ? new Date(ev.start_time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                 summaryHtml += `
                     <div class="pt-2 border-t border-slate-100 dark:border-slate-700/50 min-w-0 w-full overflow-hidden">
-                        <p class="text-[10px] font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400 flex items-center gap-1"><span>📅</span> <span>Próxima cita en agenda:</span></p>
+                        <p class="text-[10px] font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400 flex items-center gap-1.5"><svg class="w-3.5 h-3.5 text-purple-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg> <span>Próxima cita en agenda:</span></p>
                         <button type="button" onclick="AntigravityCopilot.openEventFromChat(${ev.id})" class="text-left w-full min-w-0 flex items-center gap-1.5 mt-0.5 text-[11px] font-semibold text-purple-600 dark:text-purple-400 hover:underline cursor-pointer group" title="Ver cita en el calendario">
                             <span class="truncate flex-1 min-w-0 text-slate-800 dark:text-slate-200 group-hover:text-purple-600">${EmailManager.escapeHtml(ev.title)}</span>
                             <span class="text-slate-400 dark:text-slate-500 font-normal text-[10px] shrink-0">(${dateStr})</span>
@@ -592,7 +592,7 @@ const AntigravityCopilot = {
             if (data.recommendation) {
                 summaryHtml += `
                     <div class="pt-2 border-t border-slate-100 dark:border-slate-700/50 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed min-w-0 w-full break-words whitespace-normal overflow-hidden">
-                        <strong class="text-indigo-600 dark:text-indigo-400 font-bold block sm:inline">💡 Recomendación:</strong> ${EmailManager.escapeHtml(data.recommendation)}
+                        <strong class="text-indigo-600 dark:text-indigo-400 font-bold inline-flex items-center gap-1"><svg class="w-3.5 h-3.5 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg><span>Recomendación:</span></strong> ${EmailManager.escapeHtml(data.recommendation)}
                     </div>
                 `;
             }
@@ -617,7 +617,7 @@ const AntigravityCopilot = {
             if (!data.success) return;
 
             const mailText = this.getConnectedServicesText();
-            let html = `¡Hola! Soy <strong>Elio</strong>, tu asistente inteligente y copiloto autónomo en MerkeMail. Tengo acceso a ${mailText}.<br><br>`;
+            let html = `¡Hola! Soy <strong>Elio</strong>, tu asistente inteligente y copiloto autónomo en Senda. Tengo acceso a ${mailText}.<br><br>`;
 
             // Contenedor tipo tarjeta de resumen con ajuste estricto al ancho
             html += `<div class="p-3 my-2 rounded-2xl bg-white/80 dark:bg-slate-750/80 border border-slate-200/80 dark:border-slate-700/60 shadow-2xs space-y-2.5 not-prose w-full max-w-full min-w-0 overflow-hidden break-words">`;
@@ -636,7 +636,7 @@ const AntigravityCopilot = {
             // 2. Elementos que requieren atención prioritaria
             if (data.priority_emails && data.priority_emails.length > 0) {
                 html += `<div class="space-y-1.5 min-w-0 w-full overflow-hidden">`;
-                html += `<p class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1"><span>⚠️</span> <span>Requiere atención prioritaria:</span></p>`;
+                html += `<p class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5"><svg class="w-3.5 h-3.5 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg> <span>Requiere atención prioritaria:</span></p>`;
                 for (const em of data.priority_emails) {
                     html += `
                         <div class="flex items-center gap-1.5 min-w-0 w-full overflow-hidden">
@@ -656,7 +656,7 @@ const AntigravityCopilot = {
                 const dateStr = ev.start_time ? new Date(ev.start_time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                 html += `
                     <div class="pt-2 border-t border-slate-100 dark:border-slate-700/50 min-w-0 w-full overflow-hidden">
-                        <p class="text-[10px] font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400 flex items-center gap-1"><span>📅</span> <span>Próxima cita en agenda:</span></p>
+                        <p class="text-[10px] font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400 flex items-center gap-1.5"><svg class="w-3.5 h-3.5 text-purple-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg> <span>Próxima cita en agenda:</span></p>
                         <button type="button" onclick="AntigravityCopilot.openEventFromChat(${ev.id})" class="text-left w-full min-w-0 flex items-center gap-1.5 mt-0.5 text-[11px] font-semibold text-purple-600 dark:text-purple-400 hover:underline cursor-pointer group" title="Ver cita en el calendario">
                             <span class="truncate flex-1 min-w-0 text-slate-800 dark:text-slate-200 group-hover:text-purple-600">${EmailManager.escapeHtml(ev.title)}</span>
                             <span class="text-slate-400 dark:text-slate-500 font-normal text-[10px] shrink-0">(${dateStr})</span>
@@ -669,7 +669,7 @@ const AntigravityCopilot = {
             if (data.recommendation) {
                 html += `
                     <div class="pt-2 border-t border-slate-100 dark:border-slate-700/50 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed min-w-0 w-full break-words whitespace-normal overflow-hidden">
-                        <strong class="text-indigo-600 dark:text-indigo-400 font-bold block sm:inline">💡 Recomendación de atención:</strong> ${EmailManager.escapeHtml(data.recommendation)}
+                        <strong class="text-indigo-600 dark:text-indigo-400 font-bold inline-flex items-center gap-1"><svg class="w-3.5 h-3.5 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg><span>Recomendación de atención:</span></strong> ${EmailManager.escapeHtml(data.recommendation)}
                     </div>
                 `;
             }

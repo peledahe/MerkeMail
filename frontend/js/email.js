@@ -1,4 +1,4 @@
-// Módulo de Gestión de Correos - MerkeMail
+// Módulo de Gestión de Correos - Senda
 
 const EmailManager = {
     currentFolder: 'INBOX',
@@ -25,6 +25,8 @@ const EmailManager = {
     readTimerId: null,
     pendingReadEmailId: null,
     emailDetailCache: new Map(),
+    selectedCategory: '',
+    lastSummaryData: null,
 
     getFolderDisplayName(folder) {
         if (!folder) return 'Recibidos';
@@ -69,6 +71,90 @@ const EmailManager = {
             'IMPORTANT': 'Importante'
         };
         return map[clean] || map[clean.toUpperCase()] || name;
+    },
+
+    renderAiCategoryBadge(aiTags) {
+        if (!aiTags) return '';
+        let tags = [];
+        try {
+            tags = typeof aiTags === 'string' ? JSON.parse(aiTags) : aiTags;
+        } catch (e) {
+            tags = [String(aiTags)];
+        }
+        if (!Array.isArray(tags) || tags.length === 0) return '';
+        const cat = String(tags[0]).toLowerCase();
+        const map = {
+            'trabajo': {
+                icon: '<svg class="w-3 h-3 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>',
+                text: 'Trabajo',
+                cls: 'bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
+            },
+            'finanzas': {
+                icon: '<svg class="w-3 h-3 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>',
+                text: 'Finanzas',
+                cls: 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+            },
+            'personal': {
+                icon: '<svg class="w-3 h-3 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>',
+                text: 'Personal',
+                cls: 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+            },
+            'boletines': {
+                icon: '<svg class="w-3 h-3 text-purple-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/></svg>',
+                text: 'Boletines',
+                cls: 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800'
+            }
+        };
+        const badge = map[cat];
+        if (!badge) return '';
+        return `<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.2 rounded border ${badge.cls}" title="Categoría IA: ${badge.text}">${badge.icon}<span>${badge.text}</span></span>`;
+    },
+
+    matchesCategory(email, category) {
+        if (!category) return true;
+        if (!email.ai_tags) return false;
+        try {
+            const tags = typeof email.ai_tags === 'string' ? JSON.parse(email.ai_tags) : email.ai_tags;
+            return Array.isArray(tags) && tags.some(t => String(t).toLowerCase() === category.toLowerCase());
+        } catch (e) {
+            return String(email.ai_tags).toLowerCase().includes(category.toLowerCase());
+        }
+    },
+
+    setCategoryFilter(category) {
+        this.selectedCategory = category || '';
+        document.querySelectorAll('.ai-cat-chip').forEach(chip => {
+            const cat = chip.getAttribute('data-category') || '';
+            if (cat === this.selectedCategory) {
+                chip.className = 'ai-cat-chip px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer bg-indigo-600 text-white shadow-2xs flex items-center gap-1.5';
+            } else {
+                chip.className = 'ai-cat-chip px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all cursor-pointer bg-slate-200/70 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700 flex items-center gap-1.5';
+            }
+        });
+
+        this.renderEmailsTable();
+
+        if (this.selectedCategory) {
+            const unclassified = this.emails.filter(e => !e.ai_tags);
+            if (unclassified.length > 0) {
+                fetch('/api/ai/classify-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email_ids: unclassified.slice(0, 25).map(e => e.id) })
+                })
+                .then(r => r.json())
+                .then(res => {
+                    if (res.success && res.results) {
+                        res.results.forEach(r => {
+                            const target = this.emails.find(e => e.id === r.id);
+                            if (target) target.ai_tags = JSON.stringify(r.tags);
+                        });
+                        this.renderEmailsTable();
+                    }
+                })
+                .catch(() => {});
+            }
+        }
     },
 
     accountErrors: {},
@@ -1766,7 +1852,7 @@ const EmailManager = {
                 const upd = await res.json().catch(() => ({}));
                 UI.showStickyToast('Etiqueta Actualizada', `Se guardó "${name}" correctamente`, 'success');
                 if (upd.gmail_error) {
-                    UI.showStickyToast('Gmail', 'El cambio se guardó en MerkeMail pero no se pudo aplicar en Gmail.', 'warning', 6000);
+                    UI.showStickyToast('Gmail', 'El cambio se guardó en Senda pero no se pudo aplicar en Gmail.', 'warning', 6000);
                 }
             } else {
                 const res = await fetch('/api/labels', {
@@ -1799,7 +1885,7 @@ const EmailManager = {
                 );
                 if (gmail.is_gmail && !gmail.synced) {
                     UI.showStickyToast('Gmail no disponible',
-                        'La etiqueta quedó guardada en MerkeMail y se creará en Gmail en la próxima sincronización.',
+                        'La etiqueta quedó guardada en Senda y se creará en Gmail en la próxima sincronización.',
                         'warning', 6000);
                 }
             }
@@ -2174,23 +2260,27 @@ const EmailManager = {
         const listContainer = document.getElementById('emails-split-list');
         if (!listContainer) return;
 
-        if (this.emails.length === 0) {
+        const displayEmails = this.selectedCategory 
+            ? this.emails.filter(e => this.matchesCategory(e, this.selectedCategory))
+            : this.emails;
+
+        if (displayEmails.length === 0) {
             this.resetDetailView();
             listContainer.innerHTML = `
                 <div class="py-16 text-center text-slate-400 dark:text-slate-500 text-xs">
                     <svg class="w-8 h-8 stroke-1 opacity-50 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
-                    <span>No se encontraron correos en esta bandeja</span>
+                    <span>${this.selectedCategory ? `No se encontraron correos en la categoría '${this.selectedCategory}'` : 'No se encontraron correos en esta bandeja'}</span>
                 </div>
             `;
             return;
         }
 
         // Si el correo actualmente seleccionado ya no se encuentra en la lista filtrada o nueva carpeta, resetear visor
-        if (this.selectedEmailId && !this.emails.some(e => e.id === this.selectedEmailId)) {
+        if (this.selectedEmailId && !displayEmails.some(e => e.id === this.selectedEmailId)) {
             this.resetDetailView();
         }
 
-        listContainer.innerHTML = this.emails.map(email => {
+        listContainer.innerHTML = displayEmails.map(email => {
             const isUnread = !email.is_read;
             const isStarred = Boolean(email.is_starred);
             const isSelected = this.selectedEmailId === email.id;
@@ -2270,8 +2360,9 @@ const EmailManager = {
                         ${this.escapeHtml(email.subject || '(Sin Asunto)')}
                     </div>
 
-                    <!-- Snippet Vista Previa & Badges Etiquetas -->
+                    <!-- Snippet Vista Previa & Badges Etiquetas y Categorías IA -->
                     <div class="email-item-snippet text-[11px] text-slate-500 dark:text-slate-400 truncate pl-6 font-normal flex items-center gap-1.5 flex-wrap">
+                        ${this.renderAiCategoryBadge(email.ai_tags)}
                         ${(email.labels && email.labels.length > 0) ? email.labels.map(lbl => `
                             <span class="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.2 rounded" style="background-color: ${lbl.color}22; color: ${lbl.color}; border: 1px solid ${lbl.color}44;">
                                 ${this.escapeHtml(this.getLabelDisplayName(lbl.name))}
@@ -2287,8 +2378,8 @@ const EmailManager = {
         this.updateUnreadCounts();
 
         // Si no hay correo seleccionado y hay correos en la lista, abrir automáticamente el primero
-        if (!this.selectedEmailId && this.emails.length > 0 && window.innerWidth >= 768) {
-            this.openEmailDetail(this.emails[0].id);
+        if (!this.selectedEmailId && displayEmails.length > 0 && window.innerWidth >= 768) {
+            this.openEmailDetail(displayEmails[0].id);
         } else if (this.selectedEmailId) {
             this.highlightSelectedItem(this.selectedEmailId);
         }
@@ -2500,7 +2591,7 @@ const EmailManager = {
                         <!-- Acciones Rápidas Superior Derecha (Gestión Individual & Redacción) -->
                         <div id="email-top-actions-right" class="relative z-40 flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end overflow-visible">
                             <!-- Botón Volver a la Lista de Correos (Exclusivo en Móvil < 768px) -->
-                            <button id="btn-detail-back-mobile" onclick="EmailManager.backToList()" class="md:hidden flex items-center justify-center p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer shrink-0" title="Volver a la lista de correos" aria-label="Return to email list">
+                            <button id="btn-detail-back-mobile" onclick="EmailManager.backToList()" class="md:hidden flex items-center justify-center min-w-[44px] min-h-[44px] p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer shrink-0" title="Volver a la lista de correos" aria-label="Return to email list">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
                                 </svg>
@@ -2577,6 +2668,11 @@ const EmailManager = {
                                 <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                             </button>
 
+                            <!-- 10b. Detectar Compromisos y Tareas IA -->
+                            <button id="btn-top-commitments-ai-${email.id}" onclick="EmailManager.detectCommitments(${email.id})" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-cyan-600 dark:text-cyan-300 hover:bg-cyan-50 dark:hover:bg-cyan-950/50 rounded-lg border border-cyan-200 dark:border-cyan-800/60 transition-colors shadow-2xs btn-commitments-ai-feature cursor-pointer" title="Detectar compromisos, tareas y acuerdos con Elio (@elio)">
+                                <svg class="w-4 h-4 text-cyan-600 dark:text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                            </button>
+
                             <!-- 11. Imprimir correo (en desktop abre visor con vista previa, en web/PWA usa el navegador nativo) -->
                             <button id="btn-print-email" onclick="EmailManager.openPrintPreview()" class="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Imprimir correo (Ctrl+P)">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
@@ -2630,6 +2726,16 @@ const EmailManager = {
                         <p class="text-xs text-slate-700 dark:text-slate-300 leading-relaxed break-words" id="ai-summary-text-${email.id}">
                             ${email.ai_summary || ''}
                         </p>
+                    </div>
+
+                    <!-- Compromisos y Acciones Clave Elio (@elio) -->
+                    <div id="ai-commitments-box-${email.id}" class="hidden mx-4 md:mx-8 mt-2.5 p-3.5 rounded-xl bg-cyan-50/80 dark:bg-cyan-950/40 border border-cyan-200 dark:border-cyan-800/50 min-w-0 transition-all">
+                        <div class="flex items-center gap-2 mb-2 min-w-0">
+                            <svg class="w-4 h-4 text-cyan-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                            <span class="text-xs font-bold text-cyan-800 dark:text-cyan-300">Compromisos & Tareas Detectadas (@elio)</span>
+                            <span id="ai-commitments-status-${email.id}" class="ml-auto text-[11px] text-cyan-700 dark:text-cyan-400"></span>
+                        </div>
+                        <div id="ai-commitments-list-${email.id}" class="space-y-2"></div>
                     </div>
 
                     <!-- Cuerpo del Correo en Scroll Independiente Contenido Aislado -->
@@ -3533,8 +3639,30 @@ const EmailManager = {
         this.currentLabelId = null;
         this.clearSelection();
         this.renderLabels();
-        this.resetDetailView();
+        // Mostrar siempre el resumen ejecutivo 360° de Elio al pulsar en el logo o título de la aplicación
+        this.showElioInboxSummary(true);
         this.loadEmails();
+    },
+
+    async toggleTaskFromDashboard(taskId, checkboxEl) {
+        if (!taskId) return;
+        try {
+            const res = await fetch(`/api/events/${taskId}/complete`, { method: 'POST' });
+            if (res.ok) {
+                if (window.UI) UI.showStickyToast('Tarea Actualizada', 'El estado de la tarea ha sido modificado', 'success', 2000);
+                const item = checkboxEl ? checkboxEl.closest('.task-dashboard-item') : null;
+                if (item) {
+                    item.classList.toggle('opacity-40');
+                    const textEl = item.querySelector('.task-dashboard-title');
+                    if (textEl) textEl.classList.toggle('line-through');
+                }
+                if (window.CalendarManager && typeof CalendarManager.loadEvents === 'function') {
+                    CalendarManager.loadEvents();
+                }
+            }
+        } catch (e) {
+            console.error('Error al actualizar tarea desde resumen:', e);
+        }
     },
 
     async showElioInboxSummary(force = false) {
@@ -3561,14 +3689,14 @@ const EmailManager = {
 
         detailPanel.innerHTML = `
             <div class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400 animate-pulse">
-                <div class="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-indigo-500">
+                <div class="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-indigo-500 shadow-sm">
                     <svg class="w-7 h-7 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
                 </div>
-                <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">Elio está analizando tu bandeja...</h3>
-                <p class="text-xs text-slate-500 mt-1 max-w-sm">Generando resumen inteligente en tiempo real de correos, asuntos prioritarios y agenda.</p>
+                <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">Elio está preparando tu resumen ejecutivo 360°...</h3>
+                <p class="text-xs text-slate-500 mt-1 max-w-sm">Consolidando en tiempo real correos, agenda de la semana, tareas, notas y recomendaciones de IA.</p>
             </div>
         `;
 
@@ -3597,12 +3725,20 @@ const EmailManager = {
     },
 
     renderElioInboxSummaryView(data, detailPanel) {
+        this.lastSummaryData = data;
         const unreadCount = data.unread_count || 0;
         const inboxTotal = data.inbox_total || 0;
         const upcoming = data.upcoming_event;
-        const recommendation = data.recommendation || 'Todo está en orden en tu bandeja de entrada.';
+        const recommendation = data.recommendation || 'Todo está en orden en tu espacio de trabajo.';
         const priorityEmails = (data.priority_emails && data.priority_emails.length > 0) ? data.priority_emails : (data.recent_unreads || []);
+        const weekEvents = data.week_events || [];
+        const pendingTasks = data.pending_tasks || [];
+        const notes = data.notes || [];
+        const notesCount = data.notes_count || notes.length || 0;
+        const contactsCount = data.contacts_count || 0;
+        const pendingContacts = data.pending_contacts_count || 0;
 
+        // 1. Correos Prioritarios
         let priorityCardsHtml = '';
         if (priorityEmails.length === 0) {
             priorityCardsHtml = `
@@ -3617,14 +3753,14 @@ const EmailManager = {
                 const snippet = this.escapeHtml(em.snippet || '');
                 const date = em.date ? new Date(em.date).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
                 return `
-                    <div class="group p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500/60 hover:shadow-sm transition-all cursor-pointer flex flex-col gap-1.5" onclick="EmailManager.openEmailDetail(${em.id})">
+                    <div class="group p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500/60 hover:shadow-xs transition-all cursor-pointer flex flex-col gap-1.5" onclick="EmailManager.openEmailDetail(${em.id})">
                         <div class="flex items-center justify-between gap-2">
                             <span class="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[70%]">${sender}</span>
                             <span class="text-[11px] text-slate-400 font-mono shrink-0">${date}</span>
                         </div>
                         <h4 class="text-xs font-medium text-slate-900 dark:text-white line-clamp-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">${subject}</h4>
                         <p class="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">${snippet}</p>
-                        <div class="flex items-center justify-end gap-1 mt-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div class="flex items-center justify-end gap-1 mt-0.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity">
                             <span>Abrir correo</span>
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                         </div>
@@ -3633,101 +3769,295 @@ const EmailManager = {
             }).join('');
         }
 
+        // 2. Próxima Cita en Agenda
         let upcomingEventHtml = '';
         if (upcoming) {
             const evTitle = this.escapeHtml(upcoming.title || 'Evento programado');
-            const evTime = upcoming.start_time ? upcoming.start_time.replace('T', ' ') : '';
+            let evTime = '';
+            if (upcoming.start_time) {
+                const d = new Date(upcoming.start_time);
+                evTime = !isNaN(d.getTime()) ? d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : upcoming.start_time.replace('T', ' ');
+            }
+            const calName = this.escapeHtml(upcoming.calendar_name || 'Calendario');
+            const calColor = upcoming.effective_color || upcoming.calendar_color || '#f59e0b';
             upcomingEventHtml = `
-                <div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-3">
-                    <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-500 flex items-center justify-center shrink-0 mt-0.5">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                    </div>
-                    <div class="flex-1 min-w-0">
-                        <div class="flex items-center gap-2">
-                            <span class="text-[10px] font-bold uppercase tracking-wider text-amber-500">Próxima cita en Agenda</span>
-                            <span class="text-[11px] text-amber-600/80 dark:text-amber-400/80 font-mono">${evTime}</span>
+                <div class="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-start justify-between gap-3 cursor-pointer hover:bg-amber-500/15 transition-colors" onclick="UI.switchMainView('calendar')" title="Abrir en Calendario">
+                    <div class="flex items-start gap-3 min-w-0">
+                        <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-500 flex items-center justify-center shrink-0 mt-0.5">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                         </div>
-                        <p class="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate mt-0.5">${evTitle}</p>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">Próxima cita en Agenda</span>
+                                <span class="px-1.5 py-0.2 rounded text-[9px] font-semibold text-white truncate max-w-[120px]" style="background-color: ${calColor};">${calName}</span>
+                            </div>
+                            <p class="text-xs font-bold text-slate-800 dark:text-slate-100 truncate mt-1">${evTitle}</p>
+                            <span class="text-[11px] text-slate-500 dark:text-slate-400 font-mono block mt-0.5 capitalize">${evTime}</span>
+                        </div>
                     </div>
+                    <span class="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold shrink-0 mt-1 flex items-center gap-0.5">Ver →</span>
+                </div>
+            `;
+        }
+
+        // 3. Citas de la Semana Actual
+        let weekEventsHtml = '';
+        if (weekEvents.length === 0) {
+            weekEventsHtml = `
+                <div class="p-3 text-center text-xs text-slate-400 dark:text-slate-500 bg-slate-50/60 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-800">
+                    No hay eventos programados en esta semana.
+                </div>
+            `;
+        } else {
+            weekEventsHtml = weekEvents.slice(0, 5).map(ev => {
+                const title = this.escapeHtml(ev.title || 'Evento');
+                let timeStr = '';
+                if (ev.start_time) {
+                    const d = new Date(ev.start_time);
+                    timeStr = !isNaN(d.getTime()) ? d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ev.start_time.replace('T', ' ');
+                }
+                const calColor = ev.effective_color || ev.calendar_color || '#6366f1';
+                return `
+                    <div class="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500/60 transition-all cursor-pointer" onclick="UI.switchMainView('calendar')">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${calColor};"></span>
+                            <span class="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">${title}</span>
+                        </div>
+                        <span class="text-[11px] text-slate-400 font-mono shrink-0 capitalize">${timeStr}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 4. Tareas Pendientes
+        let tasksHtml = '';
+        if (pendingTasks.length === 0) {
+            tasksHtml = `
+                <div class="p-3 text-center text-xs text-slate-400 dark:text-slate-500 bg-slate-50/60 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-800">
+                    ¡Excelente! No tienes tareas pendientes.
+                </div>
+            `;
+        } else {
+            tasksHtml = pendingTasks.map(t => {
+                const rawTitle = t.title || 'Tarea';
+                const title = this.escapeHtml(rawTitle.replace(/^\[Tarea\]\s*/i, ''));
+                return `
+                    <div class="task-dashboard-item flex items-center justify-between gap-2.5 p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 transition-all">
+                        <div class="flex items-center gap-2.5 min-w-0">
+                            <input type="checkbox" onchange="EmailManager.toggleTaskFromDashboard(${t.id}, this)" class="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0">
+                            <span class="task-dashboard-title text-xs font-medium text-slate-800 dark:text-slate-200 truncate">${title}</span>
+                        </div>
+                        <button onclick="UI.switchMainView('calendar')" class="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline shrink-0 font-medium">Ver</button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 5. Pizarra de Notas Adhesivas (Mini Cards)
+        const noteColorMap = {
+            yellow: '#fef08a',
+            green: '#bbf7d0',
+            blue: '#bfdbfe',
+            pink: '#fbcfe8',
+            purple: '#e9d5ff',
+            orange: '#fed7aa',
+            white: '#f1f5f9'
+        };
+        let notesHtml = '';
+        if (notes.length === 0) {
+            notesHtml = `
+                <div class="col-span-full p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 text-center text-xs text-slate-500">
+                    No tienes notas en la pizarra. <button onclick="UI.switchMainView('notes')" class="text-indigo-600 dark:text-indigo-400 font-semibold underline ml-1">Crear primera nota</button>
+                </div>
+            `;
+        } else {
+            notesHtml = notes.slice(0, 4).map(n => {
+                const bg = noteColorMap[n.color] || '#fef08a';
+                const snippet = this.escapeHtml(n.content || '(Nota sin texto)');
+                return `
+                    <div class="p-3 rounded-xl border border-black/10 shadow-xs cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all flex flex-col justify-between min-h-[95px]" style="background-color: ${bg}; color: #1e1e2e;" onclick="UI.switchMainView('notes')" title="Abrir en Pizarra de Notas">
+                        <p class="text-xs font-medium line-clamp-3 leading-relaxed whitespace-pre-wrap">${snippet}</p>
+                        <div class="flex items-center justify-between text-[10px] opacity-60 mt-2 font-mono">
+                            <span>#${n.id}</span>
+                            <span>Editar →</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 6. Aviso de Contactos Pendientes si existen
+        let pendingContactsAlert = '';
+        if (pendingContacts > 0) {
+            pendingContactsAlert = `
+                <div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 text-xs">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                        <span class="text-slate-800 dark:text-slate-200">Tienes <strong>${pendingContacts} contacto(s) nuevo(s)</strong> pendientes de confirmación.</span>
+                    </div>
+                    <button onclick="UI.openDrawer('drawer-contacts')" class="px-2.5 py-1 bg-amber-500 text-white font-semibold rounded-lg text-xs hover:bg-amber-600 transition-colors shrink-0">Revisar</button>
                 </div>
             `;
         }
 
         detailPanel.innerHTML = `
             <div class="flex-1 flex flex-col h-full overflow-y-auto bg-slate-50/50 dark:bg-slate-950/40 p-4 sm:p-6 lg:p-8 space-y-5">
+                
+                <!-- Barra Superior Móvil: Volver a lista de correos (< 768px) -->
+                <div class="md:hidden flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                    <button onclick="EmailManager.backToList()" class="flex items-center gap-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                        <span>Volver a correos</span>
+                    </button>
+                    <span class="text-[11px] text-slate-400 font-medium">Resumen Ejecutivo</span>
+                </div>
+
                 <!-- Header del Resumen con Elio -->
                 <div class="flex items-start justify-between gap-4 pb-4 border-b border-slate-200/80 dark:border-slate-800">
                     <div class="flex items-center gap-3.5">
-                        <div class="relative">
-                            <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
+                        <div class="relative cursor-pointer" onclick="UI.openDrawer('drawer-antigravity')" title="Abrir asistente Elio">
+                            <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
                                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                             </div>
-                            <span class="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900" title="Elio en línea"></span>
+                            <span class="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900" title="Elio Copiloto Activo"></span>
                         </div>
                         <div>
-                            <div class="flex items-center gap-2">
+                            <div class="flex items-center gap-2 flex-wrap">
                                 <h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight">Resumen Ejecutivo de Elio</h2>
-                                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">IA Activa</span>
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${data.ai_generated ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20' : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20'}">
+                                    <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                    <span>${data.ai_generated ? 'Generado por Elio IA' : 'Visión 360°'}</span>
+                                </span>
                             </div>
-                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Visión global e inteligente de tu bandeja de entrada</p>
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Panorama unificado de tu bandeja, calendario semanal, tareas y notas</p>
                         </div>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button onclick="EmailManager.showElioInboxSummary(true)" class="p-2 rounded-xl text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="Actualizar resumen">
+                        <!-- Botón Escuchar Briefing por Voz con Elio -->
+                        <button id="btn-voice-briefing" onclick="VoiceBriefing.toggle(this)" class="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer" title="Escuchar briefing ejecutivo narrado por Elio">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/></svg>
+                            <span id="voice-briefing-label">Escuchar</span>
+                        </button>
+                        <button onclick="EmailManager.showElioInboxSummary(true)" class="p-2 rounded-xl text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-2xs" title="Actualizar resumen">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        </button>
+                        <button onclick="UI.openDrawer('drawer-antigravity-copilot')" class="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors" title="Chatear con Elio">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+                            <span>Copiloto</span>
                         </button>
                     </div>
                 </div>
 
-                <!-- Tarjetas de Estadísticas Clave -->
-                <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <!-- Síntesis Ejecutiva de Elio -->
+                <div class="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-pink-500/5 border border-indigo-500/20 shadow-2xs space-y-2">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">Síntesis Ejecutiva de Hoy</h3>
+                    </div>
+                    <p class="text-xs text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line">${this.escapeHtml(recommendation)}</p>
+                </div>
+
+                ${pendingContactsAlert}
+
+                <!-- Tarjetas Métricas Rápidas 4x1 -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
                         <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Sin Leer</span>
-                        <div class="mt-1 flex items-baseline gap-2">
-                            <span class="text-2xl font-bold \${unreadCount > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-700 dark:text-slate-300'}">\${unreadCount}</span>
-                            <span class="text-[10px] text-slate-400">correos</span>
+                        <div class="mt-1 flex items-baseline gap-1.5">
+                            <span class="text-2xl font-bold ${unreadCount > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-700 dark:text-slate-300'}">${unreadCount}</span>
+                            <span class="text-[10px] text-slate-400">/ ${inboxTotal}</span>
                         </div>
                     </div>
-                    <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
-                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">En Bandeja</span>
-                        <div class="mt-1 flex items-baseline gap-2">
-                            <span class="text-2xl font-bold text-slate-700 dark:text-slate-300">\${inboxTotal}</span>
-                            <span class="text-[10px] text-slate-400">totales</span>
+                    <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs cursor-pointer hover:border-indigo-400 transition-colors" onclick="UI.switchMainView('calendar')">
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Citas Semana</span>
+                        <div class="mt-1 flex items-baseline gap-1.5">
+                            <span class="text-2xl font-bold text-amber-500">${weekEvents.length}</span>
+                            <span class="text-[10px] text-slate-400">eventos</span>
                         </div>
                     </div>
-                    <div class="col-span-2 sm:col-span-1 p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
-                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Prioritarios</span>
-                        <div class="mt-1 flex items-baseline gap-2">
-                            <span class="text-2xl font-bold \${priorityEmails.length > 0 ? 'text-amber-500' : 'text-emerald-500'}">\${priorityEmails.length}</span>
-                            <span class="text-[10px] text-slate-400">requieren foco</span>
+                    <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs cursor-pointer hover:border-indigo-400 transition-colors" onclick="UI.switchMainView('notes')">
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Notas Adhesivas</span>
+                        <div class="mt-1 flex items-baseline gap-1.5">
+                            <span class="text-2xl font-bold text-emerald-500">${notesCount}</span>
+                            <span class="text-[10px] text-slate-400">en pizarra</span>
+                        </div>
+                    </div>
+                    <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs cursor-pointer hover:border-indigo-400 transition-colors" onclick="UI.openDrawer('drawer-contacts')">
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Contactos</span>
+                        <div class="mt-1 flex items-baseline gap-1.5">
+                            <span class="text-2xl font-bold text-sky-500">${contactsCount}</span>
+                            <span class="text-[10px] text-slate-400">${pendingContacts > 0 ? `(${pendingContacts} pend.)` : 'agenda'}</span>
                         </div>
                     </div>
                 </div>
 
-                <!-- Recomendación de Elio -->
-                <div class="p-4 rounded-xl bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-transparent border border-indigo-500/20 flex items-start gap-3">
-                    <div class="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-500 flex items-center justify-center shrink-0 mt-0.5">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                <!-- Contenido Principal Dividido en 2 Columnas -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    
+                    <!-- Columna 1: Correos Prioritarios -->
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                                <span>Correos de Atención Prioritaria</span>
+                            </h3>
+                            <span class="text-[11px] text-slate-400">Clic para abrir</span>
+                        </div>
+                        <div class="space-y-2.5">
+                            ${priorityCardsHtml}
+                        </div>
                     </div>
-                    <div class="flex-1">
-                        <span class="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">Recomendación de Elio</span>
-                        <p class="text-xs text-slate-700 dark:text-slate-300 mt-1 leading-relaxed">\${this.escapeHtml(recommendation)}</p>
+
+                    <!-- Columna 2: Calendario Semanal & Tareas -->
+                    <div class="space-y-4">
+                        
+                        <!-- Próxima Cita -->
+                        ${upcomingEventHtml}
+
+                        <!-- Eventos de la Semana -->
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                    <svg class="w-4 h-4 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                                    <span>Agenda de la Semana Actual</span>
+                                </h3>
+                                <button onclick="UI.switchMainView('calendar')" class="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold hover:underline">Ver Calendario →</button>
+                            </div>
+                            <div class="space-y-1.5">
+                                ${weekEventsHtml}
+                            </div>
+                        </div>
+
+                        <!-- Tareas Pendientes -->
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                    <svg class="w-4 h-4 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                                    <span>Tareas Pendientes</span>
+                                </h3>
+                                <span class="text-[11px] text-slate-400">Marca para completar</span>
+                            </div>
+                            <div class="space-y-1.5">
+                                ${tasksHtml}
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Próxima cita si existe -->
-                \${upcomingEventHtml}
-
-                <!-- Correos prioritarios / pendientes de lectura -->
-                <div class="space-y-2.5">
+                <!-- Sección Inferior: Pizarra de Notas Adhesivas -->
+                <div class="pt-4 border-t border-slate-200/80 dark:border-slate-800 space-y-3">
                     <div class="flex items-center justify-between">
-                        <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Correos que requieren tu atención</h3>
-                        <span class="text-[11px] text-slate-400">Haz clic para leer</span>
+                        <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                            <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                            <span>Pizarra de Notas Adhesivas</span>
+                        </h3>
+                        <button onclick="UI.switchMainView('notes')" class="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold hover:underline">Ir a Pizarra de Notas →</button>
                     </div>
-                    <div class="space-y-2">
-                        \${priorityCardsHtml}
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        ${notesHtml}
                     </div>
                 </div>
+
             </div>
         `;
     },
@@ -3911,7 +4241,7 @@ const EmailManager = {
     },
 
     async deleteCurrentEmail(emailId) {
-        // Si el correo ya está en la Papelera, la acción lo elimina definitivamente de MerkeMail
+        // Si el correo ya está en la Papelera, la acción lo elimina definitivamente de Senda
         const opened = (this.currentOpenedEmail && this.currentOpenedEmail.id === emailId) ? this.currentOpenedEmail : null;
         const inTrash = ((opened && opened.folder) || '').toUpperCase() === 'TRASH';
 
@@ -3919,7 +4249,7 @@ const EmailManager = {
             // La eliminación definitiva de papelera siempre solicita confirmación por seguridad
             const confirmed = await UI.confirm({
                 title: '¿Eliminar definitivamente?',
-                message: 'El correo se eliminará de MerkeMail. Esta acción no se puede deshacer.',
+                message: 'El correo se eliminará de Senda. Esta acción no se puede deshacer.',
                 confirmText: 'Eliminar definitivamente',
                 isDanger: true
             });
@@ -4633,6 +4963,111 @@ const EmailManager = {
         }
     },
 
+    async detectCommitments(emailId) {
+        if (window.GeminiAI && !GeminiAI.isAiActive) {
+            UI.showStickyToast('IA Inactiva', 'El servicio de IA está desactivado. Actívalo en Ajustes para analizar compromisos.', 'warning');
+            return;
+        }
+        const box = document.getElementById(`ai-commitments-box-${emailId}`);
+        const list = document.getElementById(`ai-commitments-list-${emailId}`);
+        const statusEl = document.getElementById(`ai-commitments-status-${emailId}`);
+        if (!box || !list) return;
+
+        box.classList.remove('hidden');
+        list.innerHTML = `
+            <div class="flex items-center gap-2 text-xs text-cyan-600 dark:text-cyan-400 py-1">
+                <svg class="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>Elio está extrayendo compromisos, acuerdos y plazos del correo...</span>
+            </div>
+        `;
+        try {
+            const res = await fetch(`/api/ai/commitments/${emailId}`);
+            const data = await res.json();
+            if (!data.success || !data.commitments || data.commitments.length === 0) {
+                list.innerHTML = `<p class="text-xs text-slate-500 dark:text-slate-400">No se detectaron compromisos pendientes ni tareas específicas en este correo.</p>`;
+                if (statusEl) statusEl.textContent = '0 detectados';
+                return;
+            }
+            if (statusEl) statusEl.textContent = `${data.commitments.length} detectados`;
+            list.innerHTML = data.commitments.map((c, idx) => {
+                const escapedTitle = this.escapeHtml(c.title || '');
+                const safeAttrTitle = (c.title || '').replace(/"/g, '&quot;').replace(/'/g, "\\'");
+                const escapedDue = this.escapeHtml(c.due_hint || '');
+                const safeAttrDue = (c.due_hint || '').replace(/"/g, '&quot;').replace(/'/g, "\\'");
+                return `
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/70 border border-cyan-200/80 dark:border-cyan-800/40 text-xs shadow-2xs">
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2">
+                                <span class="font-semibold text-slate-900 dark:text-slate-100">${escapedTitle}</span>
+                                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${c.priority === 'alta' ? 'bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}">${c.priority || 'media'}</span>
+                            </div>
+                            ${escapedDue ? `<div class="text-[11px] text-cyan-600 dark:text-cyan-400 mt-0.5">⏳ Plazo estimado: ${escapedDue}</div>` : ''}
+                        </div>
+                        <div class="flex items-center gap-1.5 shrink-0 self-end sm:self-center" id="commitment-actions-${emailId}-${idx}">
+                            <button type="button" onclick="EmailManager.convertCommitment(${emailId}, '${safeAttrTitle}', 'task', '${safeAttrDue}', this)" class="inline-flex items-center gap-1 px-2.5 py-1.5 bg-cyan-600 hover:bg-cyan-700 text-white font-medium text-xs rounded-lg transition-colors shadow-2xs cursor-pointer" title="Convertir a tarea en el Calendario">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                <span>+ Tarea</span>
+                            </button>
+                            <button type="button" onclick="EmailManager.convertCommitment(${emailId}, '${safeAttrTitle}', 'note', '${safeAttrDue}', this)" class="inline-flex items-center gap-1 px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-medium text-xs rounded-lg transition-colors shadow-2xs cursor-pointer" title="Convertir a Nota Adhesiva en Pizarra">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                                <span>+ Nota</span>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } catch (e) {
+            list.innerHTML = `<p class="text-xs text-rose-500">Error al analizar compromisos: ${e.message}</p>`;
+        }
+    },
+
+    async convertCommitment(emailId, title, targetType, dueHint, btnEl) {
+        try {
+            if (btnEl) {
+                btnEl.disabled = true;
+                btnEl.classList.add('opacity-50', 'pointer-events-none');
+            }
+            const res = await fetch('/api/ai/commitments/convert', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email_id: emailId, title, target_type: targetType, due_hint: dueHint })
+            });
+            const data = await res.json();
+            if (data.success) {
+                UI.showStickyToast(
+                    targetType === 'task' ? 'Tarea Agendada' : 'Nota Creada',
+                    data.message || (targetType === 'task' ? 'Se añadió a tus tareas de Calendario' : 'Se añadió a tus Notas Adhesivas'),
+                    'success'
+                );
+                if (btnEl) {
+                    btnEl.innerHTML = `<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg><span>Añadido ✓</span>`;
+                    btnEl.classList.remove('bg-cyan-600', 'bg-amber-500');
+                    btnEl.classList.add('bg-emerald-600');
+                }
+                if (targetType === 'task' && window.CalendarManager) {
+                    CalendarManager.loadEvents();
+                } else if (targetType === 'note' && window.NotesManager) {
+                    NotesManager.loadNotes();
+                }
+            } else {
+                UI.showStickyToast('Error', data.detail || 'No se pudo guardar el compromiso', 'error');
+                if (btnEl) {
+                    btnEl.disabled = false;
+                    btnEl.classList.remove('opacity-50', 'pointer-events-none');
+                }
+            }
+        } catch (err) {
+            UI.showStickyToast('Error', err.message, 'error');
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.classList.remove('opacity-50', 'pointer-events-none');
+            }
+        }
+    },
+
     async setDefaultAccount(accountId) {
         try {
             const res = await fetch(`/api/accounts/${accountId}/default`, { method: 'POST' });
@@ -5324,7 +5759,7 @@ const EmailManager = {
 
                     <!-- Pie de página -->
                     <div class="print-sheet-footer border-t border-slate-200 pt-2 mt-2 text-[10px] text-slate-400 flex items-center justify-between shrink-0" style="${showHF ? '' : 'display: none;'}">
-                        <span>MerkeMail &bull; Correo Inteligente</span>
+                        <span>Senda &bull; Correo Inteligente</span>
                         <span>Página ${p + 1} de ${numPages}</span>
                     </div>
                 </div>
@@ -5625,7 +6060,7 @@ const EmailManager = {
     </div>
 
     <div class="print-footer">
-        <span>MerkeMail &bull; Correo Inteligente</span>
+        <span>Senda &bull; Correo Inteligente</span>
         <span>Impreso el ${new Date().toLocaleDateString('es-ES')}</span>
     </div>
 </body>

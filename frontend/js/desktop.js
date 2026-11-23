@@ -1,4 +1,4 @@
-// Módulo de Gestión de Aplicación de Escritorio (Desktop Linux) - MerkeMail
+// Módulo de Gestión de Aplicación de Escritorio (Desktop Linux) - Senda
 
 const DesktopBridge = {
     isDesktop: false,
@@ -530,7 +530,7 @@ const DesktopApp = {
         if (window.UI) {
             UI.showStickyToast(
                 'Inicio Automático',
-                this.autostart ? 'MerkeMail se iniciará al encender el equipo' : 'Inicio automático desactivado',
+                this.autostart ? 'Senda se iniciará al encender el equipo' : 'Inicio automático desactivado',
                 'success'
             );
         }
@@ -560,7 +560,7 @@ const DesktopApp = {
             if (data.success) {
                 this.installed = true;
                 this.updateUI();
-                if (window.UI) UI.showStickyToast('App Sincronizada', 'MerkeMail Desktop está actualizado y listo en tu sistema', 'success');
+                if (window.UI) UI.showStickyToast('App Sincronizada', 'Senda Desktop está actualizado y listo en tu sistema', 'success');
             } else {
                 if (window.UI) UI.showStickyToast('Error', data.detail || 'No se pudo sincronizar', 'error');
             }

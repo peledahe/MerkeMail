@@ -1,4 +1,4 @@
-/* Estilos Personalizados - MerkeMail */
+/* Estilos Personalizados - Senda */
 @import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
 
 body {
@@ -50,6 +50,7 @@ body {
 }
 .drawer-panel {
     transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    padding-bottom: max(1rem, env(safe-area-inset-bottom)) !important;
 }
 
 /* Notificaciones Sticky */
@@ -385,15 +386,15 @@ input[type="checkbox"]:indeterminate {
     background-color: #1e293b; /* slate-800 */
 }
 
-/* Área interactiva de arrastre invisible (hitbox) para agarrar fácilmente */
+/* Área interactiva de arrastre invisible (hitbox) para agarrar fácilmente con ratón o táctil */
 #sidebar-resizer::after,
 #email-list-resizer::after {
     content: '';
     position: absolute;
     top: 0;
     bottom: 0;
-    left: -4px;
-    width: 9px;
+    left: -10px;
+    width: 21px;
     cursor: col-resize;
     z-index: 30;
 }
@@ -676,11 +677,31 @@ body.window-resizing #email-detail-container {
         display: none !important;
     }
 
+    /* Prevención de auto-zoom indeseado en navegadores móviles (iOS Safari: font-size >= 16px) */
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    input[type="search"],
+    select,
+    textarea {
+        font-size: 16px !important;
+    }
+
     /* Ajuste en modales y drawers para pantallas pequeñas (Teléfonos < 768px) */
     .modal-content {
         margin: 0.375rem !important;
         max-width: calc(100vw - 0.75rem) !important;
         padding: 1rem !important;
+        max-height: 94dvh !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+
+    .modal-content form,
+    .modal-content .modal-scroll-body {
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
     }
 
     .drawer-root > div.fixed {
@@ -690,6 +711,7 @@ body.window-resizing #email-detail-container {
     .drawer-panel {
         width: 100vw !important;
         max-width: 100vw !important;
+        padding-bottom: max(1rem, env(safe-area-inset-bottom)) !important;
     }
 
     /* En móvil el sidebar es un cajón completo, ocultar el botón de colapsar a 64px */
@@ -711,9 +733,47 @@ body.window-resizing #email-detail-container {
         padding-bottom: 2px !important;
     }
 
-    /* Botón Volver a la lista de correos: visible en móvil */
+    /* Touch targets mínimos en móvil para acciones rápidas */
     #btn-detail-back-mobile {
         display: inline-flex !important;
+        min-width: 44px !important;
+        min-height: 44px !important;
+    }
+
+    .email-checkbox {
+        min-width: 18px !important;
+        min-height: 18px !important;
+        cursor: pointer;
+    }
+
+    .email-star-btn {
+        min-width: 38px !important;
+        min-height: 38px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+
+    #batch-actions-bar button {
+        min-width: 40px !important;
+        min-height: 40px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+
+    /* Notificaciones Sticky adaptadas para viewport móvil */
+    #sticky-notifications-container {
+        top: 0.75rem !important;
+        left: 0.75rem !important;
+        right: 0.75rem !important;
+        max-width: calc(100vw - 1.5rem) !important;
+        width: auto !important;
+        align-items: center !important;
+    }
+    .sticky-toast {
+        width: 100% !important;
+        max-width: 100% !important;
     }
 
     /* Cabecera del calendario adaptable en pantallas móviles */
@@ -768,7 +828,10 @@ body.window-resizing #email-detail-container {
         overflow-x: hidden !important;
     }
     #sidebar-container.collapsed .folder-nav-btn,
-    #sidebar-container.collapsed .label-nav-btn {
+    #sidebar-container.collapsed .label-nav-btn,
+    #sidebar-container.collapsed #nav-item-calendar,
+    #sidebar-container.collapsed #nav-item-notes,
+    #sidebar-container.collapsed button[onclick*="ContactsManager.openDrawer"] {
         justify-content: center !important;
         align-items: center !important;
         padding-left: 0 !important;
@@ -777,6 +840,10 @@ body.window-resizing #email-detail-container {
         height: 38px !important;
         margin: 2px auto !important;
         border-radius: 0.75rem !important;
+    }
+    #sidebar-container.collapsed #sidebar-contacts-pending-badge,
+    #sidebar-container.collapsed #notes-total-badge {
+        display: none !important;
     }
     #sidebar-container.collapsed .folder-nav-btn span.flex,
     #sidebar-container.collapsed .label-nav-btn .label-left-content {
@@ -1181,7 +1248,7 @@ html:not(.dark)[data-ui-design="full-tinted"] #main-header {
     box-shadow: 0 2px 10px rgba(15, 23, 42, 0.16) !important;
 }
 
-/* Marca MerkeMail en Header coloreado */
+/* Marca Senda en Header coloreado */
 html:not(.dark)[data-ui-design="topbar"] #main-header .font-bold.text-slate-900,
 html:not(.dark)[data-ui-design="sidebar-topbar"] #main-header .font-bold.text-slate-900,
 html:not(.dark)[data-ui-design="full-tinted"] #main-header .font-bold.text-slate-900 {
@@ -1847,6 +1914,50 @@ html.dark .notes-hint {
 .notes-hint p {
     font-size: 0.9rem;
     line-height: 1.6;
+}
+
+/* ================= ACCESIBILIDAD, CONTRASTE Y MICRO-INTERACCIONES ================= */
+
+/* Accesibilidad de Contraste WCAG AA en Modo Claro */
+html:not(.dark) .text-slate-400 {
+    color: #64748b !important;
+}
+
+/* Indicador de Foco Accesible para Teclado (Accesibilidad WCAG 2.1) */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid #6366f1 !important;
+    outline-offset: 2px !important;
+}
+
+/* Anular marco azul de foco en notas adhesivas (Post-its) */
+.note-body textarea,
+.note-body textarea:focus,
+.note-body textarea:focus-visible {
+    outline: none !important;
+    outline-offset: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+}
+
+.sticky-note:focus,
+.sticky-note:focus-within,
+.sticky-note:focus-visible {
+    outline: none !important;
+    outline-offset: 0 !important;
+}
+
+/* Micro-interacciones suaves táctiles para dispositivos touch */
+@media (hover: none) and (pointer: coarse) {
+    button:active,
+    .folder-nav-btn:active,
+    .email-list-item:active {
+        transform: scale(0.985);
+        transition: transform 0.1s ease;
+    }
 }
 
 

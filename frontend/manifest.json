@@ -1,6 +1,6 @@
 {
-  "name": "MerkeMail AI - Gestor de Correos y Calendario",
-  "short_name": "MerkeMail",
+  "name": "Senda AI - Gestor de Correos y Calendario",
+  "short_name": "Senda",
   "description": "Cliente de correo inteligente, unificado y potenciado con IA Gemini",
   "start_url": "/",
   "scope": "/",

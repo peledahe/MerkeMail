@@ -111,8 +111,8 @@ class ConfigService:
             os.makedirs(autostart_dir, exist_ok=True)
             content = f"""[Desktop Entry]
 Type=Application
-Name=MerkeMail
-Comment=Inicio automático de MerkeMail
+Name=Senda
+Comment=Inicio automático de Senda
 Exec={launcher} --autostart
 Icon=merkemail
 Terminal=false

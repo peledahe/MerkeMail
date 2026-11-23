@@ -1,4 +1,4 @@
-// Módulo de Gestión de Perfil de Usuario Analizado por IA - MerkeMail
+// Módulo de Gestión de Perfil de Usuario Analizado por IA - Senda
 
 const UserProfileAI = {
     profileData: null,

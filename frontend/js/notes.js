@@ -1,5 +1,5 @@
 /**
- * Gestor de Pizarra de Notas Adhesivas (MerkeMail Notes - Integración Organizer)
+ * Gestor de Pizarra de Notas Adhesivas (Senda Notes - Integración Organizer)
  */
 const NotesManager = {
     NOTE_COLORS: {
@@ -213,12 +213,19 @@ const NotesManager = {
         const deleteBtn = div.querySelector('.note-delete');
         deleteBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
+            let confirmed = false;
             if (window.UI && typeof UI.confirm === 'function') {
-                UI.confirm('¿Deseas eliminar esta nota adhesiva?', async (ok) => {
-                    if (!ok) return;
-                    await this.deleteNote(note.id, div);
+                confirmed = await UI.confirm({
+                    title: '¿Eliminar nota adhesiva?',
+                    message: '¿Estás seguro de que deseas eliminar esta nota de la pizarra? Esta acción no se puede deshacer.',
+                    confirmText: 'Eliminar',
+                    cancelText: 'Cancelar',
+                    isDanger: true
                 });
-            } else if (confirm('¿Deseas eliminar esta nota adhesiva?')) {
+            } else {
+                confirmed = confirm('¿Deseas eliminar esta nota adhesiva?');
+            }
+            if (confirmed) {
                 await this.deleteNote(note.id, div);
             }
         });
@@ -253,7 +260,7 @@ const NotesManager = {
         let saveTimer = null;
         let lastSaved = note.content || '';
 
-        const saveContent = async () => {
+        const saveContent = async (isBlur = false) => {
             clearTimeout(saveTimer);
             saveTimer = null;
             const content = textarea.value;
@@ -264,24 +271,30 @@ const NotesManager = {
             if (idx !== -1) this.notesData[idx].content = content;
 
             try {
-                await fetch(`/api/notes/${note.id}`, {
+                const res = await fetch(`/api/notes/${note.id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ content })
                 });
+                if (res.ok && isBlur && window.UI && typeof UI.showStickyToast === 'function') {
+                    UI.showStickyToast('Nota Guardada', 'Los cambios en la nota se han guardado correctamente.', 'success', 2500);
+                }
             } catch (err) {
                 console.warn('Error al guardar contenido de nota:', err);
+                if (isBlur && window.UI && typeof UI.showStickyToast === 'function') {
+                    UI.showStickyToast('Error al Guardar', 'No se pudieron guardar los cambios en la nota.', 'error', 3500);
+                }
             }
         };
 
         textarea.addEventListener('input', () => {
             clearTimeout(saveTimer);
-            saveTimer = setTimeout(saveContent, 400);
+            saveTimer = setTimeout(() => saveContent(false), 400);
         });
 
         textarea.addEventListener('blur', () => {
             clearTimeout(saveTimer);
-            saveContent();
+            saveContent(true);
         });
 
         // Evitar que clicks en el textarea inicien arrastre

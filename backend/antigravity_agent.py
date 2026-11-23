@@ -26,7 +26,7 @@ def _get_active_account(cuenta_hint: str = "") -> Dict[str, Any]:
     rows = conn.execute("SELECT id, name, email, provider, is_active FROM accounts WHERE is_active = 1").fetchall()
     conn.close()
     if not rows:
-        raise ValueError("No hay cuentas de correo activas configuradas en MerkeMail.")
+        raise ValueError("No hay cuentas de correo activas configuradas en Senda.")
     
     if cuenta_hint:
         hint_clean = str(cuenta_hint).lower().strip()
@@ -53,7 +53,7 @@ def buscar_correos(
     solo_no_leidos: bool = False,
     limite: int = 20
 ) -> str:
-    """Busca correos en TODAS las cuentas, TODAS las carpetas y TODAS las etiquetas de MerkeMail.
+    """Busca correos en TODAS las cuentas, TODAS las carpetas y TODAS las etiquetas de Senda.
     Por regla general NO incluye Papelera (TRASH), Borradores (DRAFT) ni Spam (SPAM) a menos que se indique explícitamente.
     Busca TANTO correos leídos como no leídos por defecto.
     
@@ -233,7 +233,7 @@ def leer_correo(id_correo: int) -> str:
     )
 
 def buscar_contactos(consulta: str) -> str:
-    """Busca contactos en la libreta de direcciones de MerkeMail por nombre o correo.
+    """Busca contactos en la libreta de direcciones de Senda por nombre o correo.
     
     Args:
         consulta: Nombre, apellido o dirección de correo a buscar.
@@ -293,7 +293,7 @@ def preparar_borrador_correo(destinatario: str, asunto: str, cuerpo: str, cuenta
     )
 
 def enviar_correo(destinatario: str, asunto: str, cuerpo: str, cuenta_remitente: str = "") -> str:
-    """Envía inmediatamente un correo electrónico a través del servidor de MerkeMail.
+    """Envía inmediatamente un correo electrónico a través del servidor de Senda.
     
     Args:
         destinatario: Dirección de correo del destinatario.
@@ -527,7 +527,7 @@ def gestionar_correos(ids_correos: str, accion: str, destino: str = "") -> str:
     return f"[ACCION_ELIMINACION:{del_b64}]\n✔ {len(ids)} correo(s) han sido {desc} exitosamente."
 
 def agendar_evento_calendario(titulo: str, fecha_inicio: str, fecha_fin: str, lugar: str = "", notas: str = "", calendario_id: int = 0, videollamada: str = "", invitados: str = "", todo_el_dia: int = 0) -> str:
-    """Crea una cita, evento o tarea en el Calendario de MerkeMail con soporte para videollamadas, invitados y recurrencia. Se programa por defecto en el calendario configurado por el usuario, salvo que se especifique otro.
+    """Crea una cita, evento o tarea en el Calendario de Senda con soporte para videollamadas, invitados y recurrencia. Se programa por defecto en el calendario configurado por el usuario, salvo que se especifique otro.
     
     Args:
         titulo: Nombre o asunto de la reunión, evento o tarea.
@@ -700,7 +700,7 @@ class AntigravityMailAgent:
         if not cleaned_message:
             return {
                 "success": True,
-                "response": f"¡Hola! Soy **Elio**, tu asistente inteligente en MerkeMail. Tengo acceso a {services_str} y {cals_str}. ¿En qué puedo ayudarte hoy? Puedes pedirme buscar correos, redactar borradores o consultar tu agenda.",
+                "response": f"¡Hola! Soy **Elio**, tu asistente inteligente en Senda. Tengo acceso a {services_str} y {cals_str}. ¿En qué puedo ayudarte hoy? Puedes pedirme buscar correos, redactar borradores o consultar tu agenda.",
                 "tools_used": []
             }
 
@@ -719,7 +719,7 @@ class AntigravityMailAgent:
         ayer_str = (now - timedelta(days=1)).strftime("%Y-%m-%d (%d de %B de %Y)")
 
         system_instruction = (
-            f"Eres Elio, el asistente inteligente y copiloto autónomo integrado en MerkeMail. "
+            f"Eres Elio, el asistente inteligente y copiloto autónomo integrado en Senda. "
             f"El usuario puede interactuar contigo directamente o invocarte escribiendo @elio. "
             f"Tienes acceso a herramientas en tiempo real para buscar correos, leer correos, gestionar correos (archivar, etiquetar, mover carpetas, marcar visto/no leído, destacar), preparar borradores, enviar correos, responder correos, eliminar correos, agendar citas en {cals_str} y listar eventos. "
             f"Las cuentas y servicios que el usuario REALMENTE tiene conectados son: {services_str} y {cals_str}. "

@@ -1,6 +1,6 @@
 // ========================================================
 // Gestor de Libreta de Contactos & Agenda de Direcciones
-// MerkeMail ContactsManager
+// Senda ContactsManager
 // ========================================================
 
 const ContactsManager = {
