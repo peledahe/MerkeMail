@@ -122,7 +122,13 @@ const AvatarService = {
             const color = defaultAcc.color || '#3b82f6';
 
             if (headerAvatar) {
-                headerAvatar.title = `Cuenta por defecto: ${defaultAcc.name} (${defaultAcc.email})`;
+                const isEn = window.I18n && window.I18n.currentLang === 'en';
+                const prefix = isEn ? 'Default account' : 'Cuenta por defecto';
+                const titleStr = `${prefix}: ${defaultAcc.name} (${defaultAcc.email})`;
+                headerAvatar.title = titleStr;
+                if (headerAvatar.dataset.appTooltip !== undefined) {
+                    headerAvatar.dataset.appTooltip = titleStr;
+                }
                 headerAvatar.style.border = 'none';
                 headerAvatar.style.background = 'transparent';
                 headerAvatar.style.boxShadow = `0 0 0 2px ${color}`;

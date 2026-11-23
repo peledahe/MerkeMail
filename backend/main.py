@@ -2118,8 +2118,8 @@ def reset_agent_context():
     return {"success": True, "message": "Contexto de conversación reiniciado exitosamente."}
 
 @app.get("/api/agent/summary")
-def get_agent_summary():
-    """Genera un resumen inteligente en tiempo real de correos sin leer, asuntos urgentes, citas de la semana, tareas, notas y recomendaciones con IA."""
+def get_agent_summary(lang: Optional[str] = "es"):
+    """Genera un resumen inteligente en tiempo real de correos sin leer, asuntos urgentes, citas de la semana, tareas, notas y recomendaciones con IA en español o inglés."""
     conn = get_db()
     
     # Total de correos sin leer excluyendo Papelera, Borradores y Spam
@@ -2131,6 +2131,24 @@ def get_agent_summary():
     inbox_total = conn.execute(
         "SELECT COUNT(*) as c FROM emails WHERE UPPER(COALESCE(folder, '')) IN ('INBOX', 'RECIBIDOS', '')"
     ).fetchone()["c"]
+
+    # Conteo por categorías inteligentes IA (trabajo, finanzas, personal, boletines)
+    category_counts = {"trabajo": 0, "finanzas": 0, "personal": 0, "boletines": 0}
+    cat_rows = conn.execute("""
+        SELECT ai_tags FROM emails
+        WHERE UPPER(COALESCE(folder, '')) IN ('INBOX', 'RECIBIDOS', '')
+          AND is_read = 0 AND ai_tags IS NOT NULL AND ai_tags != ''
+    """).fetchall()
+    for crow in cat_rows:
+        try:
+            tags = json.loads(crow["ai_tags"]) if isinstance(crow["ai_tags"], str) else crow["ai_tags"]
+            if isinstance(tags, list):
+                for t in tags:
+                    t_lower = str(t).lower()
+                    if t_lower in category_counts:
+                        category_counts[t_lower] += 1
+        except Exception:
+            pass
 
     acc_row = conn.execute("SELECT name, email, color FROM accounts LIMIT 1").fetchone()
     account_info = dict(acc_row) if acc_row else None
@@ -2181,8 +2199,6 @@ def get_agent_summary():
         future_events = [e for e in all_events if e.get("start_time") and e["start_time"] >= today_prefix]
         if future_events:
             upcoming_event = future_events[0]
-        elif all_events:
-            upcoming_event = all_events[-1]
     except Exception as e:
         logger.error(f"Error obteniendo próxima cita: {e}")
 
@@ -2212,23 +2228,35 @@ def get_agent_summary():
     # Generación de síntesis ejecutiva con IA (Gemini) o heurística
     ai_generated = False
     rec_text = ""
+    is_en = (lang or "").lower().startswith("en")
+    p_subjects = [r["subject"] for r in priority_rows if r["subject"]]
+    task_titles = [t["title"].replace("[Tarea]", "").strip() for t in pending_tasks[:4] if t.get("title")]
+    notes_snippets = [n["content"][:60].replace("\n", " ").strip() for n in notes[:4] if n.get("content")]
+    week_events_summary = [f"'{e['title']}' ({e.get('start_time', '').replace('T', ' ')})" for e in week_events[:4] if e.get("title")]
+    next_ev_str = f"'{upcoming_event['title']}' ({upcoming_event['start_time'].replace('T', ' ')})" if upcoming_event else ("No scheduled events" if is_en else "Sin citas agendadas")
+
     api_key = get_setting("gemini_api_key")
     if api_key:
         try:
             client = GeminiService.get_client()
             model = get_setting("gemini_model") or "gemini-3.5-flash-lite"
             
-            p_subjects = [r["subject"] for r in priority_rows if r["subject"]]
-            task_titles = [t["title"].replace("[Tarea]", "").strip() for t in pending_tasks[:3]]
-            next_ev_str = f"'{upcoming_event['title']}' ({upcoming_event['start_time'].replace('T', ' ')})" if upcoming_event else "Sin citas agendadas"
-            
-            prompt_context = f"""Genera una síntesis ejecutiva muy breve (máximo 2 a 3 oraciones directas, tono profesional y en español de Latinoamérica) para el inicio de jornada del usuario con base en sus datos:
-- Correos sin leer: {unread_count} de {inbox_total}. Alertas o asuntos prioritarios: {', '.join(p_subjects) if p_subjects else 'Ninguno urgente'}.
-- Próxima cita: {next_ev_str}.
-- Eventos en agenda esta semana: {len(week_events)}.
-- Tareas pendientes: {len(pending_tasks)} ({', '.join(task_titles) if task_titles else 'al día'}).
-- Notas adhesivas en pizarra: {notes_count}.
-Responde únicamente el texto de la síntesis en español de Latinoamérica, sin encabezados, saludos introductorios ni viñetas."""
+            if is_en:
+                prompt_context = f"""Generate a concise, professional executive briefing (2 to 4 fluid sentences in English) synthesizing the user's current workday across all modules:
+1. Inbox: {unread_count} unread emails ({inbox_total} total). Categories: {category_counts['trabajo']} work, {category_counts['finanzas']} finance, {category_counts['personal']} personal, {category_counts['boletines']} newsletters. Urgent alerts/invoices: {', '.join(p_subjects) if p_subjects else 'None'}.
+2. Schedule: Next appointment: {next_ev_str}. Weekly events ({len(week_events)} total): {', '.join(week_events_summary) if week_events_summary else 'No events this week'}.
+3. Pending Tasks ({len(pending_tasks)}): {', '.join(task_titles) if task_titles else 'None'}.
+4. Sticky Notes on Board ({notes_count}): {'; '.join(notes_snippets) if notes_snippets else 'No notes'}.
+
+MANDATORY: Synthesize all 4 areas (emails and category distribution, weekly schedule, pending tasks, and active sticky notes) into a cohesive summary. Do not omit any area. Return only the summary text without headings, greetings, or bullet points."""
+            else:
+                prompt_context = f"""Genera una síntesis ejecutiva concisa y profesional (de 2 a 4 oraciones fluidas en español de Latinoamérica) que consolide el estado de trabajo del usuario integrando todas las áreas:
+1. Bandeja de correos: {unread_count} correos sin leer de {inbox_total}. Distribución: {category_counts['trabajo']} de trabajo, {category_counts['finanzas']} de finanzas, {category_counts['personal']} personales, {category_counts['boletines']} boletines. Alertas o facturas urgentes: {', '.join(p_subjects) if p_subjects else 'Ninguna urgente'}.
+2. Agenda y Citas: Próxima cita: {next_ev_str}. Citas de la semana ({len(week_events)} en total): {', '.join(week_events_summary) if week_events_summary else 'Sin citas programadas esta semana'}.
+3. Tareas pendientes ({len(pending_tasks)}): {', '.join(task_titles) if task_titles else 'Al día sin tareas pendientes'}.
+4. Pizarra de notas adhesivas ({notes_count} notas): {'; '.join(notes_snippets) if notes_snippets else 'Pizarra vacía'}.
+
+REGLA OBLIGATORIA: Debes sintetizar e incluir expresamente las 4 áreas (correos y categorías, agenda de la semana, tareas pendientes y notas de la pizarra). No omitas ninguna de estas áreas marcadas. Devuelve únicamente el párrafo de texto en español de Latinoamérica, sin encabezados, saludos ni viñetas."""
 
             resp = GeminiService._generate_with_fallback(
                 client=client,
@@ -2247,26 +2275,70 @@ Responde únicamente el texto de la síntesis en español de Latinoamérica, sin
         has_disney_or_payment = any("pago" in (r["subject"] or "").lower() or "suspensi" in (r["subject"] or "").lower() for r in priority_rows)
         has_invoice = any("factura" in (r["subject"] or "").lower() for r in priority_rows)
 
-        if has_disney_or_payment:
-            recommendations.append("Revisar prioritariamente los avisos de pagos y alertas de cuenta para prevenir cortes en tus suscripciones.")
-        if has_invoice:
-            recommendations.append("Comprobar los importes y fechas de vencimiento de las facturas recientes.")
-        if upcoming_event:
-            start_fmt = upcoming_event['start_time'].replace('T', ' ')
-            recommendations.append(f"Considerar tu próxima cita: '{upcoming_event['title']}' ({start_fmt}).")
-        if pending_tasks:
-            recommendations.append(f"Tienes {len(pending_tasks)} tarea(s) pendiente(s) por completar.")
-        if notes_count > 0:
-            recommendations.append(f"Tienes {notes_count} nota(s) activa(s) en tu pizarra.")
-        if unread_count > 0 and not recommendations:
-            recommendations.append(f"Tienes {unread_count} correos sin leer esperando tu lectura.")
+        if is_en:
+            # 1. Correos y categorías
+            if has_disney_or_payment:
+                recommendations.append("Review payment alerts and account notifications promptly to avoid subscription interruptions.")
+            elif has_invoice:
+                recommendations.append("Check amounts and due dates of recent invoices.")
+            elif unread_count > 0:
+                cat_parts = [f"{v} {k}" for k, v in category_counts.items() if v > 0]
+                cat_info = f" ({', '.join(cat_parts)})" if cat_parts else ""
+                recommendations.append(f"You have {unread_count} unread emails{cat_info} in your inbox.")
 
-        rec_text = " ".join(recommendations) if recommendations else "Todo está en orden. No tienes asuntos pendientes de alta prioridad."
+            # 2. Agenda y citas
+            if upcoming_event:
+                start_fmt = upcoming_event['start_time'].replace('T', ' ')
+                recommendations.append(f"Keep in mind your next appointment: '{upcoming_event['title']}' ({start_fmt}).")
+            elif len(week_events) > 0:
+                recommendations.append(f"You have {len(week_events)} event(s) scheduled for this week.")
+
+            # 3. Tareas pendientes
+            if pending_tasks:
+                first_task = f": '{task_titles[0]}'" if task_titles else ""
+                recommendations.append(f"You have {len(pending_tasks)} pending task(s){first_task}.")
+
+            # 4. Notas adhesivas
+            if notes_count > 0:
+                first_note = f" ('{notes_snippets[0]}')" if notes_snippets else ""
+                recommendations.append(f"You have {notes_count} active sticky note(s) on your board{first_note}.")
+
+            rec_text = " ".join(recommendations) if recommendations else "Everything is in order across your workspace. No high priority items pending."
+        else:
+            # 1. Correos y categorías
+            if has_disney_or_payment:
+                recommendations.append("Revisar prioritariamente los avisos de pagos y alertas de cuenta para prevenir cortes en tus suscripciones.")
+            elif has_invoice:
+                recommendations.append("Comprobar los importes y fechas de vencimiento de las facturas recientes.")
+            elif unread_count > 0:
+                cat_parts = [f"{v} de {k}" for k, v in category_counts.items() if v > 0]
+                cat_info = f" ({', '.join(cat_parts)})" if cat_parts else ""
+                recommendations.append(f"Tienes {unread_count} correos sin leer{cat_info} en tu bandeja.")
+
+            # 2. Agenda y citas
+            if upcoming_event:
+                start_fmt = upcoming_event['start_time'].replace('T', ' ')
+                recommendations.append(f"Considerar tu próxima cita: '{upcoming_event['title']}' ({start_fmt}).")
+            elif len(week_events) > 0:
+                recommendations.append(f"Tienes {len(week_events)} evento(s) programado(s) para esta semana.")
+
+            # 3. Tareas pendientes
+            if pending_tasks:
+                first_task = f": '{task_titles[0]}'" if task_titles else ""
+                recommendations.append(f"Tienes {len(pending_tasks)} tarea(s) pendiente(s){first_task}.")
+
+            # 4. Notas adhesivas
+            if notes_count > 0:
+                first_note = f" ('{notes_snippets[0]}')" if notes_snippets else ""
+                recommendations.append(f"Tienes {notes_count} nota(s) activa(s) en tu pizarra{first_note}.")
+
+            rec_text = " ".join(recommendations) if recommendations else "Todo está en orden en tu espacio de trabajo. No tienes asuntos pendientes de alta prioridad."
 
     return {
         "success": True,
         "unread_count": unread_count,
         "inbox_total": inbox_total,
+        "category_counts": category_counts,
         "account": account_info,
         "priority_emails": [dict(r) for r in priority_rows],
         "recent_unreads": [dict(r) for r in unread_rows],
@@ -2481,6 +2553,42 @@ def convert_commitment(req: CommitmentConvertRequest):
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         conn.close()
+
+class TranslateEmailRequest(BaseModel):
+    email_id: Optional[int] = None
+    subject: str = ""
+    body: Optional[str] = None
+    text: Optional[str] = None
+    target_lang: str = "es"
+
+@app.post("/api/ai/translate")
+def translate_email_endpoint(req: TranslateEmailRequest):
+    """Traduce un correo electrónico (asunto y cuerpo) al idioma destino usando Gemini."""
+    subject = req.subject or ""
+    body = req.body or req.text or ""
+    if req.email_id and not body:
+        conn = get_db()
+        row = conn.execute("SELECT subject, body_html, body_text, snippet FROM emails WHERE id = ?", (req.email_id,)).fetchone()
+        conn.close()
+        if row:
+            subject = subject or row["subject"] or ""
+            body = row["body_html"] or row["body_text"] or row["snippet"] or ""
+
+    if not body and not subject:
+        raise HTTPException(status_code=400, detail="No se proporcionó contenido para traducir.")
+
+    api_key = get_setting("gemini_api_key")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Gemini API Key no configurada para traducción.")
+
+    try:
+        res = GeminiService.translate_email(subject, body, req.target_lang)
+        res["translated_subject"] = res.get("subject", subject)
+        res["translated_text"] = res.get("body", body)
+        return res
+    except Exception as e:
+        logger.error(f"Error en traducción de correo: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/ai/classify/{email_id}")
 def classify_single_email(email_id: int):

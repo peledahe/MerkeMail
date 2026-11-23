@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional
 from google import genai
@@ -367,6 +368,133 @@ class GeminiService:
             if "pago" in text or "factura" in text:
                 items.append({"title": f"Gestionar pago/factura de: {subject[:40]}", "due_hint": "Inmediato", "urgency": "alta"})
             return items
+
+    @classmethod
+    def translate_email(cls, subject: str, body: str, target_lang: str = "es") -> Dict[str, Any]:
+        """Traduce un correo electrónico (asunto y cuerpo) conservando 100% el diseño original (tablas, estilos, imágenes y fuentes)."""
+        client = cls.get_client()
+        model_name = get_setting("gemini_model", "gemini-3.5-flash-lite")
+
+        is_es = target_lang.lower().startswith("es")
+        target_name = "Español de Latinoamérica" if is_es else "English"
+
+        has_html = bool(re.search(r"<[a-z][\s\S]*>", body, re.IGNORECASE))
+        if has_html:
+            try:
+                from bs4 import BeautifulSoup, Comment
+                soup = BeautifulSoup(body, 'html.parser')
+                ignore_tags = {'style', 'script', 'head', 'meta', 'title', 'noscript'}
+                nodes = []
+                texts_dict = {}
+                idx = 0
+
+                for el in soup.find_all(string=True):
+                    if isinstance(el, Comment):
+                        continue
+                    if el.parent and el.parent.name in ignore_tags:
+                        continue
+                    stripped = el.strip()
+                    if not stripped or len(stripped) < 2 and not stripped.isalnum():
+                        continue
+                    # Ignorar si es solo dígitos, símbolos o formato de hora pura
+                    if stripped.replace(':', '').replace('/', '').replace('-', '').replace('.', '').replace(' ', '').isdigit():
+                        continue
+
+                    idx += 1
+                    key = str(idx)
+                    nodes.append((key, el))
+                    texts_dict[key] = stripped
+
+                if texts_dict:
+                    prompt = (
+                        f"You are a professional email translator. Translate the email subject and the numbered dictionary of text snippets to {target_name}.\n"
+                        f"{'Utiliza español de Latinoamérica natural, profesional y formal.' if is_es else 'Use natural, professional English.'}\n"
+                        "Do not alter brand names, company names, links, or numbers.\n"
+                        "Return a valid JSON object with exactly two keys:\n"
+                        "- 'subject': translated subject\n"
+                        "- 'translations': a dictionary mapping the exact same numeric keys to their translated text.\n\n"
+                        f"Subject: {subject}\n"
+                        f"Texts to translate:\n{json.dumps(texts_dict, ensure_ascii=False)}"
+                    )
+
+                    response = cls._generate_with_fallback(
+                        client=client,
+                        preferred_model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            temperature=0.2
+                        )
+                    )
+
+                    raw_text = (response.text or "").strip()
+                    if raw_text.startswith("```"):
+                        raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+                        raw_text = re.sub(r"\s*```$", "", raw_text).strip()
+
+                    data = json.loads(raw_text)
+                    trans_map = data.get("translations", {})
+                    translated_subject = data.get("subject", subject)
+
+                    # Reemplazar exactamente cada nodo preservando espacios iniciales y finales
+                    for key, node in nodes:
+                        t_val = trans_map.get(key) or trans_map.get(str(key))
+                        if t_val:
+                            orig_str = str(node)
+                            leading = orig_str[:len(orig_str) - len(orig_str.lstrip())]
+                            trailing = orig_str[len(orig_str.rstrip()):]
+                            node.replace_with(leading + t_val + trailing)
+
+                    return {
+                        "success": True,
+                        "target_lang": target_lang,
+                        "subject": translated_subject,
+                        "body": str(soup)
+                    }
+            except Exception as e:
+                logger.warning(f"Fallo traducción precisa de DOM con BeautifulSoup, aplicando método directo: {e}")
+
+        # Método de respaldo o para correos en texto plano
+        system_instruction = (
+            f"Eres un traductor profesional y preciso. Traduce el asunto y cuerpo del correo proporcionado al idioma {target_name}. "
+            f"{'Utiliza español de Latinoamérica natural y profesional.' if is_es else 'Use natural, professional English.'} "
+            "Conserva los saltos de línea y estructura de párrafos. "
+            "Devuelve un objeto JSON con dos campos obligatorios: 'subject' y 'body'."
+        )
+
+        content = f"Asunto a traducir:\n{subject}\n\nCuerpo a traducir:\n{body[:25000]}"
+
+        response = cls._generate_with_fallback(
+            client=client,
+            preferred_model=model_name,
+            contents=content,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                temperature=0.2
+            )
+        )
+
+        raw_text = (response.text or "").strip()
+        if raw_text.startswith("```"):
+            raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+            raw_text = re.sub(r"\s*```$", "", raw_text).strip()
+
+        try:
+            data = json.loads(raw_text)
+            return {
+                "success": True,
+                "target_lang": target_lang,
+                "subject": data.get("subject", subject),
+                "body": data.get("body", raw_text)
+            }
+        except Exception:
+            return {
+                "success": True,
+                "target_lang": target_lang,
+                "subject": subject,
+                "body": raw_text if raw_text else body
+            }
 
     @classmethod
     def classify_email(cls, subject: str, sender: str, snippet: str = "", body: str = "") -> str:

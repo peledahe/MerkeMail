@@ -530,6 +530,31 @@ const CalendarManager = {
         this.navigate(1);
     },
 
+    getMonthNames() {
+        return (window.I18n && I18n.currentLang === 'en')
+            ? ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+            : ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+    },
+
+    getDayNamesShort() {
+        return (window.I18n && I18n.currentLang === 'en')
+            ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            : ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+    },
+
+    getDayNamesFull() {
+        return (window.I18n && I18n.currentLang === 'en')
+            ? ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+            : ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+    },
+
+    formatDateTitle(dayName, date, monthName, year) {
+        if (window.I18n && I18n.currentLang === 'en') {
+            return `${dayName}, ${monthName} ${date}, ${year}`;
+        }
+        return `${dayName}, ${date} de ${monthName} de ${year}`;
+    },
+
     renderCalendar() {
         const container = document.getElementById('calendar-view-container');
         if (!container) return;
@@ -548,7 +573,7 @@ const CalendarManager = {
         const year = this.currentDate.getFullYear();
         const month = this.currentDate.getMonth();
 
-        const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+        const monthNames = this.getMonthNames();
         if (monthYearTitle) {
             monthYearTitle.textContent = `${monthNames[month]} ${year}`;
         }
@@ -634,8 +659,8 @@ const CalendarManager = {
 
     renderWeekView(container) {
         const monthYearTitle = document.getElementById('calendar-month-year');
-        const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-        const dayNamesShort = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+        const monthNames = this.getMonthNames();
+        const dayNamesShort = this.getDayNamesShort();
 
         // Calcular el Lunes de la semana
         const curr = new Date(this.currentDate);
@@ -654,10 +679,15 @@ const CalendarManager = {
         const sunday = weekDays[6];
 
         if (monthYearTitle) {
+            const isEn = window.I18n && I18n.currentLang === 'en';
             if (monday.getMonth() === sunday.getMonth()) {
-                monthYearTitle.textContent = `${monday.getDate()} - ${sunday.getDate()} de ${monthNames[monday.getMonth()]} ${monday.getFullYear()}`;
+                monthYearTitle.textContent = isEn
+                    ? `${monthNames[monday.getMonth()]} ${monday.getDate()} - ${sunday.getDate()}, ${monday.getFullYear()}`
+                    : `${monday.getDate()} - ${sunday.getDate()} de ${monthNames[monday.getMonth()]} ${monday.getFullYear()}`;
             } else {
-                monthYearTitle.textContent = `${monday.getDate()} ${monthNames[monday.getMonth()].slice(0,3)} - ${sunday.getDate()} ${monthNames[sunday.getMonth()].slice(0,3)} ${sunday.getFullYear()}`;
+                monthYearTitle.textContent = isEn
+                    ? `${monthNames[monday.getMonth()].slice(0,3)} ${monday.getDate()} - ${monthNames[sunday.getMonth()].slice(0,3)} ${sunday.getDate()}, ${sunday.getFullYear()}`
+                    : `${monday.getDate()} ${monthNames[monday.getMonth()].slice(0,3)} - ${sunday.getDate()} ${monthNames[sunday.getMonth()].slice(0,3)} ${sunday.getFullYear()}`;
             }
         }
 
@@ -758,8 +788,8 @@ const CalendarManager = {
 
     renderDayView(container) {
         const monthYearTitle = document.getElementById('calendar-month-year');
-        const monthNames = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
-        const dayNamesFull = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+        const monthNames = this.getMonthNames();
+        const dayNamesFull = this.getDayNamesFull();
 
         const curr = new Date(this.currentDate);
         const year = curr.getFullYear();
@@ -769,7 +799,7 @@ const CalendarManager = {
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(date).padStart(2, '0')}`;
 
         if (monthYearTitle) {
-            monthYearTitle.textContent = `${dayName}, ${date} de ${monthNames[month]} de ${year}`;
+            monthYearTitle.textContent = this.formatDateTitle(dayName, date, monthNames[month], year);
         }
 
         const today = new Date();
@@ -836,15 +866,15 @@ const CalendarManager = {
                     </div>
                     <div>
                         <div class="flex items-center gap-2">
-                            <h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white capitalize">${dayName}, ${date} de ${monthNames[month]} de ${year}</h2>
-                            ${isToday ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">Hoy</span>' : ''}
+                            <h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white capitalize">${this.formatDateTitle(dayName, date, monthNames[month], year)}</h2>
+                            ${isToday ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">${window.I18n ? I18n.t('cal.today') : 'Hoy'}</span>` : ''}
                         </div>
-                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${dayEvents.length} ${dayEvents.length === 1 ? 'evento programado' : 'eventos programados'}</p>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${dayEvents.length} ${window.I18n && I18n.currentLang === 'en' ? (dayEvents.length === 1 ? 'scheduled event' : 'scheduled events') : (dayEvents.length === 1 ? 'evento programado' : 'eventos programados')}</p>
                     </div>
                 </div>
                 <button onclick="CalendarManager.openNewEventModal('${dateStr}')" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs hover:shadow-md transition-all flex items-center gap-1.5 cursor-pointer">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                    <span>Nuevo Evento en este día</span>
+                    <span>${window.I18n && I18n.currentLang === 'en' ? 'New Event on this day' : 'Nuevo Evento en este día'}</span>
                 </button>
             </div>
             <div class="flex-1 overflow-y-auto">
@@ -864,17 +894,17 @@ const CalendarManager = {
 
         const dateParts = dateStr.split('-');
         const dateObj = new Date(parseInt(dateParts[0], 10), parseInt(dateParts[1], 10) - 1, parseInt(dateParts[2], 10));
-        const dayNamesFull = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
-        const monthNames = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+        const dayNamesFull = this.getDayNamesFull();
+        const monthNames = this.getMonthNames();
 
-        const formattedDate = `${dayNamesFull[dateObj.getDay()]}, ${dateObj.getDate()} de ${monthNames[dateObj.getMonth()]} de ${dateObj.getFullYear()}`;
-        if (titleEl) titleEl.textContent = `Eventos y Tareas`;
+        const formattedDate = this.formatDateTitle(dayNamesFull[dateObj.getDay()], dateObj.getDate(), monthNames[dateObj.getMonth()], dateObj.getFullYear());
+        if (titleEl) titleEl.textContent = window.I18n && I18n.currentLang === 'en' ? `Events & Tasks` : `Eventos y Tareas`;
         if (subtitleEl) subtitleEl.textContent = formattedDate;
 
         const dayEvents = this.getFilteredEvents().filter(e => e.start_time && e.start_time.startsWith(dateStr));
 
         if (dayEvents.length === 0) {
-            listEl.innerHTML = `<p class="text-xs text-slate-400 text-center py-6">No hay eventos ni tareas registradas para este día.</p>`;
+            listEl.innerHTML = `<p class="text-xs text-slate-400 text-center py-6">${window.I18n && I18n.currentLang === 'en' ? 'No events or tasks recorded for this day.' : 'No hay eventos ni tareas registradas para este día.'}</p>`;
         } else {
             listEl.innerHTML = dayEvents.map(ev => {
                 const color = this.getEventColor(ev);
@@ -894,7 +924,7 @@ const CalendarManager = {
                                     <span>${ev.calendar_name || 'Calendario'}</span>
                                     ${ev.account_name ? `<span class="inline-flex items-center gap-1 font-semibold text-[10px] text-slate-400"><span class="w-1.5 h-1.5 rounded-full" style="background-color: ${ev.account_color || color}"></span>${ev.account_name}</span>` : ''}
                                 </div>
-                                ${ev.location ? `<p class="text-[10px] text-slate-400 truncate mt-1">📍 ${ev.location}</p>` : ''}
+                                ${ev.location ? `<p class="text-[10px] text-slate-400 truncate mt-1 flex items-center gap-1"><svg class="w-3 h-3 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg><span>${ev.location}</span></p>` : ''}
                             </div>
                         </div>
                         <button type="button" onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id});" class="text-xs text-indigo-600 dark:text-indigo-400 font-semibold hover:underline shrink-0 p-1 cursor-pointer">
@@ -942,7 +972,7 @@ const CalendarManager = {
                         <div class="min-w-0">
                             <h5 class="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">${ev.title}</h5>
                             <p class="text-[11px] text-slate-500 dark:text-slate-400">${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} &bull; ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                            ${ev.location ? `<p class="text-[10px] text-slate-400 truncate mt-0.5">📍 ${ev.location}</p>` : ''}
+                            ${ev.location ? `<p class="text-[10px] text-slate-400 truncate mt-0.5 flex items-center gap-1"><svg class="w-3 h-3 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg><span>${ev.location}</span></p>` : ''}
                         </div>
                     </div>
                     <button onclick="event.stopPropagation(); CalendarManager.deleteEvent(${ev.id})" class="text-slate-400 hover:text-rose-500 p-1 transition-colors shrink-0 cursor-pointer" title="Eliminar evento">
@@ -1283,9 +1313,10 @@ const CalendarManager = {
 
         if (editEvent) {
             // Modo Edición
+            const isEn = window.I18n && window.I18n.currentLang === 'en';
             if (editIdInput) editIdInput.value = editEvent.id;
-            if (modalTitle) modalTitle.textContent = editEvent.is_task ? 'Editar Tarea' : 'Editar Evento / Cita';
-            if (submitBtn) submitBtn.textContent = 'Actualizar Cambios';
+            if (modalTitle) modalTitle.textContent = editEvent.is_task ? (isEn ? 'Edit Task' : 'Editar Tarea') : (isEn ? 'Edit Event / Appointment' : 'Editar Evento / Cita');
+            if (submitBtn) submitBtn.textContent = isEn ? 'Update Changes' : 'Actualizar Cambios';
             if (titleInput) titleInput.value = (editEvent.title || '').replace(/^\[Tarea\]\s*/i, '');
 
             const isAllDay = !!editEvent.all_day;
@@ -1409,12 +1440,14 @@ const CalendarManager = {
 
         if (inputType) inputType.value = type;
 
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
+
         if (type === 'task') {
             if (btnTask) btnTask.className = 'py-1.5 px-3 rounded-lg bg-indigo-600 text-white font-semibold shadow-2xs transition-all text-center cursor-pointer';
             if (btnEvent) btnEvent.className = 'py-1.5 px-3 rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-all text-center cursor-pointer';
-            if (modalTitle) modalTitle.textContent = editId ? 'Editar Tarea' : 'Crear Tarea / Pendiente';
-            if (titleInput) titleInput.placeholder = 'Entregar reporte, revisar contrato...';
-            if (submitBtn) submitBtn.textContent = editId ? 'Actualizar Tarea' : 'Guardar Tarea';
+            if (modalTitle) modalTitle.textContent = editId ? (isEn ? 'Edit Task' : 'Editar Tarea') : (isEn ? 'Create Task / To-do' : 'Crear Tarea / Pendiente');
+            if (titleInput) titleInput.placeholder = isEn ? 'Submit report, review contract...' : 'Entregar reporte, revisar contrato...';
+            if (submitBtn) submitBtn.textContent = editId ? (isEn ? 'Update Task' : 'Actualizar Tarea') : (isEn ? 'Save Task' : 'Guardar Tarea');
 
             // Al crear una tarea nueva, iniciar sin fecha ni hora obligatoria
             if (!editId) {
@@ -1426,9 +1459,9 @@ const CalendarManager = {
         } else {
             if (btnEvent) btnEvent.className = 'py-1.5 px-3 rounded-lg bg-indigo-600 text-white font-semibold shadow-2xs transition-all text-center cursor-pointer';
             if (btnTask) btnTask.className = 'py-1.5 px-3 rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-all text-center cursor-pointer';
-            if (modalTitle) modalTitle.textContent = editId ? 'Editar Evento / Cita' : 'Programar Evento / Cita';
-            if (titleInput) titleInput.placeholder = 'Añade un título para la reunión o cita...';
-            if (submitBtn) submitBtn.textContent = editId ? 'Actualizar Cita' : 'Guardar Cita';
+            if (modalTitle) modalTitle.textContent = editId ? (isEn ? 'Edit Event / Appointment' : 'Editar Evento / Cita') : (isEn ? 'Schedule Event / Appointment' : 'Programar Evento / Cita');
+            if (titleInput) titleInput.placeholder = isEn ? 'Add a title for the meeting or appointment...' : 'Añade un título para la reunión o cita...';
+            if (submitBtn) submitBtn.textContent = editId ? (isEn ? 'Update Event' : 'Actualizar Cita') : (isEn ? 'Save Event' : 'Guardar Cita');
 
             // En Eventos / Citas: asegurar que tenga fecha y hora normal si estaban vacíos
             const fallbackDate = this.lastDefaultEventDate || new Date().toISOString().split('T')[0];
@@ -1620,7 +1653,10 @@ const CalendarManager = {
         const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(trimmed)}`;
         return `
             <div class="space-y-1.5">
-                <p class="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium">📍 ${trimmed}</p>
+                <p class="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <span>${trimmed}</span>
+                </p>
                 <button type="button" onclick="event.preventDefault(); event.stopPropagation(); CalendarManager.openExternal('${mapsUrl}');" class="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                     <span>Ver en Google Maps</span>
@@ -1630,24 +1666,24 @@ const CalendarManager = {
     },
 
     formatEventDateTime(startTimeStr, endTimeStr, allDay = 0) {
-        if (!startTimeStr) return { dateStr: 'Sin fecha asignada (Tarea pendiente)', timeStr: '', durationStr: '' };
+        if (!startTimeStr) return { dateStr: window.I18n && I18n.currentLang === 'en' ? 'No date assigned (Pending task)' : 'Sin fecha asignada (Tarea pendiente)', timeStr: '', durationStr: '' };
         const start = new Date(startTimeStr);
         const end = endTimeStr ? new Date(endTimeStr) : null;
 
-        const dayNames = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
-        const monthNames = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+        const dayNames = this.getDayNamesFull();
+        const monthNames = this.getMonthNames();
 
         const dayOfWeek = dayNames[start.getDay()];
         const dayOfMonth = start.getDate();
         const month = monthNames[start.getMonth()];
         const year = start.getFullYear();
 
-        const dateStr = `${dayOfWeek}, ${dayOfMonth} de ${month} de ${year}`;
+        const dateStr = this.formatDateTitle(dayOfWeek, dayOfMonth, month, year);
         let timeStr = '';
         let durationStr = '';
 
         if (allDay) {
-            timeStr = 'Todo el día';
+            timeStr = window.I18n ? I18n.t('cal.all_day') : 'Todo el día';
         } else {
             const startHour = start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             if (end && !isNaN(end.getTime()) && end.getTime() !== start.getTime()) {
@@ -1748,11 +1784,11 @@ const CalendarManager = {
             // Ubicación / Videollamada
             const recBadge = document.getElementById('event-detail-recurrence-badge');
             const recLabels = {
-                'daily': '🔁 Todos los días',
-                'weekly': '🔁 Cada semana',
-                'monthly': '🔁 Cada mes',
-                'yearly': '🔁 Anualmente',
-                'weekdays': '🔁 Días laborables'
+                'daily': 'Todos los días',
+                'weekly': 'Cada semana',
+                'monthly': 'Cada mes',
+                'yearly': 'Anualmente',
+                'weekdays': 'Días laborables'
             };
             if (recBadge) {
                 if (ev.recurrence && recLabels[ev.recurrence]) {

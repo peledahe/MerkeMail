@@ -132,17 +132,19 @@ const UI = {
             const checkboxEl = document.getElementById('confirm-modal-checkbox');
             const checkboxLabelEl = document.getElementById('confirm-modal-checkbox-label');
 
-            titleEl.textContent = title;
-            messageEl.textContent = message;
-            confirmBtn.textContent = confirmText;
-            cancelBtn.textContent = cancelText;
+            const translate = (txt) => (window.I18n && typeof I18n.translateText === 'function') ? I18n.translateText(txt) : txt;
+
+            titleEl.textContent = translate(title);
+            messageEl.textContent = translate(message);
+            confirmBtn.textContent = translate(confirmText);
+            cancelBtn.textContent = translate(cancelText);
 
             if (checkboxContainer && checkboxEl) {
                 if (showDontAskAgain) {
                     checkboxContainer.classList.remove('hidden');
                     checkboxEl.checked = false;
                     if (checkboxLabelEl && dontAskAgainLabel) {
-                        checkboxLabelEl.textContent = dontAskAgainLabel;
+                        checkboxLabelEl.textContent = translate(dontAskAgainLabel);
                     }
                 } else {
                     checkboxContainer.classList.add('hidden');
@@ -241,6 +243,9 @@ const UI = {
 
         drawer.classList.remove('hidden');
         document.body.classList.add('overflow-hidden');
+        if (window.I18n) {
+            I18n.applyToDom();
+        }
         if (drawerId === 'drawer-antigravity-copilot' && window.AntigravityCopilot) {
             AntigravityCopilot.onOpenDrawer();
         }
@@ -1044,7 +1049,17 @@ const UI = {
                 targetEl.removeAttribute('title');
             }
 
-            const text = targetEl.dataset.appTooltip || targetEl.dataset.tooltip || '';
+            let text = '';
+            if (targetEl.hasAttribute('data-i18n-title') && window.I18n) {
+                text = I18n.t(targetEl.getAttribute('data-i18n-title'));
+            } else {
+                text = targetEl.dataset.appTooltip || targetEl.dataset.tooltip || '';
+                if (window.I18n && typeof I18n.translateTooltip === 'function') {
+                    const translated = I18n.translateTooltip(text);
+                    if (translated) text = translated;
+                }
+            }
+
             if (!text || text.trim() === '') {
                 hideTooltip();
                 return;
@@ -1223,7 +1238,6 @@ const UI = {
 
         // Verificar si la app ya está instalada / en modo standalone o modo desktop nativo
         const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop) || 
-                          window.location.port === '6524' || 
                           window.location.search.includes('desktop=1') ||
                           window.matchMedia('(display-mode: standalone)').matches || 
                           window.navigator.standalone === true;
@@ -1235,7 +1249,6 @@ const UI = {
             e.preventDefault();
             this.deferredPrompt = e;
             const currentIsDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop) || 
-                                     window.location.port === '6524' || 
                                      window.location.search.includes('desktop=1');
             if (!currentIsDesktop) {
                 this.updatePWAUIState(false);

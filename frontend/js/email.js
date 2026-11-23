@@ -27,10 +27,34 @@ const EmailManager = {
     emailDetailCache: new Map(),
     selectedCategory: '',
     lastSummaryData: null,
+    emailTranslations: {},
+    emailOriginals: {},
+    emailShowingTranslation: {},
+    emailCurrentTranslationLang: {},
 
     getFolderDisplayName(folder) {
-        if (!folder) return 'Recibidos';
+        if (!folder) return (window.I18n ? I18n.t('nav.inbox') : 'Recibidos');
         const clean = String(folder).trim().toUpperCase();
+        if (window.I18n) {
+            const i18nMap = {
+                'INBOX': I18n.t('nav.inbox'),
+                'CATEGORY_UPDATES': I18n.t('nav.notifications'),
+                'CATEGORY_PROMOTIONS': I18n.t('nav.promotions'),
+                'CATEGORY_SOCIAL': I18n.t('nav.social'),
+                'CATEGORY_FORUMS': I18n.t('nav.forums'),
+                'CATEGORY_PERSONAL': I18n.t('filter.personal'),
+                'SENT': I18n.t('nav.sent'),
+                'DRAFT': I18n.t('nav.drafts'),
+                'DRAFTS': I18n.t('nav.drafts'),
+                'TRASH': I18n.t('nav.trash'),
+                'SPAM': I18n.t('nav.spam'),
+                'STARRED': I18n.t('nav.starred'),
+                'IMPORTANT': I18n.t('nav.important'),
+                'ALL': I18n.t('nav.all_mail'),
+                'ARCHIVE': I18n.t('email.move')
+            };
+            if (i18nMap[clean]) return i18nMap[clean];
+        }
         const map = {
             'INBOX': 'Recibidos',
             'CATEGORY_UPDATES': 'Notificaciones',
@@ -54,6 +78,27 @@ const EmailManager = {
     getLabelDisplayName(name) {
         if (!name) return '';
         const clean = String(name).trim();
+        if (window.I18n) {
+            const i18nMap = {
+                'CATEGORY_UPDATES': I18n.t('nav.notifications'),
+                'CATEGORY_PROMOTIONS': I18n.t('nav.promotions'),
+                'CATEGORY_SOCIAL': I18n.t('nav.social'),
+                'CATEGORY_FORUMS': I18n.t('nav.forums'),
+                'CATEGORY_PERSONAL': I18n.t('filter.personal'),
+                'INBOX': I18n.t('nav.inbox'),
+                'SENT': I18n.t('nav.sent'),
+                'DRAFT': I18n.t('nav.drafts'),
+                'DRAFTS': I18n.t('nav.drafts'),
+                'TRASH': I18n.t('nav.trash'),
+                'SPAM': I18n.t('nav.spam'),
+                'STARRED': I18n.t('nav.starred'),
+                'UNREAD': I18n.t('batch.unread'),
+                'IMPORTANT': I18n.t('nav.important')
+            };
+            if (i18nMap[clean] || i18nMap[clean.toUpperCase()]) {
+                return i18nMap[clean] || i18nMap[clean.toUpperCase()];
+            }
+        }
         const map = {
             'CATEGORY_UPDATES': 'Notificaciones',
             'CATEGORY_PROMOTIONS': 'Promociones',
@@ -86,28 +131,29 @@ const EmailManager = {
         const map = {
             'trabajo': {
                 icon: '<svg class="w-3 h-3 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>',
-                text: 'Trabajo',
+                text: window.I18n ? I18n.t('filter.work') : 'Trabajo',
                 cls: 'bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
             },
             'finanzas': {
                 icon: '<svg class="w-3 h-3 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>',
-                text: 'Finanzas',
+                text: window.I18n ? I18n.t('filter.finance') : 'Finanzas',
                 cls: 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
             },
             'personal': {
                 icon: '<svg class="w-3 h-3 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>',
-                text: 'Personal',
+                text: window.I18n ? I18n.t('filter.personal') : 'Personal',
                 cls: 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
             },
             'boletines': {
                 icon: '<svg class="w-3 h-3 text-purple-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/></svg>',
-                text: 'Boletines',
+                text: window.I18n ? I18n.t('filter.newsletters') : 'Boletines',
                 cls: 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800'
             }
         };
         const badge = map[cat];
         if (!badge) return '';
-        return `<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.2 rounded border ${badge.cls}" title="Categoría IA: ${badge.text}">${badge.icon}<span>${badge.text}</span></span>`;
+        const titleCat = window.I18n && I18n.currentLang === 'en' ? `AI Category: ${badge.text}` : `Categoría IA: ${badge.text}`;
+        return `<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.2 rounded border ${badge.cls}" title="${titleCat}">${badge.icon}<span>${badge.text}</span></span>`;
     },
 
     matchesCategory(email, category) {
@@ -262,27 +308,31 @@ const EmailManager = {
         btn.classList.remove('hidden');
         btn.classList.add('lg:flex');
 
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
         if (status === 'active') {
             btn.className = 'hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-400 text-xs font-semibold shadow-2xs hover:opacity-90 active:scale-95 transition-all cursor-pointer';
-            btn.title = customTitle || 'Todas las cuentas conectadas y sincronizadas. Haz clic para suspender o sincronizar.';
+            btn.title = customTitle || (isEn ? 'Automatic sync active. Click to pause' : 'Sincronización automática activa. Haz clic para suspender (pausar)');
             dot.className = 'w-2 h-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse';
-            text.textContent = 'Activo';
+            text.textContent = isEn ? 'Active' : 'Activo';
         } else if (status === 'problems') {
             const errAccounts = Object.keys(this.accountErrors).length;
             btn.className = 'hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800/60 text-amber-700 dark:text-amber-400 text-xs font-semibold shadow-2xs hover:opacity-90 active:scale-95 transition-all cursor-pointer';
-            btn.title = customTitle || `${errAccounts} cuenta(s) presentan problemas de sincronización. Haz clic para ver detalles o reintentar.`;
+            btn.title = customTitle || (isEn ? `${errAccounts} account(s) have sync issues. Click to view details or retry.` : `${errAccounts} cuenta(s) presentan problemas de sincronización. Haz clic para ver detalles o reintentar.`);
             dot.className = 'w-2 h-2 rounded-full bg-amber-500 dark:bg-amber-400 animate-pulse';
-            text.textContent = 'Problemas';
+            text.textContent = isEn ? 'Issues' : 'Problemas';
         } else if (status === 'inactive') {
             btn.className = 'hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800/60 text-rose-700 dark:text-rose-400 text-xs font-semibold shadow-2xs hover:opacity-90 active:scale-95 transition-all cursor-pointer';
-            btn.title = customTitle || 'Sin conexión con el servidor. Haz clic para reintentar conectar.';
+            btn.title = customTitle || (isEn ? 'No backend connection. Click to retry connection.' : 'Sin conexión con el servidor. Haz clic para reintentar conectar.');
             dot.className = 'w-2 h-2 rounded-full bg-rose-500 dark:bg-rose-400 animate-pulse';
-            text.textContent = 'Inactivo';
+            text.textContent = isEn ? 'Offline' : 'Inactivo';
         } else if (status === 'paused') {
             btn.className = 'hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-semibold shadow-2xs hover:opacity-90 active:scale-95 transition-all cursor-pointer';
-            btn.title = 'Sincronización automática suspendida. Haz clic para reactivar.';
+            btn.title = isEn ? 'Automatic sync paused. Click to resume' : 'Sincronización automática suspendida. Haz clic para reactivar.';
             dot.className = 'w-2 h-2 rounded-full bg-slate-400';
-            text.textContent = 'Pausado';
+            text.textContent = isEn ? 'Paused' : 'Pausado';
+        }
+        if (btn.dataset.appTooltip !== undefined) {
+            btn.dataset.appTooltip = btn.title;
         }
     },
 
@@ -1754,7 +1804,11 @@ const EmailManager = {
     // Abre el modal de etiqueta. `accountId` = cuenta donde se creará; `assignToEmailId` = correo
     // al que se asignará automáticamente tras crearla (creación desde la vista del correo).
     _openLabelModal({ title, labelId = '', name = '', color = '#3b82f6', accountId = null, assignToEmailId = null, info = '' }) {
-        document.getElementById('modal-label-title').textContent = title;
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
+        const titleEl = document.getElementById('modal-label-title');
+        if (titleEl) {
+            titleEl.textContent = window.I18n ? I18n.translateText(title) : title;
+        }
         document.getElementById('manage-label-id').value = labelId;
         const accEl = document.getElementById('manage-label-account-id');
         if (accEl) accEl.value = accountId || '';
@@ -1766,13 +1820,18 @@ const EmailManager = {
         }
         document.getElementById('manage-label-name').value = name;
         this.selectLabelColor(color || '#3b82f6');
+        const submitBtn = document.querySelector('#manage-label-form button[type="submit"]');
+        if (submitBtn) {
+            submitBtn.textContent = isEn ? 'Save Label' : 'Guardar Etiqueta';
+        }
         document.getElementById('modal-manage-label').classList.remove('hidden');
         setTimeout(() => document.getElementById('manage-label-name').focus(), 100);
     },
 
     _accountLabelText(accountId) {
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
         const acc = (this.accounts || []).find(a => a.id === accountId);
-        return acc ? `<strong>${this.escapeHtml(acc.name)}</strong> (${this.escapeHtml(acc.email)})` : 'la cuenta seleccionada';
+        return acc ? `<strong>${this.escapeHtml(acc.name)}</strong> (${this.escapeHtml(acc.email)})` : (isEn ? 'the selected account' : 'la cuenta seleccionada');
     },
 
     // Crear desde la barra lateral:
@@ -1781,11 +1840,14 @@ const EmailManager = {
     //  - Una cuenta seleccionada: en la cuenta del correo abierto y asignada a ese correo;
     //    si no hay correo abierto, en la cuenta seleccionada.
     openCreateLabelModal() {
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
         if (!this.currentAccountId) {
             const accountId = this.getPrimaryAccountId();
             this._openLabelModal({
-                title: 'Nueva Etiqueta', accountId,
-                info: `Se creará en la cuenta principal ${this._accountLabelText(accountId)}. Si la asignas a correos de otras cuentas, se creará también en esas cuentas.`
+                title: isEn ? 'New Label' : 'Nueva Etiqueta', accountId,
+                info: isEn 
+                    ? `It will be created in primary account ${this._accountLabelText(accountId)}. If assigned to emails of other accounts, it will also be created in those accounts.`
+                    : `Se creará en la cuenta principal ${this._accountLabelText(accountId)}. Si la asignas a correos de otras cuentas, se creará también en esas cuentas.`
             });
             return;
         }
@@ -1795,8 +1857,10 @@ const EmailManager = {
             return;
         }
         this._openLabelModal({
-            title: 'Nueva Etiqueta', accountId: this.currentAccountId,
-            info: `Se creará en la cuenta ${this._accountLabelText(this.currentAccountId)}.`
+            title: isEn ? 'New Label' : 'Nueva Etiqueta', accountId: this.currentAccountId,
+            info: isEn 
+                ? `It will be created in account ${this._accountLabelText(this.currentAccountId)}.`
+                : `Se creará en la cuenta ${this._accountLabelText(this.currentAccountId)}.`
         });
     },
 
@@ -1808,16 +1872,19 @@ const EmailManager = {
 
     // Crear desde la vista del correo: en la cuenta del correo abierto y asignada a ese correo
     openCreateLabelModalForAccount(accountId, emailId = null) {
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
         document.querySelectorAll('[id^="email-label-dropdown"]').forEach(el => el.classList.add('hidden'));
         const opened = this.getOpenedEmail();
-        const subject = (opened && opened.id === emailId) ? (opened.subject || '(sin asunto)') : '';
-        const info = `Se creará en la cuenta ${this._accountLabelText(accountId)}` +
-            (emailId ? ` y se asignará al correo abierto${subject ? `: <em>${this.escapeHtml(subject)}</em>` : ''}` : '') + '.';
-        this._openLabelModal({ title: 'Nueva Etiqueta en Cuenta', accountId, assignToEmailId: emailId, info });
+        const subject = (opened && opened.id === emailId) ? (opened.subject || (isEn ? '(no subject)' : '(sin asunto)')) : '';
+        const info = isEn
+            ? `It will be created in account ${this._accountLabelText(accountId)}` + (emailId ? ` and assigned to the opened email${subject ? `: <em>${this.escapeHtml(subject)}</em>` : ''}` : '') + '.'
+            : `Se creará en la cuenta ${this._accountLabelText(accountId)}` + (emailId ? ` y se asignará al correo abierto${subject ? `: <em>${this.escapeHtml(subject)}</em>` : ''}` : '') + '.';
+        this._openLabelModal({ title: isEn ? 'New Label on Account' : 'Nueva Etiqueta en Cuenta', accountId, assignToEmailId: emailId, info });
     },
 
     openEditLabelModal(labelId, labelName, labelColor) {
-        this._openLabelModal({ title: 'Editar Etiqueta', labelId, name: labelName, color: labelColor });
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
+        this._openLabelModal({ title: isEn ? 'Edit Label' : 'Editar Etiqueta', labelId, name: labelName, color: labelColor });
     },
 
     selectLabelColor(color) {
@@ -2269,7 +2336,7 @@ const EmailManager = {
             listContainer.innerHTML = `
                 <div class="py-16 text-center text-slate-400 dark:text-slate-500 text-xs">
                     <svg class="w-8 h-8 stroke-1 opacity-50 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
-                    <span>${this.selectedCategory ? `No se encontraron correos en la categoría '${this.selectedCategory}'` : 'No se encontraron correos en esta bandeja'}</span>
+                    <span data-i18n="email.no_emails">${this.selectedCategory ? (window.I18n ? I18n.t('email.no_emails') : `No se encontraron correos en la categoría '${this.selectedCategory}'`) : (window.I18n ? I18n.t('email.no_emails') : 'No se encontraron correos en esta bandeja')}</span>
                 </div>
             `;
             return;
@@ -2562,27 +2629,29 @@ const EmailManager = {
                                 <span class="inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full font-medium ${isSpam ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'} shrink-0 whitespace-nowrap" title="${folderDisplayName}">
                                     <span>${folderDisplayName}</span>
                                     ${isInboxCategory && canArchiveHere ? `
-                                        <button onclick="EmailManager.archiveCurrentEmail(${email.id})" class="hover:text-rose-500 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-full w-3.5 h-3.5 flex items-center justify-center text-xs leading-none transition-colors ml-0.5 cursor-pointer shrink-0" title="Archivar (quitar de ${folderDisplayName})">&times;</button>
+                                        <button onclick="EmailManager.archiveCurrentEmail(${email.id})" data-i18n-title="email.archive" class="hover:text-rose-500 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-full w-3.5 h-3.5 flex items-center justify-center text-xs leading-none transition-colors ml-0.5 cursor-pointer shrink-0" title="${window.I18n ? I18n.t('email.archive') : `Archivar (quitar de ${folderDisplayName})`}">&times;</button>
                                     ` : ''}
                                 </span>
 
                                 ${email.has_attachments ? `
-                                    <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-200/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 shadow-2xs shrink-0 whitespace-nowrap" title="Contiene archivos adjuntos">
+                                    <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-200/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 shadow-2xs shrink-0 whitespace-nowrap" data-i18n-title="email.attachments" title="${window.I18n && I18n.currentLang === 'en' ? 'Contains attachments' : 'Contiene archivos adjuntos'}">
                                         <svg class="w-3 h-3 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
                                         </svg>
-                                        <span>Adjuntos</span>
+                                        <span>${window.I18n ? I18n.t('email.attachments') : 'Adjuntos'}</span>
                                     </span>
                                 ` : ''}
 
                                 <!-- Badges de Etiquetas Asignadas con botón '×' claro para eliminarlas -->
                                 ${emailLabels.map(lbl => {
                                     const labelDisplayName = this.getLabelDisplayName(lbl.name);
+                                    const lblTitle = window.I18n && I18n.currentLang === 'en' ? `Label: ${this.escapeHtml(labelDisplayName)}` : `Etiqueta: ${this.escapeHtml(labelDisplayName)}`;
+                                    const removeTitle = window.I18n && I18n.currentLang === 'en' ? `Remove label '${this.escapeHtml(labelDisplayName)}' from this email` : `Eliminar etiqueta '${this.escapeHtml(labelDisplayName)}' de este correo`;
                                     return `
-                                    <span class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-0.5 rounded-full shadow-2xs shrink-0 whitespace-nowrap transition-all" style="background-color: ${lbl.color}22; color: ${lbl.color}; border: 1px solid ${lbl.color}55;" title="Etiqueta: ${this.escapeHtml(labelDisplayName)}">
+                                    <span class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-0.5 rounded-full shadow-2xs shrink-0 whitespace-nowrap transition-all" style="background-color: ${lbl.color}22; color: ${lbl.color}; border: 1px solid ${lbl.color}55;" title="${lblTitle}">
                                         <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: ${lbl.color}"></span>
                                         <span class="whitespace-nowrap">${this.escapeHtml(labelDisplayName)}</span>
-                                        <button onclick="EmailManager.removeLabelFromEmail(${email.id}, ${lbl.id}, event)" class="hover:bg-black/15 dark:hover:bg-white/20 rounded-full w-4 h-4 flex items-center justify-center text-xs leading-none transition-transform hover:scale-110 ml-0.5 shrink-0 cursor-pointer" title="Eliminar etiqueta '${this.escapeHtml(labelDisplayName)}' de este correo">&times;</button>
+                                        <button onclick="EmailManager.removeLabelFromEmail(${email.id}, ${lbl.id}, event)" class="hover:bg-black/15 dark:hover:bg-white/20 rounded-full w-4 h-4 flex items-center justify-center text-xs leading-none transition-transform hover:scale-110 ml-0.5 shrink-0 cursor-pointer" title="${removeTitle}">&times;</button>
                                     </span>
                                 `;}).join('')}
                             </div>
@@ -2591,14 +2660,14 @@ const EmailManager = {
                         <!-- Acciones Rápidas Superior Derecha (Gestión Individual & Redacción) -->
                         <div id="email-top-actions-right" class="relative z-40 flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end overflow-visible">
                             <!-- Botón Volver a la Lista de Correos (Exclusivo en Móvil < 768px) -->
-                            <button id="btn-detail-back-mobile" onclick="EmailManager.backToList()" class="md:hidden flex items-center justify-center min-w-[44px] min-h-[44px] p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer shrink-0" title="Volver a la lista de correos" aria-label="Return to email list">
+                            <button id="btn-detail-back-mobile" onclick="EmailManager.backToList()" data-i18n-title="email.back_to_list" class="md:hidden flex items-center justify-center min-w-[44px] min-h-[44px] p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer shrink-0" title="${window.I18n ? I18n.t('email.back_to_list') : 'Volver a la lista de correos'}" aria-label="Return to email list">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
                                 </svg>
                             </button>
 
                             <!-- 0. Botón Mover a Carpeta -->
-                            <button id="btn-detail-move" onclick="EmailManager.toggleMoveMenu(event, 'detail', ${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer shrink-0" title="Mover a carpeta">
+                            <button id="btn-detail-move" onclick="EmailManager.toggleMoveMenu(event, 'detail', ${email.id})" data-i18n-title="email.move_to_folder" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer shrink-0" title="${window.I18n ? I18n.t('email.move_to_folder') : 'Mover a carpeta'}">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m0 0l-3-3m3 3l-3 3"/>
@@ -2606,23 +2675,23 @@ const EmailManager = {
                             </button>
                             <!-- 1. Botón Archivar / Almacenar (Oculto en Papelera, Spam, Borradores y en "Todos") -->
                             ${canArchiveHere ? `
-                                <button onclick="EmailManager.archiveCurrentEmail(${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Archivar correo (quitar de Recibidos)">
+                                <button onclick="EmailManager.archiveCurrentEmail(${email.id})" data-i18n-title="email.archive" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${window.I18n ? I18n.t('email.archive') : 'Archivar correo (quitar de Recibidos)'}">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
                                 </button>
                             ` : ''}
 
                             <!-- 2. Botón Marcar como Spam / No es spam -->
-                            <button onclick="EmailManager.markSpamCurrentEmail(${email.id})" class="p-2 ${isSpam ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800' : 'text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-slate-200 dark:border-slate-800'} rounded-lg border transition-colors shadow-2xs cursor-pointer" title="${isSpam ? 'Marcar como legítimo (mover a Recibidos)' : 'Marcar como spam'}">
+                            <button onclick="EmailManager.markSpamCurrentEmail(${email.id})" data-i18n-title="${isSpam ? 'email.mark_not_spam' : 'email.mark_spam'}" class="p-2 ${isSpam ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800' : 'text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-slate-200 dark:border-slate-800'} rounded-lg border transition-colors shadow-2xs cursor-pointer" title="${isSpam ? (window.I18n ? I18n.t('email.mark_not_spam') : 'Marcar como legítimo (mover a Recibidos)') : (window.I18n ? I18n.t('email.mark_spam') : 'Marcar como spam')}">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
                             </button>
 
                             <!-- 3. Botón Eliminar / Mover a Papelera -->
-                            <button onclick="EmailManager.deleteCurrentEmail(${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Mover a papelera">
+                            <button onclick="EmailManager.deleteCurrentEmail(${email.id})" data-i18n-title="email.move_to_trash" class="p-2 text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${window.I18n ? I18n.t('email.move_to_trash') : 'Mover a papelera'}">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                             </button>
 
                             <!-- 4. Botón Marcar como visto / no leído -->
-                            <button id="btn-top-toggle-read" onclick="EmailManager.toggleReadCurrentEmail(${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${email.is_read ? 'Marcar como no leído' : 'Marcar como visto'}">
+                            <button id="btn-top-toggle-read" onclick="EmailManager.toggleReadCurrentEmail(${email.id})" data-i18n-title="${email.is_read ? 'email.mark_unread' : 'email.mark_read'}" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${email.is_read ? (window.I18n ? I18n.t('email.mark_unread') : 'Marcar como no leído') : (window.I18n ? I18n.t('email.mark_read') : 'Marcar como visto')}">
                                 ${email.is_read ? `
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                                 ` : `
@@ -2632,7 +2701,7 @@ const EmailManager = {
 
                             <!-- 5. Botón Asignar Etiquetas (Individual) con menú desplegable en primer plano -->
                             <div class="relative inline-block shrink-0">
-                                <button id="btn-toggle-email-labels-top-${email.id}" onclick="EmailManager.toggleAssignLabelDropdown(${email.id}, event, 'top')" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Asignar o quitar etiquetas a este correo">
+                                <button id="btn-toggle-email-labels-top-${email.id}" onclick="EmailManager.toggleAssignLabelDropdown(${email.id}, event, 'top')" data-i18n-title="email.assign_labels" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${window.I18n ? I18n.t('email.assign_labels') : 'Asignar o quitar etiquetas a este correo'}">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
                                 </button>
                                 <div id="email-label-dropdown-top-${email.id}" class="hidden fixed w-64 max-h-80 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-[9999] py-1.5 text-xs backdrop-blur-md">
@@ -2641,7 +2710,7 @@ const EmailManager = {
                             </div>
 
                             <!-- 6. Botón Destacar -->
-                            <button onclick="EmailManager.toggleStar(${email.id}, event)" class="p-2 text-slate-500 dark:text-slate-400 hover:text-amber-500 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${isStarred ? 'Quitar de destacados' : 'Destacar'}">
+                            <button onclick="EmailManager.toggleStar(${email.id}, event)" data-i18n-title="${isStarred ? 'email.unstar' : 'email.star'}" class="p-2 text-slate-500 dark:text-slate-400 hover:text-amber-500 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${isStarred ? (window.I18n ? I18n.t('email.unstar') : 'Quitar de destacados') : (window.I18n ? I18n.t('email.star') : 'Destacar')}">
                                 <svg class="w-4 h-4 ${isStarred ? 'text-amber-400 fill-amber-400' : 'fill-none'}" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
                             </button>
 
@@ -2649,32 +2718,37 @@ const EmailManager = {
                             <div class="h-4 w-px bg-slate-200 dark:bg-slate-700/80 mx-0.5"></div>
 
                             <!-- 7. Responder -->
-                            <button onclick="EmailManager.prepareReply()" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Responder">
+                            <button onclick="EmailManager.prepareReply()" data-i18n-title="email.reply" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${window.I18n ? I18n.t('email.reply') : 'Responder'}">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
                             </button>
 
                             <!-- 8. Reenviar -->
-                            <button onclick="EmailManager.prepareForward()" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Reenviar">
+                            <button onclick="EmailManager.prepareForward()" data-i18n-title="email.forward" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${window.I18n ? I18n.t('email.forward') : 'Reenviar'}">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6"/></svg>
                             </button>
 
                             <!-- 9. Responder con IA (Elio) -->
-                            <button id="btn-top-reply-ai" onclick="EmailManager.replyWithAI(${email.id})" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-purple-600 dark:text-purple-300 hover:text-white bg-purple-50 dark:bg-purple-950/40 hover:bg-gradient-to-r hover:from-indigo-600 hover:to-pink-600 rounded-lg border border-purple-200 dark:border-purple-800/60 transition-all shadow-2xs group btn-reply-ai-feature cursor-pointer" title="Responder con Elio (@elio)">
+                            <button id="btn-top-reply-ai" onclick="EmailManager.replyWithAI(${email.id})" data-i18n-title="email.reply_ai" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-purple-600 dark:text-purple-300 hover:text-white bg-purple-50 dark:bg-purple-950/40 hover:bg-gradient-to-r hover:from-indigo-600 hover:to-pink-600 rounded-lg border border-purple-200 dark:border-purple-800/60 transition-all shadow-2xs group btn-reply-ai-feature cursor-pointer" title="${window.I18n ? I18n.t('email.reply_ai') : 'Responder con Elio (@elio)'}">
                                 <svg class="w-4 h-4 text-purple-600 dark:text-purple-400 group-hover:text-amber-300 animate-spin-slow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                             </button>
 
                             <!-- 10. Agendar Cita IA -->
-                            <button id="btn-top-schedule-ai" onclick="EmailManager.scheduleFromEmail(${email.id})" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded-lg border border-emerald-200 dark:border-emerald-800/60 transition-colors shadow-2xs btn-schedule-ai-feature cursor-pointer" title="Agendar en Calendario con Elio (@elio)">
+                            <button id="btn-top-schedule-ai" onclick="EmailManager.scheduleFromEmail(${email.id})" data-i18n-title="email.schedule_ai" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded-lg border border-emerald-200 dark:border-emerald-800/60 transition-colors shadow-2xs btn-schedule-ai-feature cursor-pointer" title="${window.I18n ? I18n.t('email.schedule_ai') : 'Agendar en Calendario con Elio (@elio)'}">
                                 <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                             </button>
 
                             <!-- 10b. Detectar Compromisos y Tareas IA -->
-                            <button id="btn-top-commitments-ai-${email.id}" onclick="EmailManager.detectCommitments(${email.id})" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-cyan-600 dark:text-cyan-300 hover:bg-cyan-50 dark:hover:bg-cyan-950/50 rounded-lg border border-cyan-200 dark:border-cyan-800/60 transition-colors shadow-2xs btn-commitments-ai-feature cursor-pointer" title="Detectar compromisos, tareas y acuerdos con Elio (@elio)">
+                            <button id="btn-top-commitments-ai-${email.id}" onclick="EmailManager.detectCommitments(${email.id})" data-i18n-title="email.commitments_ai" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-cyan-600 dark:text-cyan-300 hover:bg-cyan-50 dark:hover:bg-cyan-950/50 rounded-lg border border-cyan-200 dark:border-cyan-800/60 transition-colors shadow-2xs btn-commitments-ai-feature cursor-pointer" title="${window.I18n ? I18n.t('email.commitments_ai') : 'Detectar compromisos, tareas y acuerdos con Elio (@elio)'}">
                                 <svg class="w-4 h-4 text-cyan-600 dark:text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
                             </button>
 
+                            <!-- 10c. Traducir Correo (Bilingüe ES/EN) -->
+                            <button id="btn-top-translate-ai-${email.id}" onclick="EmailManager.toggleTranslateEmail(${email.id})" data-i18n-title="email.translate" class="p-2 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-lg border border-indigo-200 dark:border-indigo-800/60 transition-colors shadow-2xs btn-translate-ai-feature cursor-pointer" title="${window.I18n ? I18n.t('email.translate') : 'Traducir correo'}">
+                                <svg class="w-4 h-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg>
+                            </button>
+
                             <!-- 11. Imprimir correo (en desktop abre visor con vista previa, en web/PWA usa el navegador nativo) -->
-                            <button id="btn-print-email" onclick="EmailManager.openPrintPreview()" class="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Imprimir correo (Ctrl+P)">
+                            <button id="btn-print-email" onclick="EmailManager.openPrintPreview()" data-i18n-title="email.print" class="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${window.I18n ? I18n.t('email.print') : 'Imprimir correo (Ctrl+P)'}">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
                             </button>
                         </div>
@@ -2686,7 +2760,7 @@ const EmailManager = {
                     <!-- Cabecera del Correo (Asunto & Ficha Remitente) -->
                     <div class="px-4 md:px-8 pt-6 pb-4 border-b border-slate-200 dark:border-slate-800/80 shrink-0 min-w-0">
                         <div class="flex items-start justify-between gap-4 mb-4 min-w-0">
-                            <h2 class="text-lg md:text-xl font-bold text-slate-900 dark:text-white leading-snug break-words min-w-0">
+                            <h2 id="email-detail-subject-${email.id}" class="text-lg md:text-xl font-bold text-slate-900 dark:text-white leading-snug break-words min-w-0">
                                 ${this.escapeHtml(email.subject || '(Sin Asunto)')}
                             </h2>
                         </div>
@@ -2738,6 +2812,22 @@ const EmailManager = {
                         <div id="ai-commitments-list-${email.id}" class="space-y-2"></div>
                     </div>
 
+                    <!-- Panel de Traducción Bilingüe (@elio) -->
+                    <div id="ai-translation-box-${email.id}" class="hidden mx-4 md:mx-8 mt-2.5 p-3 rounded-xl bg-indigo-50/90 dark:bg-slate-850 border border-indigo-200 dark:border-indigo-800/60 min-w-0 transition-all shadow-2xs">
+                        <div class="flex flex-wrap items-center justify-between gap-2 min-w-0 text-xs">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <svg class="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg>
+                                <span id="ai-translation-status-${email.id}" class="font-bold text-indigo-900 dark:text-indigo-200">Traducción de correo</span>
+                            </div>
+                            <div class="flex items-center gap-1.5 shrink-0">
+                                <button type="button" onclick="EmailManager.switchTranslationLang(${email.id}, 'es')" id="btn-trans-es-${email.id}" class="px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer bg-indigo-600 text-white border-indigo-600">Español</button>
+                                <button type="button" onclick="EmailManager.switchTranslationLang(${email.id}, 'en')" id="btn-trans-en-${email.id}" class="px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400">English</button>
+                                <div class="h-3.5 w-px bg-slate-300 dark:bg-slate-700 mx-1"></div>
+                                <button type="button" onclick="EmailManager.toggleTranslationView(${email.id})" id="btn-toggle-original-${email.id}" class="text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 underline cursor-pointer">Ver Original</button>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Cuerpo del Correo en Scroll Independiente Contenido Aislado -->
                     <div id="email-detail-scroll-container" class="flex-1 p-4 md:p-8 overflow-y-auto overflow-x-hidden min-w-0 leading-relaxed text-sm text-slate-800 dark:text-slate-200">
                         ${isSpam ? `
@@ -2776,11 +2866,11 @@ const EmailManager = {
                             </div>
                         ` : ''}
 
-                        <div class="max-w-4xl w-full mx-auto ${email.body_html ? 'bg-white' : 'bg-white dark:bg-slate-900'} rounded-2xl p-1.5 md:p-3 border border-slate-200 dark:border-slate-800 shadow-2xs overflow-x-auto min-w-0 mb-3 transition-all">
+                        <div id="email-body-content-${email.id}" class="max-w-4xl w-full mx-auto ${email.body_html ? 'bg-white' : 'bg-white dark:bg-slate-900'} rounded-2xl p-1.5 md:p-3 border border-slate-200 dark:border-slate-800 shadow-2xs overflow-x-auto min-w-0 mb-3 transition-all">
                             ${email.body_html ? `
                                 <iframe id="email-body-frame-${email.id}" class="email-body-frame w-full border-0 rounded-xl" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" scrolling="no" style="width: 100%; border: none; overflow: hidden; display: block; min-height: 30px; background-color: #ffffff;"></iframe>
                             ` : `
-                                <div class="p-3 whitespace-pre-wrap font-sans text-xs md:text-sm text-slate-800 dark:text-slate-200 break-words">${this.escapeHtml(email.body_text || email.snippet || '')}</div>
+                                <div id="email-body-text-${email.id}" class="p-3 whitespace-pre-wrap font-sans text-xs md:text-sm text-slate-800 dark:text-slate-200 break-words">${this.escapeHtml(email.body_text || email.snippet || '')}</div>
                             `}
                         </div>
 
@@ -3084,6 +3174,9 @@ const EmailManager = {
 
                     // Evaluar y ajustar ubicación de etiquetas según espacio disponible
                     EmailManager.setupLabelsResponsivePlacement();
+                    if (window.I18n) {
+                        I18n.applyToDom();
+                    }
                 }
             }, 60);
         } catch (e) {
@@ -3179,13 +3272,17 @@ const EmailManager = {
         }
     },
 
-    mountEmailBodyFrame(email, allowImages = false) {
-        if (!email || !email.body_html) return;
+    mountEmailBodyFrame(email, allowImages = false, customHtml = null) {
+        if (!email) return;
         const frame = document.getElementById(`email-body-frame-${email.id}`);
         if (!frame) return;
 
         try {
-            let html = email.body_html;
+            let html = (customHtml !== null && customHtml !== undefined) ? customHtml : email.body_html;
+            if (!html) html = email.body_text || email.snippet || '';
+            if (!/<[a-z][\s\S]*>/i.test(html)) {
+                html = `<div style="white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #1e293b; padding: 14px 6px;">${this.escapeHtml(html)}</div>`;
+            }
             const isSpam = (email.folder === 'SPAM' || this.currentFolder === 'SPAM');
             const shouldBlockImages = isSpam && !this.authorizedSpamImages.has(email.id) && !allowImages;
 
@@ -3483,7 +3580,7 @@ const EmailManager = {
 
     openEmailLink(url) {
         if (!url) return;
-        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop) || (window.location.port === '6524');
+        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop);
         const isPwa = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 
         if (isDesktop) {
@@ -3611,8 +3708,8 @@ const EmailManager = {
                 <div class="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center mb-4 shadow-2xs">
                     <svg class="w-8 h-8 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                 </div>
-                <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">Ningún correo seleccionado</h3>
-                <p class="text-xs text-slate-500 mt-1 max-w-sm">Haz clic en un correo de la lista izquierda para previsualizarlo y responder con IA.</p>
+                <h3 data-i18n="email.no_selection" class="text-sm font-semibold text-slate-700 dark:text-slate-300">${window.I18n ? I18n.t('email.no_selection') : 'Ningún correo seleccionado'}</h3>
+                <p data-i18n="email.no_selection_desc" class="text-xs text-slate-500 mt-1 max-w-sm">${window.I18n ? I18n.t('email.no_selection_desc') : 'Haz clic en un correo de la lista izquierda para previsualizarlo y responder con IA.'}</p>
             </div>
         `;
 
@@ -3695,13 +3792,14 @@ const EmailManager = {
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
                 </div>
-                <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">Elio está preparando tu resumen ejecutivo 360°...</h3>
-                <p class="text-xs text-slate-500 mt-1 max-w-sm">Consolidando en tiempo real correos, agenda de la semana, tareas, notas y recomendaciones de IA.</p>
+                <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">${window.I18n && I18n.currentLang === 'en' ? 'Elio is preparing your 360° executive summary...' : 'Elio está preparando tu resumen ejecutivo 360°...'}</h3>
+                <p class="text-xs text-slate-500 mt-1 max-w-sm">${window.I18n && I18n.currentLang === 'en' ? 'Consolidating in real time emails, week schedule, tasks, notes, and AI insights.' : 'Consolidando en tiempo real correos, agenda de la semana, tareas, notas y recomendaciones de IA.'}</p>
             </div>
         `;
 
         try {
-            const res = await fetch('/api/agent/summary');
+            const currentLang = (window.I18n && I18n.currentLang) || 'es';
+            const res = await fetch(`/api/agent/summary?lang=${encodeURIComponent(currentLang)}`);
             if (!res.ok) throw new Error('Error al obtener resumen de Elio');
             const data = await res.json();
             this.renderElioInboxSummaryView(data, detailPanel);
@@ -3726,10 +3824,11 @@ const EmailManager = {
 
     renderElioInboxSummaryView(data, detailPanel) {
         this.lastSummaryData = data;
+        const t = (k, p) => (window.I18n ? I18n.t(k, p) : k);
         const unreadCount = data.unread_count || 0;
         const inboxTotal = data.inbox_total || 0;
         const upcoming = data.upcoming_event;
-        const recommendation = data.recommendation || 'Todo está en orden en tu espacio de trabajo.';
+        const recommendation = data.recommendation || (window.I18n ? I18n.t('dashboard.today_synthesis') : 'Todo está en orden en tu espacio de trabajo.');
         const priorityEmails = (data.priority_emails && data.priority_emails.length > 0) ? data.priority_emails : (data.recent_unreads || []);
         const weekEvents = data.week_events || [];
         const pendingTasks = data.pending_tasks || [];
@@ -3743,12 +3842,12 @@ const EmailManager = {
         if (priorityEmails.length === 0) {
             priorityCardsHtml = `
                 <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 text-center text-xs text-slate-500">
-                    No tienes correos con avisos de pago, facturas o alertas pendientes en este momento.
+                    ${t('email.empty_folder')}
                 </div>
             `;
         } else {
             priorityCardsHtml = priorityEmails.map(em => {
-                const subject = this.escapeHtml(em.subject || 'Sin Asunto');
+                const subject = this.escapeHtml(em.subject || (window.I18n ? I18n.t('email.no_selection') : 'Sin Asunto'));
                 const sender = this.escapeHtml(em.sender || 'Remitente Desconocido');
                 const snippet = this.escapeHtml(em.snippet || '');
                 const date = em.date ? new Date(em.date).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
@@ -3761,7 +3860,7 @@ const EmailManager = {
                         <h4 class="text-xs font-medium text-slate-900 dark:text-white line-clamp-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">${subject}</h4>
                         <p class="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">${snippet}</p>
                         <div class="flex items-center justify-end gap-1 mt-0.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <span>Abrir correo</span>
+                            <span>${t('dashboard.open_email')}</span>
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                         </div>
                     </div>
@@ -3788,14 +3887,14 @@ const EmailManager = {
                         </div>
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
-                                <span class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">Próxima cita en Agenda</span>
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">${t('dashboard.next_appointment')}</span>
                                 <span class="px-1.5 py-0.2 rounded text-[9px] font-semibold text-white truncate max-w-[120px]" style="background-color: ${calColor};">${calName}</span>
                             </div>
                             <p class="text-xs font-bold text-slate-800 dark:text-slate-100 truncate mt-1">${evTitle}</p>
                             <span class="text-[11px] text-slate-500 dark:text-slate-400 font-mono block mt-0.5 capitalize">${evTime}</span>
                         </div>
                     </div>
-                    <span class="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold shrink-0 mt-1 flex items-center gap-0.5">Ver →</span>
+                    <span class="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold shrink-0 mt-1 flex items-center gap-0.5">${t('dashboard.see_more')}</span>
                 </div>
             `;
         }
@@ -3805,7 +3904,7 @@ const EmailManager = {
         if (weekEvents.length === 0) {
             weekEventsHtml = `
                 <div class="p-3 text-center text-xs text-slate-400 dark:text-slate-500 bg-slate-50/60 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-800">
-                    No hay eventos programados en esta semana.
+                    ${t('dashboard.no_events')}
                 </div>
             `;
         } else {
@@ -3834,7 +3933,7 @@ const EmailManager = {
         if (pendingTasks.length === 0) {
             tasksHtml = `
                 <div class="p-3 text-center text-xs text-slate-400 dark:text-slate-500 bg-slate-50/60 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-800">
-                    ¡Excelente! No tienes tareas pendientes.
+                    ${t('dashboard.no_tasks')}
                 </div>
             `;
         } else {
@@ -3867,7 +3966,7 @@ const EmailManager = {
         if (notes.length === 0) {
             notesHtml = `
                 <div class="col-span-full p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 text-center text-xs text-slate-500">
-                    No tienes notas en la pizarra. <button onclick="UI.switchMainView('notes')" class="text-indigo-600 dark:text-indigo-400 font-semibold underline ml-1">Crear primera nota</button>
+                    ${t('dashboard.no_notes')} <button onclick="UI.switchMainView('notes')" class="text-indigo-600 dark:text-indigo-400 font-semibold underline ml-1">${t('dashboard.create_first_note')}</button>
                 </div>
             `;
         } else {
@@ -3909,7 +4008,7 @@ const EmailManager = {
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
                         <span>Volver a correos</span>
                     </button>
-                    <span class="text-[11px] text-slate-400 font-medium">Resumen Ejecutivo</span>
+                    <span class="text-[11px] text-slate-400 font-medium">${t('dashboard.title')}</span>
                 </div>
 
                 <!-- Header del Resumen con Elio -->
@@ -3923,27 +4022,27 @@ const EmailManager = {
                         </div>
                         <div>
                             <div class="flex items-center gap-2 flex-wrap">
-                                <h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight">Resumen Ejecutivo de Elio</h2>
+                                <h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight">${t('dashboard.title')}</h2>
                                 <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${data.ai_generated ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20' : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20'}">
                                     <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                                    <span>${data.ai_generated ? 'Generado por Elio IA' : 'Visión 360°'}</span>
+                                    <span>${data.ai_generated ? t('dashboard.ai_generated') : t('dashboard.vision_360')}</span>
                                 </span>
                             </div>
-                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Panorama unificado de tu bandeja, calendario semanal, tareas y notas</p>
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${t('dashboard.subtitle')}</p>
                         </div>
                     </div>
                     <div class="flex items-center gap-2">
                         <!-- Botón Escuchar Briefing por Voz con Elio -->
                         <button id="btn-voice-briefing" onclick="VoiceBriefing.toggle(this)" class="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer" title="Escuchar briefing ejecutivo narrado por Elio">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/></svg>
-                            <span id="voice-briefing-label">Escuchar</span>
+                            <span id="voice-briefing-label">${t('dashboard.listen')}</span>
                         </button>
-                        <button onclick="EmailManager.showElioInboxSummary(true)" class="p-2 rounded-xl text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-2xs" title="Actualizar resumen">
+                        <button onclick="EmailManager.showElioInboxSummary(true)" class="p-2 rounded-xl text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-2xs" title="${t('dashboard.refresh')}">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                         </button>
                         <button onclick="UI.openDrawer('drawer-antigravity-copilot')" class="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors" title="Chatear con Elio">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
-                            <span>Copiloto</span>
+                            <span>${t('dashboard.copilot')}</span>
                         </button>
                     </div>
                 </div>
@@ -3951,8 +4050,8 @@ const EmailManager = {
                 <!-- Síntesis Ejecutiva de Elio -->
                 <div class="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-pink-500/5 border border-indigo-500/20 shadow-2xs space-y-2">
                     <div class="flex items-center gap-2">
-                        <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">Síntesis Ejecutiva de Hoy</h3>
+                        <svg class="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">${t('dashboard.today_synthesis')}</h3>
                     </div>
                     <p class="text-xs text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line">${this.escapeHtml(recommendation)}</p>
                 </div>
@@ -3962,28 +4061,28 @@ const EmailManager = {
                 <!-- Tarjetas Métricas Rápidas 4x1 -->
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
-                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Sin Leer</span>
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">${t('dashboard.unread')}</span>
                         <div class="mt-1 flex items-baseline gap-1.5">
                             <span class="text-2xl font-bold ${unreadCount > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-700 dark:text-slate-300'}">${unreadCount}</span>
                             <span class="text-[10px] text-slate-400">/ ${inboxTotal}</span>
                         </div>
                     </div>
                     <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs cursor-pointer hover:border-indigo-400 transition-colors" onclick="UI.switchMainView('calendar')">
-                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Citas Semana</span>
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">${t('dashboard.week_appointments')}</span>
                         <div class="mt-1 flex items-baseline gap-1.5">
                             <span class="text-2xl font-bold text-amber-500">${weekEvents.length}</span>
-                            <span class="text-[10px] text-slate-400">eventos</span>
+                            <span class="text-[10px] text-slate-400">${t('dashboard.events')}</span>
                         </div>
                     </div>
                     <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs cursor-pointer hover:border-indigo-400 transition-colors" onclick="UI.switchMainView('notes')">
-                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Notas Adhesivas</span>
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">${t('dashboard.sticky_notes')}</span>
                         <div class="mt-1 flex items-baseline gap-1.5">
                             <span class="text-2xl font-bold text-emerald-500">${notesCount}</span>
-                            <span class="text-[10px] text-slate-400">en pizarra</span>
+                            <span class="text-[10px] text-slate-400">${t('dashboard.on_board')}</span>
                         </div>
                     </div>
                     <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs cursor-pointer hover:border-indigo-400 transition-colors" onclick="UI.openDrawer('drawer-contacts')">
-                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Contactos</span>
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">${t('dashboard.contacts')}</span>
                         <div class="mt-1 flex items-baseline gap-1.5">
                             <span class="text-2xl font-bold text-sky-500">${contactsCount}</span>
                             <span class="text-[10px] text-slate-400">${pendingContacts > 0 ? `(${pendingContacts} pend.)` : 'agenda'}</span>
@@ -3999,9 +4098,9 @@ const EmailManager = {
                         <div class="flex items-center justify-between">
                             <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
                                 <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-                                <span>Correos de Atención Prioritaria</span>
+                                <span>${t('dashboard.priority_emails')}</span>
                             </h3>
-                            <span class="text-[11px] text-slate-400">Clic para abrir</span>
+                            <span class="text-[11px] text-slate-400">${t('dashboard.click_to_open')}</span>
                         </div>
                         <div class="space-y-2.5">
                             ${priorityCardsHtml}
@@ -4018,10 +4117,10 @@ const EmailManager = {
                         <div class="space-y-2">
                             <div class="flex items-center justify-between">
                                 <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                                    <svg class="w-4 h-4 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                                    <span>Agenda de la Semana Actual</span>
+                                    <svg class="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                                    <span>${t('dashboard.week_schedule')}</span>
                                 </h3>
-                                <button onclick="UI.switchMainView('calendar')" class="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold hover:underline">Ver Calendario →</button>
+                                <button onclick="UI.switchMainView('calendar')" class="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold hover:underline">${t('dashboard.see_calendar')}</button>
                             </div>
                             <div class="space-y-1.5">
                                 ${weekEventsHtml}
@@ -4033,9 +4132,9 @@ const EmailManager = {
                             <div class="flex items-center justify-between">
                                 <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
                                     <svg class="w-4 h-4 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
-                                    <span>Tareas Pendientes</span>
+                                    <span>${t('dashboard.pending_tasks')}</span>
                                 </h3>
-                                <span class="text-[11px] text-slate-400">Marca para completar</span>
+                                <span class="text-[11px] text-slate-400">${t('dashboard.mark_to_complete')}</span>
                             </div>
                             <div class="space-y-1.5">
                                 ${tasksHtml}
@@ -4048,10 +4147,10 @@ const EmailManager = {
                 <div class="pt-4 border-t border-slate-200/80 dark:border-slate-800 space-y-3">
                     <div class="flex items-center justify-between">
                         <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                            <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                            <span>Pizarra de Notas Adhesivas</span>
+                            <svg class="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                            <span>${t('dashboard.sticky_board')}</span>
                         </h3>
-                        <button onclick="UI.switchMainView('notes')" class="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold hover:underline">Ir a Pizarra de Notas →</button>
+                        <button onclick="UI.switchMainView('notes')" class="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold hover:underline">${t('dashboard.go_to_notes')}</button>
                     </div>
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         ${notesHtml}
@@ -4079,7 +4178,10 @@ const EmailManager = {
         const nowAuthorized = !isCurrentlyAuthorized;
 
         if (this.currentOpenedEmail && this.currentOpenedEmail.id === emailId) {
-            this.mountEmailBodyFrame(this.currentOpenedEmail, nowAuthorized);
+            const isShowingTrans = this.emailShowingTranslation[emailId];
+            const targetLang = this.emailCurrentTranslationLang[emailId];
+            const cached = (isShowingTrans && targetLang) ? this.emailTranslations[`${emailId}_${targetLang}`] : null;
+            this.mountEmailBodyFrame(this.currentOpenedEmail, nowAuthorized, cached ? cached.body : null);
             this.updateSpamBannerUI(emailId, nowAuthorized);
         }
     },
@@ -5068,6 +5170,219 @@ const EmailManager = {
         }
     },
 
+    detectEmailLanguage(email) {
+        if (!email) return 'es';
+        const sample = ((email.subject || '') + ' ' + (email.snippet || '') + ' ' + (email.body_text || '')).toLowerCase();
+        // Conteo de palabras distintivas en español
+        const esMatches = (sample.match(/\b(el|la|los|las|de|en|que|por|para|con|un|una|este|esta|su|sus|al|del|gracias|hola|saludos|correo|cuenta|factura|pago|nueva|nuevo|oferta|empleo|aviso|notificación)\b/gi) || []).length;
+        // Conteo de palabras distintivas en inglés
+        const enMatches = (sample.match(/\b(the|is|are|of|in|to|for|with|and|at|from|by|this|that|your|you|on|hello|thanks|regards|email|account|invoice|payment|new|job|alert|notice)\b/gi) || []).length;
+        return esMatches >= enMatches ? 'es' : 'en';
+    },
+
+    async toggleTranslateEmail(emailId) {
+        if (!emailId) emailId = this.selectedEmailId;
+        if (!emailId) return;
+
+        const email = this.currentOpenedEmail;
+        if (!email) return;
+
+        if (this.emailShowingTranslation[emailId]) {
+            this.toggleTranslationView(emailId);
+            return;
+        }
+
+        // Determinar el idioma destino: si el correo está en español -> traducir a inglés; si está en inglés -> traducir a español
+        const detected = this.detectEmailLanguage(email);
+        const targetLang = (detected === 'es') ? 'en' : 'es';
+        await this.translateCurrentEmail(emailId, targetLang);
+    },
+
+    async translateCurrentEmail(emailId, targetLang = 'es') {
+        const email = this.currentOpenedEmail;
+        if (!email) return;
+
+        if (!this.emailOriginals[emailId]) {
+            this.emailOriginals[emailId] = {
+                subject: email.subject || '',
+                body_html: email.body_html || '',
+                body_text: email.body_text || email.snippet || ''
+            };
+        }
+
+        const cacheKey = `${emailId}_${targetLang}`;
+        if (this.emailTranslations[cacheKey]) {
+            const cached = this.emailTranslations[cacheKey];
+            this.applyTranslationToView(emailId, cached.subject, cached.body, targetLang);
+            return;
+        }
+
+        const box = document.getElementById(`ai-translation-box-${emailId}`);
+        const statusEl = document.getElementById(`ai-translation-status-${emailId}`);
+        if (box) {
+            box.classList.remove('hidden');
+        }
+        if (statusEl) {
+            statusEl.innerHTML = `
+                <span class="inline-flex items-center gap-1.5 text-indigo-600 dark:text-indigo-400">
+                    <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                    <span>${window.I18n ? I18n.t('email.translating') : 'Traduciendo correo...'}</span>
+                </span>
+            `;
+        }
+
+        if (window.UI && typeof UI.showStickyToast === 'function') {
+            UI.showStickyToast(
+                window.I18n ? I18n.t('toast.translating_email') : 'Traduciendo Correo',
+                targetLang === 'en' ? 'Traduciendo al Inglés...' : 'Traduciendo al Español...',
+                'info',
+                3000
+            );
+        }
+
+        try {
+            const bodyToSend = email.body_html || email.body_text || email.snippet || '';
+            const res = await fetch('/api/ai/translate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email_id: emailId,
+                    text: bodyToSend,
+                    subject: email.subject || '',
+                    target_lang: targetLang
+                })
+            });
+
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.detail || 'Error al traducir el correo');
+            }
+
+            const data = await res.json();
+            const translatedSubject = data.translated_subject || data.subject || email.subject || '';
+            const translatedBody = data.translated_text || data.body || bodyToSend;
+
+            this.emailTranslations[cacheKey] = {
+                subject: translatedSubject,
+                body: translatedBody,
+                lang: targetLang
+            };
+
+            this.applyTranslationToView(emailId, translatedSubject, translatedBody, targetLang);
+
+            if (window.UI && typeof UI.showStickyToast === 'function') {
+                UI.showStickyToast(
+                    window.I18n ? I18n.t('toast.translated_success') : 'Correo Traducido',
+                    targetLang === 'en' ? 'Traducido al Inglés exitosamente' : 'Traducido al Español exitosamente',
+                    'success',
+                    3000
+                );
+            }
+        } catch (err) {
+            console.error('Error en traducción de correo:', err);
+            if (statusEl) {
+                statusEl.innerHTML = `<span class="text-rose-500 font-medium">Error: ${this.escapeHtml(err.message)}</span>`;
+            }
+            if (window.UI && typeof UI.showStickyToast === 'function') {
+                UI.showStickyToast('Error de Traducción', err.message, 'error');
+            }
+        }
+    },
+
+    applyTranslationToView(emailId, subject, body, targetLang) {
+        this.emailShowingTranslation[emailId] = true;
+        this.emailCurrentTranslationLang[emailId] = targetLang;
+
+        const email = this.currentOpenedEmail;
+        const subjectEl = document.getElementById(`email-detail-subject-${emailId}`);
+        if (subjectEl) {
+            subjectEl.textContent = subject;
+        }
+
+        const frame = document.getElementById(`email-body-frame-${emailId}`);
+        const textBody = document.getElementById(`email-body-text-${emailId}`);
+        if (frame && email) {
+            this.mountEmailBodyFrame(email, false, body);
+        } else if (textBody) {
+            if (/<[a-z][\s\S]*>/i.test(body)) {
+                textBody.innerHTML = body;
+            } else {
+                textBody.textContent = body;
+            }
+        }
+
+        const box = document.getElementById(`ai-translation-box-${emailId}`);
+        const statusEl = document.getElementById(`ai-translation-status-${emailId}`);
+        const btnEs = document.getElementById(`btn-trans-es-${emailId}`);
+        const btnEn = document.getElementById(`btn-trans-en-${emailId}`);
+        const btnToggleOriginal = document.getElementById(`btn-toggle-original-${emailId}`);
+
+        if (box) box.classList.remove('hidden');
+        if (statusEl) {
+            const langName = targetLang === 'en' ? 'English' : 'Español';
+            statusEl.textContent = `${window.I18n ? (targetLang === 'en' ? I18n.t('email.translated_to_en') : I18n.t('email.translated_to_es')) : 'Traducido al ' + langName}`;
+        }
+        if (btnToggleOriginal) {
+            btnToggleOriginal.textContent = window.I18n ? I18n.t('email.view_original') : 'Ver Original';
+        }
+
+        if (btnEs && btnEn) {
+            if (targetLang === 'es') {
+                btnEs.className = 'px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer bg-indigo-600 text-white border-indigo-600';
+                btnEn.className = 'px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400';
+            } else {
+                btnEn.className = 'px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer bg-indigo-600 text-white border-indigo-600';
+                btnEs.className = 'px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400';
+            }
+        }
+    },
+
+    toggleTranslationView(emailId) {
+        if (!this.emailOriginals[emailId]) return;
+        const showing = this.emailShowingTranslation[emailId];
+        const email = this.currentOpenedEmail;
+        const subjectEl = document.getElementById(`email-detail-subject-${emailId}`);
+        const frame = document.getElementById(`email-body-frame-${emailId}`);
+        const textBody = document.getElementById(`email-body-text-${emailId}`);
+        const statusEl = document.getElementById(`ai-translation-status-${emailId}`);
+        const btnToggleOriginal = document.getElementById(`btn-toggle-original-${emailId}`);
+
+        if (showing) {
+            const orig = this.emailOriginals[emailId];
+            if (subjectEl) subjectEl.textContent = orig.subject;
+            if (frame && email) {
+                this.mountEmailBodyFrame(email, false, orig.body_html || orig.body_text);
+            } else if (textBody) {
+                textBody.textContent = orig.body_text;
+            }
+            this.emailShowingTranslation[emailId] = false;
+            if (statusEl) {
+                statusEl.textContent = window.I18n ? I18n.t('email.view_original') : 'Mostrando original';
+            }
+            if (btnToggleOriginal) {
+                btnToggleOriginal.textContent = window.I18n ? I18n.t('email.view_translation') : 'Ver Traducción';
+            }
+        } else {
+            const detected = this.detectEmailLanguage(email);
+            const defaultTarget = (detected === 'es') ? 'en' : 'es';
+            const targetLang = this.emailCurrentTranslationLang[emailId] || defaultTarget;
+            const cacheKey = `${emailId}_${targetLang}`;
+            if (this.emailTranslations[cacheKey]) {
+                const cached = this.emailTranslations[cacheKey];
+                this.applyTranslationToView(emailId, cached.subject, cached.body, targetLang);
+            } else {
+                this.translateCurrentEmail(emailId, targetLang);
+            }
+        }
+    },
+
+    async switchTranslationLang(emailId, targetLang) {
+        await this.translateCurrentEmail(emailId, targetLang);
+    },
+
     async setDefaultAccount(accountId) {
         try {
             const res = await fetch(`/api/accounts/${accountId}/default`, { method: 'POST' });
@@ -5182,9 +5497,12 @@ const EmailManager = {
     openNewAccountModal() {
         UI.closeDrawer('drawer-accounts');
         const form = document.getElementById('new-account-form');
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
         form.reset();
         document.getElementById('new-account-id').value = '';
-        document.getElementById('modal-account-title').textContent = 'Conectar Nueva Cuenta';
+        document.getElementById('modal-account-title').textContent = isEn ? 'Connect New Account' : 'Conectar Nueva Cuenta';
+        const submitBtn = document.querySelector('#new-account-form button[type="submit"]');
+        if (submitBtn) submitBtn.textContent = isEn ? 'Save Account' : 'Guardar Cuenta';
         document.getElementById('new-account-color').value = '#3b82f6';
         const userInput = document.getElementById('new-account-user');
         if (userInput) {
@@ -5199,13 +5517,16 @@ const EmailManager = {
 
     async openEditAccountModal(accountId) {
         UI.closeDrawer('drawer-accounts');
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
         try {
             const res = await fetch(`/api/accounts/${accountId}`);
-            if (!res.ok) throw new Error('Cuenta no encontrada');
+            if (!res.ok) throw new Error(isEn ? 'Account not found' : 'Cuenta no encontrada');
             const data = await res.json();
 
             document.getElementById('new-account-id').value = data.id;
-            document.getElementById('modal-account-title').textContent = `Editar Cuenta: ${data.name}`;
+            document.getElementById('modal-account-title').textContent = isEn ? `Edit Account: ${data.name}` : `Editar Cuenta: ${data.name}`;
+            const submitBtn = document.querySelector('#new-account-form button[type="submit"]');
+            if (submitBtn) submitBtn.textContent = isEn ? 'Save Changes' : 'Guardar Cambios';
             document.getElementById('new-account-name').value = data.name;
             document.getElementById('new-account-email').value = data.email;
             document.getElementById('new-account-provider').value = data.provider;
@@ -5343,7 +5664,7 @@ const EmailManager = {
             return;
         }
 
-        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop) || (window.location.port === '6524');
+        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop);
         if (!isDesktop) {
             // En versión web y PWA: usar directamente la opción e interfaz nativa de impresión del navegador (Chrome / navegador del usuario)
             this.printCurrentEmail();
@@ -5861,7 +6182,7 @@ const EmailManager = {
     async executePrint() {
         if (!this.currentOpenedEmail) return;
         const email = this.currentOpenedEmail;
-        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop) || (window.location.port === '6524');
+        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop);
         const state = this.printPreviewState || {};
         const subject = email.subject || 'correo';
         const printDocHtml = this.getPrintDocHtml(state);

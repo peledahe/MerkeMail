@@ -28,11 +28,10 @@ const DesktopBridge = {
 
     detectEnvironment() {
         const params = new URLSearchParams(window.location.search);
-        const isPort6524 = window.location.port === '6524';
-        const hasDesktopParam = params.has('desktop') || params.get('app') === 'desktop';
-        const isPyQt = !!window.pyqtBridge || (navigator.userAgent && navigator.userAgent.includes('QtWebEngine'));
-        // Modo instalado de escritorio (PyQt6 / Puerto 6524 / ?desktop=1)
-        const isInstalledDesktop = isPort6524 || hasDesktopParam || isPyQt;
+        const hasDesktopParam = params.get('desktop') === '1' || params.get('desktop') === 'true' || params.get('app') === 'desktop';
+        const isPyQt = !!window.pyqtBridge || (navigator.userAgent && (navigator.userAgent.includes('QtWebEngine') || navigator.userAgent.includes('PyQt')));
+        // Modo instalado de escritorio (PyQt6 nativo / ?desktop=1)
+        const isInstalledDesktop = hasDesktopParam || isPyQt || !!window.isDesktopApp;
 
         this.isDesktop = isInstalledDesktop;
         this.applyEnvironmentUI();

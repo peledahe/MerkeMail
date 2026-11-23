@@ -41,12 +41,19 @@ window.VoiceBriefing = {
             }
         }
 
-        // Buscar preferentemente una voz en español de Latinoamérica
-        const latamLocales = ['es-419', 'es-MX', 'es-US', 'es-GT', 'es-CO', 'es-AR', 'es-CL', 'es-PE'];
-        this.selectedVoice = voices.find(v => v.lang && latamLocales.includes(v.lang)) 
-            || voices.find(v => v.lang && (v.lang.startsWith('es-') && v.lang !== 'es-ES'))
-            || voices.find(v => v.lang && v.lang.startsWith('es'))
-            || voices[0] || null;
+        // Buscar preferentemente según el idioma activo
+        const isEn = window.I18n && I18n.currentLang === 'en';
+        if (isEn) {
+            this.selectedVoice = voices.find(v => v.lang && (v.lang === 'en-US' || v.lang === 'en-GB'))
+                || voices.find(v => v.lang && v.lang.startsWith('en'))
+                || voices[0] || null;
+        } else {
+            const latamLocales = ['es-419', 'es-MX', 'es-US', 'es-GT', 'es-CO', 'es-AR', 'es-CL', 'es-PE'];
+            this.selectedVoice = voices.find(v => v.lang && latamLocales.includes(v.lang)) 
+                || voices.find(v => v.lang && (v.lang.startsWith('es-') && v.lang !== 'es-ES'))
+                || voices.find(v => v.lang && v.lang.startsWith('es'))
+                || voices[0] || null;
+        }
     },
 
     populateVoiceSelect() {
@@ -55,52 +62,86 @@ window.VoiceBriefing = {
         const voices = this.synth.getVoices();
         if (!voices || voices.length === 0) return;
 
+        const isEn = window.I18n && I18n.currentLang === 'en';
         const savedURI = localStorage.getItem('senda_reader_voice_uri') || '';
-        select.innerHTML = '<option value="">Detectar automáticamente (Español Latinoamericano)</option>';
+        select.innerHTML = isEn 
+            ? '<option value="">Auto-detect (Recommended Voice)</option>'
+            : '<option value="">Detectar automáticamente (Español Latinoamericano)</option>';
 
-        // Filtrar y ordenar voces en español
-        const latamLocales = ['es-419', 'es-MX', 'es-US', 'es-GT', 'es-CO', 'es-AR', 'es-CL', 'es-PE'];
-        const esLatam = voices.filter(v => v.lang && latamLocales.includes(v.lang));
-        const esOther = voices.filter(v => v.lang && v.lang.startsWith('es') && !latamLocales.includes(v.lang));
-        const otherVoices = voices.filter(v => !v.lang || !v.lang.startsWith('es'));
+        if (isEn) {
+            const enVoices = voices.filter(v => v.lang && v.lang.startsWith('en'));
+            const otherVoices = voices.filter(v => !v.lang || !v.lang.startsWith('en'));
 
-        if (esLatam.length > 0) {
-            const group = document.createElement('optgroup');
-            group.label = '🌎 Español Latinoamericano (Recomendadas)';
-            esLatam.forEach(v => {
-                const opt = document.createElement('option');
-                opt.value = v.voiceURI;
-                opt.textContent = `${v.name} (${v.lang})`;
-                if (v.voiceURI === savedURI) opt.selected = true;
-                group.appendChild(opt);
-            });
-            select.appendChild(group);
-        }
+            if (enVoices.length > 0) {
+                const group = document.createElement('optgroup');
+                group.label = 'English Voices (Recommended)';
+                enVoices.forEach(v => {
+                    const opt = document.createElement('option');
+                    opt.value = v.voiceURI;
+                    opt.textContent = `${v.name} (${v.lang})`;
+                    if (v.voiceURI === savedURI) opt.selected = true;
+                    group.appendChild(opt);
+                });
+                select.appendChild(group);
+            }
 
-        if (esOther.length > 0) {
-            const group = document.createElement('optgroup');
-            group.label = '🇪🇸 Otras Voces en Español';
-            esOther.forEach(v => {
-                const opt = document.createElement('option');
-                opt.value = v.voiceURI;
-                opt.textContent = `${v.name} (${v.lang})`;
-                if (v.voiceURI === savedURI) opt.selected = true;
-                group.appendChild(opt);
-            });
-            select.appendChild(group);
-        }
+            if (otherVoices.length > 0) {
+                const group = document.createElement('optgroup');
+                group.label = 'Other Languages';
+                otherVoices.slice(0, 25).forEach(v => {
+                    const opt = document.createElement('option');
+                    opt.value = v.voiceURI;
+                    opt.textContent = `${v.name} (${v.lang})`;
+                    if (v.voiceURI === savedURI) opt.selected = true;
+                    group.appendChild(opt);
+                });
+                select.appendChild(group);
+            }
+        } else {
+            // Filtrar y ordenar voces en español
+            const latamLocales = ['es-419', 'es-MX', 'es-US', 'es-GT', 'es-CO', 'es-AR', 'es-CL', 'es-PE'];
+            const esLatam = voices.filter(v => v.lang && latamLocales.includes(v.lang));
+            const esOther = voices.filter(v => v.lang && v.lang.startsWith('es') && !latamLocales.includes(v.lang));
+            const otherVoices = voices.filter(v => !v.lang || !v.lang.startsWith('es'));
 
-        if (otherVoices.length > 0) {
-            const group = document.createElement('optgroup');
-            group.label = '🌐 Otros Idiomas';
-            otherVoices.slice(0, 25).forEach(v => {
-                const opt = document.createElement('option');
-                opt.value = v.voiceURI;
-                opt.textContent = `${v.name} (${v.lang})`;
-                if (v.voiceURI === savedURI) opt.selected = true;
-                group.appendChild(opt);
-            });
-            select.appendChild(group);
+            if (esLatam.length > 0) {
+                const group = document.createElement('optgroup');
+                group.label = 'Español Latinoamericano (Recomendadas)';
+                esLatam.forEach(v => {
+                    const opt = document.createElement('option');
+                    opt.value = v.voiceURI;
+                    opt.textContent = `${v.name} (${v.lang})`;
+                    if (v.voiceURI === savedURI) opt.selected = true;
+                    group.appendChild(opt);
+                });
+                select.appendChild(group);
+            }
+
+            if (esOther.length > 0) {
+                const group = document.createElement('optgroup');
+                group.label = 'Otras Voces en Español';
+                esOther.forEach(v => {
+                    const opt = document.createElement('option');
+                    opt.value = v.voiceURI;
+                    opt.textContent = `${v.name} (${v.lang})`;
+                    if (v.voiceURI === savedURI) opt.selected = true;
+                    group.appendChild(opt);
+                });
+                select.appendChild(group);
+            }
+
+            if (otherVoices.length > 0) {
+                const group = document.createElement('optgroup');
+                group.label = 'Otros Idiomas';
+                otherVoices.slice(0, 25).forEach(v => {
+                    const opt = document.createElement('option');
+                    opt.value = v.voiceURI;
+                    opt.textContent = `${v.name} (${v.lang})`;
+                    if (v.voiceURI === savedURI) opt.selected = true;
+                    group.appendChild(opt);
+                });
+                select.appendChild(group);
+            }
         }
     },
 

@@ -498,30 +498,30 @@ const ContactsManager = {
                         </span>
                     `;
                 } else {
-                    accEl.textContent = 'Todas las cuentas';
+                    accEl.textContent = isEn ? 'All accounts' : 'Todas las cuentas';
                 }
             }
 
             const addrEl = document.getElementById('contact-view-address');
-            if (addrEl) addrEl.textContent = contact.address || 'Sin dirección registrada';
+            if (addrEl) addrEl.textContent = contact.address || (isEn ? 'No registered address' : 'Sin dirección registrada');
 
             const notesEl = document.getElementById('contact-view-notes');
-            if (notesEl) notesEl.textContent = contact.notes || 'Sin notas registradas';
+            if (notesEl) notesEl.textContent = contact.notes || (isEn ? 'No registered notes' : 'Sin notas registradas');
 
             const intEl = document.getElementById('contact-view-interactions');
-            if (intEl) intEl.textContent = `${contact.interaction_count || 1} correos / citas`;
+            if (intEl) intEl.textContent = `${contact.interaction_count || 1} ${isEn ? 'emails / appointments' : 'correos / citas'}`;
 
             const lastEl = document.getElementById('contact-view-last-contact');
             if (lastEl) {
                 if (contact.last_interacted_at) {
                     try {
                         const d = new Date(contact.last_interacted_at);
-                        lastEl.textContent = isNaN(d.getTime()) ? contact.last_interacted_at : d.toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' });
+                        lastEl.textContent = isNaN(d.getTime()) ? contact.last_interacted_at : d.toLocaleDateString(isEn ? 'en-US' : 'es-ES', { day: '2-digit', month: 'short', year: 'numeric' });
                     } catch {
                         lastEl.textContent = contact.last_interacted_at;
                     }
                 } else {
-                    lastEl.textContent = 'Reciente';
+                    lastEl.textContent = isEn ? 'Recent' : 'Reciente';
                 }
             }
 
@@ -555,15 +555,16 @@ const ContactsManager = {
             avatarEl.innerHTML = '+';
         }
 
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
         const nameEl = document.getElementById('contact-modal-display-name');
-        if (nameEl) nameEl.textContent = 'Nuevo Contacto';
+        if (nameEl) nameEl.textContent = isEn ? 'New Contact' : 'Nuevo Contacto';
 
         const emailEl = document.getElementById('contact-modal-display-email');
-        if (emailEl) emailEl.textContent = 'Ingresa los datos para registrarlo en tu libreta';
+        if (emailEl) emailEl.textContent = isEn ? 'Enter information to save into your address book' : 'Ingresa los datos para registrarlo en tu libreta';
 
         const sourceBadge = document.getElementById('contact-modal-source-badge');
         if (sourceBadge) {
-            sourceBadge.textContent = 'Creación Manual';
+            sourceBadge.textContent = isEn ? 'Manual Creation' : 'Creación Manual';
             sourceBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60 shrink-0';
         }
 
