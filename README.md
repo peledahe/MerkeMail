@@ -1,4 +1,4 @@
-# 📬 MerkeMail
+# 📬 Senda (Antes MerkeMail)
 
 Aplicación gráfica moderna de gestión de correos electrónicos y calendario unificado, desarrollada en **Python** con **FastAPI** y potenciada con el SDK oficial de **Google Gemini AI** (`google-genai`), siguiendo las directrices de diseño del estándar **02-admin-apps**.
 
