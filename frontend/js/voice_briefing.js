@@ -7,21 +7,20 @@
 window.VoiceBriefing = {
     synth: window.speechSynthesis || null,
     currentUtterance: null,
+    currentAudio: null,
     isSpeaking: false,
     selectedVoice: null,
     activeButton: null,
 
     init() {
-        if (!this.synth) {
-            console.warn('VoiceBriefing: Web Speech Synthesis no es soportado por este navegador.');
-            return;
-        }
-        this.loadVoices();
-        if (speechSynthesis.onvoiceschanged !== undefined) {
-            speechSynthesis.onvoiceschanged = () => {
-                this.loadVoices();
-                this.populateVoiceSelect();
-            };
+        if (this.synth) {
+            this.loadVoices();
+            if (speechSynthesis.onvoiceschanged !== undefined) {
+                speechSynthesis.onvoiceschanged = () => {
+                    this.loadVoices();
+                    this.populateVoiceSelect();
+                };
+            }
         }
         // Poblar selector si ya existe en el DOM
         setTimeout(() => this.populateVoiceSelect(), 300);
@@ -160,16 +159,25 @@ window.VoiceBriefing = {
     },
 
     testCurrentVoice() {
-        this.speak("Hola, esta es una prueba de la voz seleccionada para tu asistente Elio en Senda.");
+        this.speak("Hola, esta es una prueba de voz para tu asistente Elio en Senda.");
     },
 
     isSupported() {
-        return !!(window.speechSynthesis && window.SpeechSynthesisUtterance);
+        return true;
     },
 
     stop() {
+        if (this.currentAudio) {
+            try {
+                this.currentAudio.pause();
+                this.currentAudio.currentTime = 0;
+            } catch (e) {}
+            this.currentAudio = null;
+        }
         if (this.synth) {
-            this.synth.cancel();
+            try {
+                this.synth.cancel();
+            } catch (e) {}
         }
         this.isSpeaking = false;
         this.updateButtonUI(false);
@@ -178,22 +186,18 @@ window.VoiceBriefing = {
     updateButtonUI(speaking) {
         if (this.activeButton) {
             const labelEl = this.activeButton.querySelector('#voice-briefing-label') || this.activeButton.querySelector('span');
+            const isEn = window.I18n && I18n.currentLang === 'en';
             if (speaking) {
                 this.activeButton.classList.add('ring-2', 'ring-purple-400', 'animate-pulse');
-                if (labelEl) labelEl.textContent = 'Detener';
+                if (labelEl) labelEl.textContent = isEn ? 'Stop' : 'Detener';
             } else {
                 this.activeButton.classList.remove('ring-2', 'ring-purple-400', 'animate-pulse');
-                if (labelEl) labelEl.textContent = 'Escuchar';
+                if (labelEl) labelEl.textContent = isEn ? 'Listen' : 'Escuchar';
             }
         }
     },
 
     speak(text, btnEl = null) {
-        if (!this.isSupported()) {
-            if (window.UI) UI.showStickyToast('Voz no soportada', 'Tu navegador o entorno no tiene habilitada la síntesis de voz.', 'warning');
-            return;
-        }
-
         if (this.isSpeaking) {
             this.stop();
             return;
@@ -205,8 +209,8 @@ window.VoiceBriefing = {
         }
 
         this.stop(); // Limpiar colas previas
-
         this.activeButton = btnEl;
+
         const cleanText = text
             .replace(/[#*`_~]/g, '') // Quitar markdown
             .replace(/https?:\/\/\S+/g, 'enlace')
@@ -214,33 +218,90 @@ window.VoiceBriefing = {
             .replace(/\n+/g, '. ')
             .trim();
 
-        const utterance = new SpeechSynthesisUtterance(cleanText);
-        utterance.lang = (this.selectedVoice && this.selectedVoice.lang) ? this.selectedVoice.lang : 'es-419';
-        if (this.selectedVoice) {
-            utterance.voice = this.selectedVoice;
+        const lang = (window.I18n && I18n.currentLang) || 'es';
+        const isEn = lang === 'en';
+
+        // 1. Intentar reproducción de audio streaming vía endpoint nativo /api/voice/tts
+        try {
+            const ttsUrl = `/api/voice/tts?lang=${encodeURIComponent(lang)}&text=${encodeURIComponent(cleanText)}`;
+            const audio = new Audio(ttsUrl);
+            this.currentAudio = audio;
+
+            audio.onplay = () => {
+                this.isSpeaking = true;
+                this.updateButtonUI(true);
+                if (window.UI) UI.showStickyToast(
+                    isEn ? 'Elio Voice' : 'Elio en Voz',
+                    isEn ? 'Playing executive briefing...' : 'Reproduciendo briefing ejecutivo...',
+                    'info',
+                    2000
+                );
+            };
+
+            audio.onended = () => {
+                this.isSpeaking = false;
+                this.currentAudio = null;
+                this.updateButtonUI(false);
+            };
+
+            audio.onerror = (e) => {
+                console.warn('Error en streaming TTS, intentando síntesis local:', e);
+                this.currentAudio = null;
+                this.speakLocalFallback(cleanText, lang);
+            };
+
+            const playPromise = audio.play();
+            if (playPromise !== undefined) {
+                playPromise.catch((err) => {
+                    console.warn('Error al iniciar audio HTML5:', err);
+                    this.speakLocalFallback(cleanText, lang);
+                });
+            }
+        } catch (err) {
+            console.warn('Excepción reproduciendo audio, usando fallback:', err);
+            this.speakLocalFallback(cleanText, lang);
         }
-        utterance.rate = 1.0;
-        utterance.pitch = 1.0;
+    },
 
-        utterance.onstart = () => {
-            this.isSpeaking = true;
-            this.updateButtonUI(true);
-            if (window.UI) UI.showStickyToast('Elio en Voz', 'Reproduciendo briefing ejecutivo...', 'info', 2000);
-        };
-
-        utterance.onend = () => {
+    speakLocalFallback(cleanText, lang) {
+        if (!this.synth || !window.SpeechSynthesisUtterance) {
             this.isSpeaking = false;
             this.updateButtonUI(false);
-        };
+            if (window.UI) UI.showStickyToast('Audio no disponible', 'No fue posible iniciar el audio en este dispositivo.', 'warning');
+            return;
+        }
 
-        utterance.onerror = (e) => {
-            console.error('Speech error:', e);
+        try {
+            const utterance = new SpeechSynthesisUtterance(cleanText);
+            utterance.lang = (this.selectedVoice && this.selectedVoice.lang) ? this.selectedVoice.lang : (lang === 'en' ? 'en-US' : 'es-419');
+            if (this.selectedVoice) {
+                utterance.voice = this.selectedVoice;
+            }
+            utterance.rate = 1.0;
+            utterance.pitch = 1.0;
+
+            utterance.onstart = () => {
+                this.isSpeaking = true;
+                this.updateButtonUI(true);
+            };
+
+            utterance.onend = () => {
+                this.isSpeaking = false;
+                this.updateButtonUI(false);
+            };
+
+            utterance.onerror = (e) => {
+                console.error('Speech synthesis local error:', e);
+                this.isSpeaking = false;
+                this.updateButtonUI(false);
+            };
+
+            this.currentUtterance = utterance;
+            this.synth.speak(utterance);
+        } catch (e) {
             this.isSpeaking = false;
             this.updateButtonUI(false);
-        };
-
-        this.currentUtterance = utterance;
-        this.synth.speak(utterance);
+        }
     },
 
     toggle(btnEl) {

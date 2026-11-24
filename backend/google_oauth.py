@@ -167,25 +167,37 @@ class GoogleOAuthService:
 
         cfg = cls.get_credentials_config()
         decrypted_refresh = CryptoService.decrypt(acc["oauth_refresh_token"])
+
+        parsed_expiry = None
+        if acc["oauth_token_expiry"]:
+            try:
+                parsed_expiry = datetime.fromisoformat(acc["oauth_token_expiry"])
+            except Exception:
+                pass
+
         creds = Credentials(
             token=acc["oauth_access_token"],
             refresh_token=decrypted_refresh,
             token_uri="https://oauth2.googleapis.com/token",
             client_id=cfg["client_id"],
             client_secret=cfg["client_secret"],
-            scopes=None
+            scopes=None,
+            expiry=parsed_expiry
         )
 
         if creds.expired and creds.refresh_token:
             from google.auth.transport.requests import Request
-            creds.refresh(Request())
-            # Actualizar en BD
-            conn = get_db()
-            conn.execute('''
-                UPDATE accounts SET oauth_access_token = ?, oauth_token_expiry = ? WHERE id = ?
-            ''', (creds.token, creds.expiry.isoformat() if creds.expiry else None, account_id))
-            conn.commit()
-            conn.close()
+            try:
+                creds.refresh(Request())
+                # Actualizar en BD
+                conn = get_db()
+                conn.execute('''
+                    UPDATE accounts SET oauth_access_token = ?, oauth_token_expiry = ? WHERE id = ?
+                ''', (creds.token, creds.expiry.isoformat() if creds.expiry else None, account_id))
+                conn.commit()
+                conn.close()
+            except Exception as ref_err:
+                raise ValueError(f"invalid_grant: La sesión con Google expiró ({ref_err}). Se requiere reconectar la cuenta.")
 
         return creds
 

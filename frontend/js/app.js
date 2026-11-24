@@ -552,6 +552,15 @@ function setupEventListeners() {
         }
     });
 
+    // Ignorar excepciones benignas de ResizeObserver loop en renderers Chromium/QtWebEngine
+    window.addEventListener('error', (e) => {
+        if (e && e.message && (e.message.includes('ResizeObserver loop') || e.message.includes('undelivered notifications'))) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            return true;
+        }
+    });
+
     // Cerrar dropdowns de acciones por lote al hacer clic fuera
     document.addEventListener('click', (e) => {
         const selectCriteriaDrop = document.getElementById('select-criteria-dropdown');

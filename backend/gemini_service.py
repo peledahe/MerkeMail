@@ -132,19 +132,20 @@ class GeminiService:
     @classmethod
     def _generate_with_fallback(cls, client: genai.Client, preferred_model: str, contents: Any, config: Any):
         """Ejecuta generate_content priorizando baja latencia y alternando de inmediato ante 503, 429 o 404."""
+        import concurrent.futures
+
         candidate_models = [
             "gemini-3.5-flash-lite",
+            "gemini-3.7-flash",
             preferred_model,
-            "gemini-3.1-flash-lite",
-            "gemini-3.6-flash",
-            "gemini-3.5-flash",
             "gemini-3.8-flash"
         ]
         seen = set()
         models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
 
         last_error = None
-        for m in models:
+        # Limitar a máximo 2 modelos con timeout estricto de 3.5 segundos por intento para evitar demoras
+        for m in models[:2]:
             try:
                 effective_config = config
                 if isinstance(config, types.GenerateContentConfig) and getattr(config, "thinking_config", None) is None and "gemini-3" in m:
@@ -152,11 +153,18 @@ class GeminiService:
                         effective_config = config.model_copy(update={"thinking_config": types.ThinkingConfig(thinking_level="MINIMAL")})
                     except Exception:
                         effective_config = config
-                return client.models.generate_content(
-                    model=m,
-                    contents=contents,
-                    config=effective_config
-                )
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(
+                        client.models.generate_content,
+                        model=m,
+                        contents=contents,
+                        config=effective_config
+                    )
+                    return fut.result(timeout=3.5)
+            except concurrent.futures.TimeoutError:
+                last_error = TimeoutError(f"Timeout (3.5s) excedido para modelo {m}")
+                continue
             except Exception as e:
                 err_str = str(e).upper()
                 last_error = e
@@ -497,18 +505,51 @@ class GeminiService:
             }
 
     @classmethod
-    def classify_email(cls, subject: str, sender: str, snippet: str = "", body: str = "") -> str:
+    def classify_email(cls, subject: str, sender: str, snippet: str = "", body: str = "", use_llm_fallback: bool = False) -> str:
         """Clasifica un correo en: 'finanzas', 'trabajo', 'personal' o 'boletines'."""
-        text = f"{(subject or '').lower()} {(sender or '').lower()} {(snippet or '').lower()} {(body or '').lower()}"
+        sub = (subject or "").lower()
+        snd = (sender or "").lower()
+        snip = (snippet or "")[:400].lower()
 
-        if any(k in text for k in ["factura", "pago", "invoice", "payment", "banco", "tarjeta", "receipt", "recibo", "cuenta de facturación", "billing", "subscrip", "total a pagar"]):
-            return "finanzas"
-        if any(k in text for k in ["sprint", "reunión", "meeting", "proyecto", "jira", "github", "gitlab", "desarrollo", "deploy", "ticket", "bug", "teams", "meet.google"]):
+        # 1. Trabajo (vacantes, ofertas laborales, tareas, reuniones, desarrollo)
+        if any(k in sub for k in [
+            "empleo", "vacante", "plaza", "reunión", "reunion", "meeting", "sprint", "jira", "github", "gitlab",
+            "ticket", "postulación", "postulacion", "candidat", "entrevista", "desarrollador", "programador",
+            "developer", "full stack", "frontend", "backend", "cv", "curriculum", "laboral", "hiring", "job alert",
+            "necesita personal", "busca personal", "posiciones", "ofertas de empleo", "trabajo", "salario"
+        ]) or any(k in snd for k in ["computrabajo", "tecoloco", "linkedin", "github", "gitlab", "jira", "slack"]):
             return "trabajo"
-        if any(k in text for k in ["newsletter", "boletín", "promo", "oferta", "descuento", "update", "digest", "no-reply", "noreply", "linkedin", "computrabajo"]):
+
+        # 2. Finanzas (pagos, transferencias, facturas, estados de cuenta, bancos)
+        if any(k in sub for k in [
+            "pago", "factura", "invoice", "payment", "recibo", "receipt", "transferencia", "estado de cuenta",
+            "tarjeta", "cuota", "banco", "billing", "saldo", "total a pagar", "comprobante", "interbanco"
+        ]) or any(k in snd for k in ["bank", "billing", "pagos", "factura", "invoice", "interbanco"]):
+            return "finanzas"
+
+        # 3. Boletines / Promociones
+        if any(k in sub for k in [
+            "boletín", "boletin", "newsletter", "digest", "promo", "oferta", "descuento", "rebaja",
+            "black friday", "cupón", "cupon", "sale", "novedades", "ahorro"
+        ]) or any(k in snd for k in ["newsletter", "marketing", "promo", "news@", "digest", "uber", "platzi", "pedidosya", "aliexpress", "amazon"]):
             return "boletines"
-        if any(k in text for k in ["familia", "amigo", "invitación", "fiesta", "cumpleaños", "saludos cordiales"]):
+
+        # 4. Señales secundarias en snippet
+        if any(k in snip for k in ["factura", "total a pagar", "comprobante de pago", "transferencia realizada", "número de cuenta", "tarjeta de crédito"]):
+            return "finanzas"
+        if any(k in snip for k in ["vacante", "postulación", "entrevista de trabajo", "oferta de empleo", "puesto de trabajo", "requisitos del puesto"]):
+            return "trabajo"
+        if any(k in snip for k in ["cancelar suscripción", "unsubscribe", "código de descuento", "oferta válida"]):
+            return "boletines"
+        if any(k in sub or k in snip for k in ["invitación", "cumpleaños", "boda", "familia", "amigo"]):
             return "personal"
+
+        # 5. Patrones genéricos rápidos
+        if any(k in snd or k in sub for k in ["noreply", "no-reply", "notificaciones", "notifications", "news", "update"]):
+            return "boletines"
+
+        if not use_llm_fallback:
+            return "trabajo"
 
         try:
             client = cls.get_client()
@@ -516,7 +557,7 @@ class GeminiService:
             prompt = (
                 f"Clasifica este correo en exactamente una palabra: 'trabajo', 'finanzas', 'personal' o 'boletines'. "
                 f"Responde únicamente con la palabra elegida.\n"
-                f"Asunto: {subject}\nRemitente: {sender}\nTexto: {snippet[:200]}"
+                f"Asunto: {subject}\nRemitente: {sender}\nTexto: {snip[:200]}"
             )
             resp = cls._generate_with_fallback(
                 client=client,

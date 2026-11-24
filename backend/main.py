@@ -234,6 +234,31 @@ import time
 _last_calendar_sync = 0
 _last_email_sync = {}
 
+def auto_classify_unclassified_emails(limit: int = 500) -> int:
+    """Clasifica en segundo plano los correos que aún no tengan ai_tags asignado."""
+    try:
+        import json
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT id, subject, sender, snippet, body_text FROM emails WHERE (ai_tags IS NULL OR ai_tags = '' OR ai_tags = '[]') AND UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'SPAM') ORDER BY date DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        if not rows:
+            conn.close()
+            return 0
+        
+        updated_count = 0
+        for r in rows:
+            cat = GeminiService.classify_email(r["subject"], r["sender"], r["snippet"] or "", r["body_text"] or "")
+            conn.execute("UPDATE emails SET ai_tags = ? WHERE id = ?", (json.dumps([cat]), r["id"]))
+            updated_count += 1
+        conn.commit()
+        conn.close()
+        return updated_count
+    except Exception as e:
+        print(f"Aviso en auto_classify_unclassified_emails: {e}")
+        return 0
+
 async def _periodic_contacts_sync():
     """Sincroniza periódicamente la libreta de contactos cada 15 minutos."""
     while True:
@@ -300,6 +325,7 @@ async def _periodic_background_sync_loop():
                         try:
                             # Sincroniza INBOX con hasta 30 correos recientes
                             await asyncio.to_thread(EmailService.sync_mailbox, acc_id, "INBOX", None, 30)
+                            await asyncio.to_thread(auto_classify_unclassified_emails, 50)
                         except Exception as ee:
                             print(f"[Email Background Sync] Error sincronizando {acc['email']}: {ee}")
             except Exception as dbe:
@@ -319,6 +345,7 @@ async def on_startup():
     asyncio.create_task(asyncio.to_thread(ContactsService.sync_contacts))
     asyncio.create_task(_periodic_contacts_sync())
     asyncio.create_task(_periodic_background_sync_loop())
+    asyncio.create_task(asyncio.to_thread(auto_classify_unclassified_emails, 1000))
 
 @app.get("/")
 def serve_index():
@@ -783,6 +810,12 @@ def _run_account_full_sync(account_id: int):
             _full_sync_state["percent"] = 100
             _full_sync_state["message"] = f"Sincronización total completada ({total_synced} correos procesados)"
 
+        # Clasificación automática post-sincronización total
+        try:
+            auto_classify_unclassified_emails(1000)
+        except Exception as class_err:
+            print(f"Aviso en clasificación automática post-full-sync: {class_err}")
+
     except Exception as exc:
         print(f"Error crítico en sincronización en background: {exc}")
         with _full_sync_lock:
@@ -1121,6 +1154,8 @@ def get_unread_counts(account_id: Optional[int] = None):
     folders_dict = {
         "INBOX": inbox_cnt,
         "STARRED": starred_cnt,
+        "UNREAD": all_cnt,
+        "NO_LEIDOS": all_cnt,
         "ALL": all_cnt,
         "SENT": folder_totals.get("SENT", 0),
         "DRAFT": folder_totals.get("DRAFT", 0) + folder_totals.get("DRAFTS", 0),
@@ -1173,6 +1208,7 @@ def get_emails(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     ai_urgency: Optional[str] = None,
+    ai_category: Optional[str] = None,
     page: int = 1,
     page_size: int = 15,
     auto_sync: bool = True
@@ -1190,7 +1226,7 @@ def get_emails(
         SELECT emails.id, emails.account_id, emails.uid, emails.folder, emails.sender,
                emails.sender_name, emails.recipient, emails.subject, emails.snippet,
                emails.date, emails.is_read, emails.is_starred, emails.has_attachments,
-               emails.ai_urgency, accounts.name as account_name, accounts.color as account_color,
+               emails.ai_urgency, emails.ai_tags, accounts.name as account_name, accounts.color as account_color,
                accounts.email as account_email, accounts.avatar_url as account_avatar_url
         FROM emails
         LEFT JOIN accounts ON emails.account_id = accounts.id
@@ -1235,6 +1271,9 @@ def get_emails(
     if folder_upper == "STARRED":
         query += " AND emails.is_starred = 1 AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
         count_query += " AND emails.is_starred = 1 AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+    elif folder_upper in ["NO_LEIDOS", "NO_LEÍDOS", "UNREAD", "SIN_LEER", "SINLEER"]:
+        query += " AND emails.is_read = 0 AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'PAPELERA', 'SPAM', 'DRAFT', 'DRAFTS')"
+        count_query += " AND emails.is_read = 0 AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'PAPELERA', 'SPAM', 'DRAFT', 'DRAFTS')"
     elif not folder or folder_upper in ["ALL", "TODOS"]:
         query += " AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
         count_query += " AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
@@ -1366,11 +1405,18 @@ def get_emails(
         count_query += " AND (emails.subject LIKE ? OR emails.sender LIKE ? OR emails.snippet LIKE ? OR emails.body_text LIKE ?)"
         params.extend([search_param, search_param, search_param, search_param])
 
+    # 13. Categoría IA Inteligente (trabajo, finanzas, personal, boletines)
+    if ai_category and ai_category.strip():
+        cat_param = f'%"{ai_category.strip().lower()}"%'
+        query += " AND LOWER(COALESCE(emails.ai_tags, '')) LIKE ?"
+        count_query += " AND LOWER(COALESCE(emails.ai_tags, '')) LIKE ?"
+        params.append(cat_param)
+
     # Total de registros
     total_records = conn.execute(count_query, params).fetchone()["total"]
 
     # Si no hay registros y auto_sync está habilitado (y no es una búsqueda manual), lanzar sincronización en segundo plano sin bloquear la lista
-    has_advanced = bool(search or sender or recipient or subject or date_from or date_to or label_ids or has_attachments is not None or is_starred is not None or read_status or ai_urgency)
+    has_advanced = bool(search or sender or recipient or subject or date_from or date_to or label_ids or has_attachments is not None or is_starred is not None or read_status or ai_urgency or ai_category)
     bg_sync_triggered = False
     if total_records == 0 and auto_sync and not has_advanced:
         try:
@@ -1570,13 +1616,17 @@ def sync_emails(account_id: Optional[int] = None, folder: Optional[str] = "INBOX
 
     acc_ids = [acc["id"] for acc in accounts]
 
+    sync_folder = folder
+    if folder and folder.upper() in ["UNREAD", "NO_LEIDOS", "NO_LEÍDOS", "SIN_LEER", "SINLEER", "STARRED", "ALL", "TODOS"]:
+        sync_folder = "INBOX"
+
     def _run_sync_batch():
         total_synced = 0
         errors = []
 
         def sync_one(acc_id):
             try:
-                return acc_id, EmailService.sync_mailbox(acc_id, folder=folder, label_id=label_id)
+                return acc_id, EmailService.sync_mailbox(acc_id, folder=sync_folder, label_id=label_id)
             except Exception as e:
                 return acc_id, {"success": False, "error": str(e)}
 
@@ -1601,14 +1651,25 @@ def sync_emails(account_id: Optional[int] = None, folder: Optional[str] = "INBOX
         return total_synced, errors
 
     if background:
-        threading.Thread(target=_run_sync_batch, daemon=True).start()
+        def _bg_wrapper():
+            t_synced, _ = _run_sync_batch()
+            if t_synced > 0:
+                auto_classify_unclassified_emails(200)
+        threading.Thread(target=_bg_wrapper, daemon=True).start()
         return {"success": True, "synced_count": 0, "background": True}
 
     total_synced, errors = _run_sync_batch()
+    if total_synced > 0:
+        threading.Thread(target=auto_classify_unclassified_emails, args=(200,), daemon=True).start()
+    
+    is_all_failed = len(errors) > 0 and total_synced == 0
+    has_reauth = any("invalid_grant" in e.lower() or "expir" in e.lower() or "revok" in e.lower() or "reconectar" in e.lower() for e in (errors or []))
+    
     return {
-        "success": True,
+        "success": not is_all_failed,
         "synced_count": total_synced,
-        "errors": errors if errors else None
+        "errors": errors if errors else None,
+        "needs_reauth": has_reauth
     }
 
 @app.post("/api/emails/send")
@@ -2117,9 +2178,18 @@ def reset_agent_context():
     """Reinicia la conversación del agente Elio sin persistir el contexto anterior."""
     return {"success": True, "message": "Contexto de conversación reiniciado exitosamente."}
 
+_summary_cache = {}
+
 @app.get("/api/agent/summary")
-def get_agent_summary(lang: Optional[str] = "es"):
+def get_agent_summary(lang: Optional[str] = "es", force: bool = False):
     """Genera un resumen inteligente en tiempo real de correos sin leer, asuntos urgentes, citas de la semana, tareas, notas y recomendaciones con IA en español o inglés."""
+    cache_key = (lang or "es").lower()
+    now_ts = time.time()
+    if not force and cache_key in _summary_cache:
+        cached_entry = _summary_cache[cache_key]
+        if now_ts - cached_entry.get("time", 0) < 60:
+            return dict(cached_entry["data"])
+
     conn = get_db()
     
     # Total de correos sin leer excluyendo Papelera, Borradores y Spam
@@ -2334,7 +2404,7 @@ REGLA OBLIGATORIA: Debes sintetizar e incluir expresamente las 4 áreas (correos
 
             rec_text = " ".join(recommendations) if recommendations else "Todo está en orden en tu espacio de trabajo. No tienes asuntos pendientes de alta prioridad."
 
-    return {
+    result = {
         "success": True,
         "unread_count": unread_count,
         "inbox_total": inbox_total,
@@ -2352,6 +2422,66 @@ REGLA OBLIGATORIA: Debes sintetizar e incluir expresamente las 4 áreas (correos
         "recommendation": rec_text,
         "ai_generated": ai_generated
     }
+    _summary_cache[cache_key] = {"time": now_ts, "data": result}
+    return result
+
+@app.get("/api/voice/tts")
+def get_voice_tts(text: str, lang: str = "es"):
+    """Sintetiza audio MP3 nativo de alta fidelidad para narración de resúmenes ejecutivos y respuestas."""
+    if not text or not text.strip():
+        raise HTTPException(status_code=400, detail="Texto vacío para TTS")
+
+    clean_text = text.strip()[:1500]
+    cache_key = f"{lang}:{clean_text}"
+    if hasattr(get_voice_tts, "_cache") and cache_key in get_voice_tts._cache:
+        return Response(content=get_voice_tts._cache[cache_key], media_type="audio/mpeg")
+
+    import urllib.request
+    import urllib.parse
+    import re
+
+    sentences = [s.strip() for s in re.split(r'[\.\n\?!;]+', clean_text) if s.strip()]
+    if not sentences:
+        sentences = [clean_text]
+
+    audio_chunks = []
+    target_lang = "en" if lang.lower().startswith("en") else "es"
+    for s in sentences:
+        words = s.split(' ')
+        chunk = ''
+        for w in words:
+            if len(chunk) + len(w) + 1 > 140:
+                if chunk:
+                    url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={urllib.parse.quote(chunk)}&tl={target_lang}&client=tw-ob"
+                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                    try:
+                        with urllib.request.urlopen(req, timeout=4.0) as r:
+                            audio_chunks.append(r.read())
+                    except Exception as err:
+                        logger.warning(f"Error descargando fragmento TTS: {err}")
+                chunk = w
+            else:
+                chunk = (chunk + ' ' + w).strip()
+        if chunk:
+            url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={urllib.parse.quote(chunk)}&tl={target_lang}&client=tw-ob"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            try:
+                with urllib.request.urlopen(req, timeout=4.0) as r:
+                    audio_chunks.append(r.read())
+            except Exception as err:
+                logger.warning(f"Error descargando fragmento TTS: {err}")
+
+    if not audio_chunks:
+        raise HTTPException(status_code=502, detail="No se pudo sintetizar el audio")
+
+    audio_bytes = b"".join(audio_chunks)
+    if not hasattr(get_voice_tts, "_cache"):
+        get_voice_tts._cache = {}
+    if len(get_voice_tts._cache) > 200:
+        get_voice_tts._cache.clear()
+    get_voice_tts._cache[cache_key] = audio_bytes
+
+    return Response(content=audio_bytes, media_type="audio/mpeg")
 
 # --- ENDPOINTS DE LIBRETA DE CONTACTOS / AGENDA DE DIRECCIONES ---
 class ContactCreateRequest(BaseModel):
@@ -2616,7 +2746,7 @@ def classify_batch_emails(req: AIClassifyBatchRequest):
         placeholders = ",".join("?" for _ in req.email_ids)
         rows = conn.execute(f"SELECT id, subject, sender, snippet, body_text FROM emails WHERE id IN ({placeholders})", req.email_ids).fetchall()
     else:
-        limit = max(10, min(100, req.limit or 50))
+        limit = max(10, min(1000, req.limit or 50))
         rows = conn.execute(
             "SELECT id, subject, sender, snippet, body_text FROM emails WHERE (ai_tags IS NULL OR ai_tags = '' OR ai_tags = '[]') AND UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'SPAM') ORDER BY date DESC LIMIT ?",
             (limit,)
@@ -2631,7 +2761,18 @@ def classify_batch_emails(req: AIClassifyBatchRequest):
     
     conn.commit()
     conn.close()
-    return {"success": True, "count": len(classified), "classified": classified}
+    return {
+        "success": True,
+        "count": len(classified),
+        "classified": classified,
+        "results": [{"id": c["id"], "tags": [c["category"]], "category": c["category"]} for c in classified]
+    }
+
+@app.post("/api/ai/classify-all")
+def classify_all_emails():
+    """Clasifica todos los correos no clasificados en la base de datos."""
+    count = auto_classify_unclassified_emails(limit=2000)
+    return {"success": True, "classified_count": count}
 
 @app.post("/api/ai/cleanup-preview")
 def cleanup_preview(req: AICleanupRequest):

@@ -302,19 +302,24 @@ const NotesManager = {
 
         // Redimensionamiento interactivo
         if (window.ResizeObserver) {
+            let noteRaf = null;
             const resizeObserver = new ResizeObserver(() => {
                 if (!this.isNotesViewVisible()) return;
-                const nextW = Math.max(this.NOTE_MIN_WIDTH, Math.round(div.offsetWidth || this.NOTE_MIN_WIDTH));
-                const nextH = Math.max(this.NOTE_MIN_HEIGHT, Math.round(div.offsetHeight || this.NOTE_MIN_HEIGHT));
-                note.width = nextW;
-                note.height = nextH;
-                const idx = this.notesData.findIndex(n => n.id === note.id);
-                if (idx !== -1) {
-                    this.notesData[idx].width = nextW;
-                    this.notesData[idx].height = nextH;
-                }
-                this.schedulePersistNoteSize(note.id, nextW, nextH);
-                this.updateCanvasSize();
+                if (noteRaf) return;
+                noteRaf = requestAnimationFrame(() => {
+                    noteRaf = null;
+                    const nextW = Math.max(this.NOTE_MIN_WIDTH, Math.round(div.offsetWidth || this.NOTE_MIN_WIDTH));
+                    const nextH = Math.max(this.NOTE_MIN_HEIGHT, Math.round(div.offsetHeight || this.NOTE_MIN_HEIGHT));
+                    note.width = nextW;
+                    note.height = nextH;
+                    const idx = this.notesData.findIndex(n => n.id === note.id);
+                    if (idx !== -1) {
+                        this.notesData[idx].width = nextW;
+                        this.notesData[idx].height = nextH;
+                    }
+                    this.schedulePersistNoteSize(note.id, nextW, nextH);
+                    this.updateCanvasSize();
+                });
             });
             resizeObserver.observe(div);
             div._resizeObserver = resizeObserver;

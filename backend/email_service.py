@@ -452,10 +452,16 @@ class EmailService:
         if account_data.get("auth_type") == "oauth2":
             try:
                 from backend.google_oauth import GoogleOAuthService
+                from googleapiclient.discovery import build
                 creds = GoogleOAuthService.get_valid_credentials(account_data["id"])
+                service = build("gmail", "v1", credentials=creds)
+                service.users().getProfile(userId="me").execute()
                 return {"imap": True, "smtp": True, "success": True, "message": "Tokens OAuth2 de Google válidos"}
             except Exception as e:
-                return {"imap": False, "smtp": False, "success": False, "errors": [str(e)]}
+                err_str = str(e)
+                is_reauth = "invalid_grant" in err_str or "expired" in err_str.lower() or "revoked" in err_str.lower() or "reconectar" in err_str.lower()
+                clean_err = "La sesión con Google ha expirado. Por favor reconecta la cuenta." if is_reauth else err_str
+                return {"imap": False, "smtp": False, "success": False, "needs_reauth": is_reauth, "errors": [clean_err]}
 
         results = {"imap": False, "smtp": False, "errors": []}
         
@@ -602,7 +608,10 @@ class EmailService:
             try:
                 return GoogleOAuthService.sync_gmail(account_id, folder=folder, label_id=label_id, max_results=max_emails, all_pages=all_pages or (max_emails <= 0))
             except Exception as e:
-                return {"success": False, "error": f"Error en sincronización Gmail API: {str(e)}"}
+                err_str = str(e)
+                needs_reauth = "invalid_grant" in err_str or "expired" in err_str.lower() or "revoked" in err_str.lower() or "reconectar" in err_str.lower()
+                clean_err = f"La sesión con Google de {account.get('email')} ha expirado. Por favor reconecta la cuenta en el menú de Cuentas." if needs_reauth else f"Error en sincronización Gmail API: {err_str}"
+                return {"success": False, "needs_reauth": needs_reauth, "error": clean_err}
 
         requested = (folder or "INBOX").strip()
         if requested.upper() in APP_ONLY_FOLDERS or requested.upper().startswith("CATEGORY_"):

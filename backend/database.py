@@ -13,11 +13,7 @@ AVATARS_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_db():
     conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA temp_store=MEMORY")
-    conn.execute("PRAGMA cache_size=-32000")
-    conn.execute("PRAGMA mmap_size=268435456")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -62,6 +58,10 @@ def _migrate_emails_unique_constraint(conn):
 
 def init_db():
     conn = get_db()
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA cache_size=-32000")
+    conn.execute("PRAGMA mmap_size=268435456")
     cursor = conn.cursor()
     
     # Tabla de cuentas de correo

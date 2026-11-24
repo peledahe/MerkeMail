@@ -73,6 +73,7 @@ const I18n = {
             // Barra lateral de navegación
             'nav.compose': 'Redactar',
             'nav.inbox': 'Recibidos',
+            'nav.unread': 'No leídos',
             'nav.starred': 'Destacados',
             'nav.sent': 'Enviados',
             'nav.drafts': 'Borradores',
@@ -613,6 +614,7 @@ const I18n = {
             // Navigation Sidebar
             'nav.compose': 'Compose',
             'nav.inbox': 'Inbox',
+            'nav.unread': 'Unread',
             'nav.starred': 'Starred',
             'nav.sent': 'Sent',
             'nav.drafts': 'Drafts',

@@ -183,12 +183,6 @@
                 <span id="gemini-status-dot" class="w-2 h-2 rounded-full bg-emerald-500 absolute top-1 right-1 ring-2 ring-white dark:ring-slate-900"></span>
             </button>
 
-            <!-- Selector Rápido de Idioma (ES / EN) -->
-            <button id="btn-lang-toggle" onclick="I18n.toggleLanguage()" data-i18n-title="common.language_toggle" class="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-full border border-slate-200 dark:border-slate-800/80 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-2xs cursor-pointer select-none" title="Cambiar idioma (Switch language)">
-                <svg class="w-3.5 h-3.5 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg>
-                <span class="lang-label font-bold text-[11px]">ES</span>
-            </button>
-
             <!-- Toggle Dark/Light Mode (Visible en >= 768px) -->
             <button onclick="UI.toggleTheme()" data-i18n-title="common.toggle_theme" class="hidden md:flex p-1.5 sm:p-2 rounded-full text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800/80 transition-colors shadow-2xs" title="Cambiar tema">
                 <span id="theme-toggle-icon"></span>
@@ -284,6 +278,14 @@
                             <span class="sidebar-text truncate" data-i18n="nav.inbox">Recibidos</span>
                         </span>
                         <span class="sidebar-badge text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 font-bold hidden" id="sidebar-inbox-badge"></span>
+                    </button>
+
+                    <button class="folder-nav-btn w-full flex items-center justify-between px-4 py-2 rounded-r-full text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 transition-colors" data-folder="UNREAD" data-i18n-title="nav.unread" title="No leídos">
+                        <span class="flex items-center gap-3">
+                            <svg class="w-4 h-4 shrink-0 text-sky-500 dark:text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                            <span class="sidebar-text truncate" data-i18n="nav.unread">No leídos</span>
+                        </span>
+                        <span class="sidebar-badge text-[11px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-600 dark:text-sky-400 font-bold hidden" id="sidebar-unread-badge"></span>
                     </button>
 
                     <button class="folder-nav-btn w-full flex items-center justify-between px-4 py-2 rounded-r-full text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 transition-colors" data-folder="STARRED" data-i18n-title="nav.starred" title="Destacados">
@@ -1377,6 +1379,7 @@
                             <select id="adv-search-folder" class="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
                                 <option value="">Todas las carpetas</option>
                                 <option value="INBOX">Recibidos (Inbox)</option>
+                                <option value="UNREAD">No leídos (Unread)</option>
                                 <option value="STARRED">Destacados</option>
                                 <option value="SENT">Enviados</option>
                                 <option value="DRAFT">Borradores</option>

@@ -92,7 +92,7 @@ const EmailManager = {
                 'TRASH': I18n.t('nav.trash'),
                 'SPAM': I18n.t('nav.spam'),
                 'STARRED': I18n.t('nav.starred'),
-                'UNREAD': I18n.t('batch.unread'),
+                'UNREAD': I18n.t('nav.unread') || 'No leídos',
                 'IMPORTANT': I18n.t('nav.important')
             };
             if (i18nMap[clean] || i18nMap[clean.toUpperCase()]) {
@@ -178,29 +178,39 @@ const EmailManager = {
             }
         });
 
-        this.renderEmailsTable();
+        this.currentPage = 1;
+        this.loadEmails();
+    },
 
-        if (this.selectedCategory) {
-            const unclassified = this.emails.filter(e => !e.ai_tags);
-            if (unclassified.length > 0) {
-                fetch('/api/ai/classify-batch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email_ids: unclassified.slice(0, 25).map(e => e.id) })
-                })
-                .then(r => r.json())
-                .then(res => {
-                    if (res.success && res.results) {
-                        res.results.forEach(r => {
-                            const target = this.emails.find(e => e.id === r.id);
-                            if (target) target.ai_tags = JSON.stringify(r.tags);
-                        });
-                        this.renderEmailsTable();
+    triggerAutoCategoryClassification() {
+        if (!this.emails || this.emails.length === 0) return;
+        const unclassified = this.emails.filter(e => !e.ai_tags || e.ai_tags === '[]' || e.ai_tags === 'null');
+        if (unclassified.length === 0) return;
+
+        const batchIds = unclassified.slice(0, 50).map(e => e.id);
+        fetch('/api/ai/classify-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email_ids: batchIds })
+        })
+        .then(r => r.json())
+        .then(res => {
+            const items = res.results || (res.classified ? res.classified.map(c => ({ id: c.id, tags: [c.category] })) : []);
+            if (res.success && items && items.length > 0) {
+                let updated = false;
+                items.forEach(r => {
+                    const target = this.emails.find(e => e.id === r.id);
+                    if (target) {
+                        target.ai_tags = JSON.stringify(r.tags || [r.category]);
+                        updated = true;
                     }
-                })
-                .catch(() => {});
+                });
+                if (updated) {
+                    this.renderEmailsTable();
+                }
             }
-        }
+        })
+        .catch(err => console.debug('Aviso en clasificación automática:', err));
     },
 
     accountErrors: {},
@@ -453,11 +463,18 @@ const EmailManager = {
                 try {
                     const res = await fetch(`/api/emails/sync?account_id=${acc.id}`, { method: 'POST' });
                     const data = await res.json();
-                    if (data.success) {
+                    if (data.success && (!data.errors || data.errors.length === 0)) {
                         delete this.accountErrors[acc.id];
                         if (data.synced_count > 0) anySynced = true;
                     } else {
-                        this.accountErrors[acc.id] = data.error || 'Fallo de sincronización';
+                        const errMsg = (data.errors && data.errors.join(', ')) || data.error || 'Fallo de sincronización';
+                        this.accountErrors[acc.id] = errMsg;
+                        if (data.needs_reauth || errMsg.toLowerCase().includes('expir') || errMsg.toLowerCase().includes('reconecta') || errMsg.toLowerCase().includes('invalid_grant')) {
+                            if (!this._notifiedReauthOnce) {
+                                this._notifiedReauthOnce = true;
+                                UI.showStickyToast('Reconexión Requerida', `La sesión de Google para ${acc.email} expiró. Abre Cuentas y pulsa "Reconectar".`, 'warning', 8000);
+                            }
+                        }
                     }
                 } catch (e) {
                     console.warn(`Error en auto-sync para cuenta ${acc.email}:`, e);
@@ -1007,6 +1024,12 @@ const EmailManager = {
                     </div>
                     <div id="account-test-status-${a.id}" class="hidden text-[11px] p-2 rounded-lg"></div>
                     <div class="pt-2 border-t border-slate-200/70 dark:border-slate-750 flex items-center justify-between gap-2">
+                        ${a.auth_type === 'oauth2' ? `
+                            <button type="button" onclick="EmailManager.connectWithGoogle()" class="py-1.5 px-3 bg-amber-50 hover:bg-amber-100/90 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-400 border border-amber-200/90 dark:border-amber-800/70 rounded-lg text-[11px] font-semibold transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer" title="Renovar sesión y reconectar con Google">
+                                <svg class="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" viewBox="0 0 24 24"><path fill="currentColor" d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0020 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 004 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+                                <span>Reconectar Google</span>
+                            </button>
+                        ` : ''}
                         <button type="button" onclick="EmailManager.startFullAccountSync(${a.id})" class="flex-1 py-1.5 px-3 bg-indigo-50 hover:bg-indigo-100/90 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200/90 dark:border-indigo-800/70 rounded-lg text-[11px] font-semibold transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-700" title="Sincronizar todos los correos del servidor de todas las carpetas en segundo plano">
                             <svg class="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                             <span>Sincronización Total (Todas las carpetas)</span>
@@ -1262,7 +1285,7 @@ const EmailManager = {
                 return;
             }
             const data = await res.json();
-            if (data.success) {
+            if (data.success && (!data.errors || data.errors.length === 0)) {
                 if (this.currentAccountId) {
                     delete this.accountErrors[this.currentAccountId];
                 } else {
@@ -1278,11 +1301,16 @@ const EmailManager = {
                 await this.loadEmails();
                 await this.loadLabels();
             } else {
+                const errText = (data.errors && data.errors.join(' | ')) || data.error || 'Hubo un error con una cuenta';
                 if (this.currentAccountId) {
-                    this.accountErrors[this.currentAccountId] = data.error || 'Error de sincronización';
+                    this.accountErrors[this.currentAccountId] = errText;
                 }
-                this.updateSystemSyncPill('problems', data.error);
-                UI.showStickyToast('Problemas al sincronizar', data.error || 'Hubo un error con una cuenta', 'warning');
+                this.updateSystemSyncPill('problems', errText);
+                if (data.needs_reauth || errText.toLowerCase().includes('expir') || errText.toLowerCase().includes('reconecta') || errText.toLowerCase().includes('invalid_grant')) {
+                    UI.showStickyToast('Reconexión Requerida', 'La sesión con Google expiró. Abre el menú de Cuentas y pulsa "Reconectar Google".', 'warning', 7000);
+                } else {
+                    UI.showStickyToast('Problemas al sincronizar', errText, 'warning', 5000);
+                }
             }
         } catch (e) {
             this.updateSystemSyncPill('inactive', 'Sin conexión con el servidor backend');
@@ -2203,6 +2231,10 @@ const EmailManager = {
         params.append('page', this.currentPage);
         params.append('page_size', this.pageSize);
 
+        if (this.selectedCategory) {
+            params.append('ai_category', this.selectedCategory);
+        }
+
         const hasAdv = this.hasActiveAdvancedFilters();
 
         if (hasAdv) {
@@ -2286,6 +2318,7 @@ const EmailManager = {
             this.updateActiveFiltersBanner();
             this.renderEmailsTable();
             this.renderPagination();
+            this.triggerAutoCategoryClassification();
             this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
 
             // Si el backend lanzó una sincronización en segundo plano para poblar una carpeta vacía, refrescar silenciosamente
@@ -3464,15 +3497,27 @@ const EmailManager = {
                     if (exactHeight > 0) {
                         const targetHeight = Math.max(exactHeight, 20);
                         const currentHeight = parseInt(frame.style.height, 10) || 0;
-                        if (Math.abs(targetHeight - currentHeight) >= 2) {
+                        if (Math.abs(targetHeight - currentHeight) >= 6) {
                             frame.style.height = targetHeight + 'px';
                         }
                     }
                 } catch (err) {}
             };
 
-            adjustHeight();
-            frame.onload = adjustHeight;
+            let isAdjusting = false;
+            let rafAdjustId = null;
+            const scheduleAdjustHeight = () => {
+                if (isAdjusting || rafAdjustId) return;
+                rafAdjustId = requestAnimationFrame(() => {
+                    rafAdjustId = null;
+                    isAdjusting = true;
+                    adjustHeight();
+                    isAdjusting = false;
+                });
+            };
+
+            scheduleAdjustHeight();
+            frame.onload = scheduleAdjustHeight;
 
             // Normalizar y blindar proporciones y dimensiones de imágenes
             const images = doc.images || [];
@@ -3533,7 +3578,7 @@ const EmailManager = {
                             img.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
                         }
                     }
-                    adjustHeight();
+                    scheduleAdjustHeight();
                 };
 
                 if (img.complete) {
@@ -3551,28 +3596,38 @@ const EmailManager = {
                         this.src = `/api/image-proxy?url=${encodeURIComponent(originalSrc)}`;
                         this.addEventListener('load', onImageReady);
                     } else {
-                        adjustHeight();
+                        scheduleAdjustHeight();
                     }
                 });
             });
 
-            // ResizeObserver únicamente sobre el contenedor interno de contenido (sin observar documentElement)
+            // Limpiar observadores previos del iframe para evitar acumulación en memoria
+            if (this._emailIframeRO) {
+                try { this._emailIframeRO.disconnect(); } catch (e) {}
+                this._emailIframeRO = null;
+            }
+            if (this._emailIframeMO) {
+                try { this._emailIframeMO.disconnect(); } catch (e) {}
+                this._emailIframeMO = null;
+            }
+
+            // ResizeObserver únicamente sobre el contenedor interno con throttling
             const wrapper = doc.getElementById('merke-email-content') || doc.body;
             if (window.ResizeObserver && wrapper) {
-                const ro = new ResizeObserver(() => adjustHeight());
-                ro.observe(wrapper);
+                this._emailIframeRO = new ResizeObserver(() => scheduleAdjustHeight());
+                this._emailIframeRO.observe(wrapper);
             }
 
             // MutationObserver para detectar inserciones asíncronas
             if (window.MutationObserver && wrapper) {
-                const mo = new MutationObserver(() => adjustHeight());
-                mo.observe(wrapper, { childList: true, subtree: true, attributes: true });
+                this._emailIframeMO = new MutationObserver(() => scheduleAdjustHeight());
+                this._emailIframeMO.observe(wrapper, { childList: true, subtree: true, attributes: false });
             }
 
             // Pasadas de respaldo para cuando fuentes remotas e imágenes finalicen renderizado
-            setTimeout(adjustHeight, 150);
-            setTimeout(adjustHeight, 400);
-            setTimeout(adjustHeight, 1000);
+            setTimeout(scheduleAdjustHeight, 150);
+            setTimeout(scheduleAdjustHeight, 400);
+            setTimeout(scheduleAdjustHeight, 1000);
         } catch (e) {
             console.error("Error montando iframe aislado de correo:", e);
         }
@@ -3784,28 +3839,33 @@ const EmailManager = {
             detailPanel.classList.add('flex');
         }
 
-        detailPanel.innerHTML = `
-            <div class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400 animate-pulse">
-                <div class="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-indigo-500 shadow-sm">
-                    <svg class="w-7 h-7 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
+        if (this.lastSummaryData && !force) {
+            this.renderElioInboxSummaryView(this.lastSummaryData, detailPanel);
+        } else {
+            detailPanel.innerHTML = `
+                <div class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400 animate-pulse">
+                    <div class="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-indigo-500 shadow-sm">
+                        <svg class="w-7 h-7 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">${window.I18n && I18n.currentLang === 'en' ? 'Elio is preparing your 360° executive summary...' : 'Elio está preparando tu resumen ejecutivo 360°...'}</h3>
+                    <p class="text-xs text-slate-500 mt-1 max-w-sm">${window.I18n && I18n.currentLang === 'en' ? 'Consolidating in real time emails, week schedule, tasks, notes, and AI insights.' : 'Consolidando en tiempo real correos, agenda de la semana, tareas, notas y recomendaciones de IA.'}</p>
                 </div>
-                <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">${window.I18n && I18n.currentLang === 'en' ? 'Elio is preparing your 360° executive summary...' : 'Elio está preparando tu resumen ejecutivo 360°...'}</h3>
-                <p class="text-xs text-slate-500 mt-1 max-w-sm">${window.I18n && I18n.currentLang === 'en' ? 'Consolidating in real time emails, week schedule, tasks, notes, and AI insights.' : 'Consolidando en tiempo real correos, agenda de la semana, tareas, notas y recomendaciones de IA.'}</p>
-            </div>
-        `;
+            `;
+        }
 
         try {
             const currentLang = (window.I18n && I18n.currentLang) || 'es';
-            const res = await fetch(`/api/agent/summary?lang=${encodeURIComponent(currentLang)}`);
+            const forceParam = force ? '&force=true' : '';
+            const res = await fetch(`/api/agent/summary?lang=${encodeURIComponent(currentLang)}${forceParam}`);
             if (!res.ok) throw new Error('Error al obtener resumen de Elio');
             const data = await res.json();
             this.renderElioInboxSummaryView(data, detailPanel);
         } catch (err) {
             console.error('Error cargando resumen de Elio:', err);
-            if (force) {
+            if (force && !this.lastSummaryData) {
                 detailPanel.innerHTML = `
                     <div class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400">
                         <div class="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mb-4 text-rose-500">
@@ -3816,7 +3876,7 @@ const EmailManager = {
                         <button onclick="EmailManager.showElioInboxSummary(true)" class="mt-4 px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">Reintentar</button>
                     </div>
                 `;
-            } else {
+            } else if (!this.lastSummaryData) {
                 this.resetDetailView();
             }
         }
@@ -5574,10 +5634,15 @@ const EmailManager = {
             } else {
                 const errMsg = data.errors && data.errors.length ? data.errors.join(' | ') : 'Fallo de autenticación o puertos';
                 if (statusBox) {
-                    statusBox.className = 'text-[11px] p-2 rounded-lg bg-rose-950/60 text-rose-300 border border-rose-800/80';
-                    statusBox.textContent = `✖ Error: ${errMsg}`;
+                    if (data.needs_reauth) {
+                        statusBox.className = 'text-[11px] p-2.5 rounded-lg bg-amber-950/60 text-amber-200 border border-amber-800/80 flex items-center justify-between gap-2';
+                        statusBox.innerHTML = `<span>✖ La sesión con Google expiró.</span> <button type="button" onclick="EmailManager.connectWithGoogle()" class="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded text-[10px] shrink-0 cursor-pointer">Reconectar ahora</button>`;
+                    } else {
+                        statusBox.className = 'text-[11px] p-2 rounded-lg bg-rose-950/60 text-rose-300 border border-rose-800/80';
+                        statusBox.textContent = `✖ Error: ${errMsg}`;
+                    }
                 }
-                UI.showStickyToast('Fallo de Conexión', errMsg, 'error', 5000);
+                UI.showStickyToast(data.needs_reauth ? 'Reconexión Requerida' : 'Fallo de Conexión', errMsg, data.needs_reauth ? 'warning' : 'error', 6000);
             }
         } catch (e) {
             if (statusBox) {

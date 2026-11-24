@@ -425,6 +425,8 @@ def run_pyqt_window():
                 print(f"Error en trigger_native_print: {e}")
 
         def javaScriptConsoleMessage(self, level, message, line, source_id):
+            if "ResizeObserver loop" in message:
+                return
             # Movimiento continuo en tiempo real de la ventana
             if message.startswith("__PYQT_MOVE__:"):
                 try:
