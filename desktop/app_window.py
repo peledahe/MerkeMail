@@ -266,12 +266,167 @@ def run_pyqt_window():
         def is_maximized(self):
             return self.win.isMaximized()
 
+        @pyqtSlot()
+        def print_dialog(self):
+            if hasattr(self.win, "view") and self.win.view:
+                page = self.win.view.page()
+                if hasattr(page, "trigger_native_print"):
+                    page.trigger_native_print()
+
+        @pyqtSlot(str)
+        @pyqtSlot(str, str)
+        def save_pdf(self, title: str, html: str = ""):
+            if html:
+                try:
+                    with open("/tmp/merkemail_print_doc.html", "w", encoding="utf-8") as f:
+                        f.write(html)
+                except Exception as e:
+                    print(f"Error escribiendo buffer desde bridge: {e}")
+            if hasattr(self.win, "view") and self.win.view:
+                page = self.win.view.page()
+                if hasattr(page, "save_pdf_dialog"):
+                    page.save_pdf_dialog(title)
+
+        @pyqtSlot(str, str)
+        def show_notification(self, title: str, message: str):
+            if hasattr(self.win, "show_notification"):
+                self.win.show_notification(title, message)
+
     class CustomWebEnginePage(QWebEnginePage):
         def __init__(self, window, parent=None):
             super().__init__(parent)
             self.window = window
+            try:
+                self.printRequested.connect(self.trigger_native_print)
+            except Exception:
+                pass
+
+        def save_pdf_dialog(self, raw_title: str):
+            clean_name = "".join(c for c in (raw_title or "correo") if c.isalnum() or c in (" ", "-", "_", ".")).strip()
+            if not clean_name:
+                clean_name = "correo"
+            if not clean_name.lower().endswith(".pdf"):
+                clean_name += ".pdf"
+            
+            from PyQt6.QtWidgets import QFileDialog
+            from PyQt6.QtCore import QStandardPaths, QUrl, QMarginsF
+            from PyQt6.QtGui import QPageLayout, QPageSize
+            from PyQt6.QtWebEngineCore import QWebEnginePage
+            import json
+
+            docs_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation) or os.path.expanduser("~/Descargas")
+            save_path, _ = QFileDialog.getSaveFileName(
+                self.window,
+                "Guardar correo como PDF",
+                os.path.join(docs_dir, clean_name),
+                "Documentos PDF (*.pdf)"
+            )
+            if save_path:
+                if not save_path.lower().endswith(".pdf"):
+                    save_path += ".pdf"
+                
+                buffer_path = "/tmp/merkemail_print_doc.html"
+                options_path = "/tmp/merkemail_print_options.json"
+                opts = {}
+                if os.path.exists(options_path):
+                    try:
+                        with open(options_path, "r", encoding="utf-8") as f:
+                            opts = json.load(f)
+                    except Exception:
+                        pass
+
+                p_size = QPageSize.PageSizeId.Letter
+                if opts.get("paperSize") == "a4":
+                    p_size = QPageSize.PageSizeId.A4
+                elif opts.get("paperSize") == "legal":
+                    p_size = QPageSize.PageSizeId.Legal
+
+                p_orient = QPageLayout.Orientation.Portrait
+                if opts.get("layout") == "landscape":
+                    p_orient = QPageLayout.Orientation.Landscape
+
+                # Margen explícito según la configuración del usuario
+                margin_choice = opts.get("margins", "default")
+                if margin_choice == "none":
+                    m_val = 0.0
+                elif margin_choice == "minimum":
+                    m_val = 8.0  # 8mm
+                else:
+                    m_val = 18.0 # 18mm estándar (~0.7 pulgada)
+
+                page_layout = QPageLayout(
+                    QPageSize(p_size),
+                    p_orient,
+                    QMarginsF(m_val, m_val, m_val, m_val),
+                    QPageLayout.Unit.Millimeter
+                )
+
+                if os.path.exists(buffer_path):
+                    # Usar página dedicada e independiente con el layout de márgenes configurado
+                    self._pdf_render_page = QWebEnginePage(self.window)
+                    def on_load_pdf(ok):
+                        if ok:
+                            self._pdf_render_page.printToPdf(save_path, page_layout)
+                            def on_pdf_done(file_path, success):
+                                self._pdf_render_page = None
+                            try:
+                                self._pdf_render_page.pdfPrintingFinished.connect(on_pdf_done)
+                            except Exception:
+                                pass
+                    self._pdf_render_page.loadFinished.connect(on_load_pdf)
+                    self._pdf_render_page.load(QUrl.fromLocalFile(buffer_path))
+                else:
+                    print("Aviso: /tmp/merkemail_print_doc.html no encontrado para imprimir.")
+
+        def trigger_native_print(self):
+            try:
+                from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+                from PyQt6.QtCore import QUrl
+                from PyQt6.QtWebEngineCore import QWebEnginePage
+                printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+                printer.setDocName("Correo MerkeMail")
+                dlg = QPrintDialog(printer, self.window)
+                dlg.setWindowTitle("Imprimir Correo - MerkeMail")
+                if dlg.exec() == QPrintDialog.DialogCode.Accepted:
+                    import tempfile
+                    fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+                    os.close(fd)
+                    buffer_path = "/tmp/merkemail_print_doc.html"
+
+                    def on_pdf_ready(file_path, success):
+                        if success and os.path.exists(tmp_path):
+                            try:
+                                p_name = printer.printerName()
+                                if p_name:
+                                    subprocess.run(["lpr", "-P", p_name, tmp_path], check=False)
+                                else:
+                                    subprocess.run(["lpr", tmp_path], check=False)
+                            except Exception as pe:
+                                print(f"Aviso al enviar a lpr: {pe}")
+                            finally:
+                                try:
+                                    os.unlink(tmp_path)
+                                except Exception:
+                                    pass
+                                self._print_render_page = None
+
+                    if os.path.exists(buffer_path):
+                        self._print_render_page = QWebEnginePage(self.window)
+                        def on_load_print(ok):
+                            if ok:
+                                self._print_render_page.printToPdf(tmp_path)
+                                self._print_render_page.pdfPrintingFinished.connect(on_pdf_ready)
+                        self._print_render_page.loadFinished.connect(on_load_print)
+                        self._print_render_page.load(QUrl.fromLocalFile(buffer_path))
+                    else:
+                        print("Aviso: /tmp/merkemail_print_doc.html no encontrado para diálogo de impresión.")
+            except Exception as e:
+                print(f"Error en trigger_native_print: {e}")
+                print(f"Error en trigger_native_print: {e}")
 
         def javaScriptConsoleMessage(self, level, message, line, source_id):
+            if "ResizeObserver loop" in message:
+                return
             # Movimiento continuo en tiempo real de la ventana
             if message.startswith("__PYQT_MOVE__:"):
                 try:
@@ -314,6 +469,11 @@ def run_pyqt_window():
                     raw_url = action.split("open_url:", 1)[1].strip()
                     if raw_url:
                         QDesktopServices.openUrl(QUrl(raw_url))
+                elif action.startswith("save_pdf:"):
+                    raw_title = action.split("save_pdf:", 1)[1].strip()
+                    self.save_pdf_dialog(raw_title)
+                elif action == "print_dialog":
+                    self.trigger_native_print()
                 return
             super().javaScriptConsoleMessage(level, message, line, source_id)
 
@@ -464,12 +624,19 @@ def run_pyqt_window():
             if wh:
                 wh.startSystemMove()
 
+        def resizeEvent(self, event):
+            super().resizeEvent(event)
+            try:
+                self.view.page().runJavaScript("if (window.UI && typeof UI.onWindowResizeFast === 'function') { UI.onWindowResizeFast(); }")
+            except Exception:
+                pass
+
         def maximize_window(self):
             if not self.isMaximized():
                 self._normal_geom = self.geometry()
                 self.showMaximized()
                 try:
-                    self.view.page().runJavaScript("if (window.DesktopBridge) window.DesktopBridge.onNativeWindowStateChanged(true);")
+                    self.view.page().runJavaScript("if (window.UI && typeof UI.onWindowResizeFast === 'function') { UI.onWindowResizeFast(); } if (window.DesktopBridge) window.DesktopBridge.onNativeWindowStateChanged(true);")
                 except Exception:
                     pass
 
@@ -490,7 +657,7 @@ def run_pyqt_window():
                 except Exception:
                     pass
                 try:
-                    self.view.page().runJavaScript("if (window.DesktopBridge) window.DesktopBridge.onNativeWindowStateChanged(false);")
+                    self.view.page().runJavaScript("if (window.UI && typeof UI.onWindowResizeFast === 'function') { UI.onWindowResizeFast(); } if (window.DesktopBridge) window.DesktopBridge.onNativeWindowStateChanged(false);")
                 except Exception:
                     pass
 
@@ -516,17 +683,65 @@ def run_pyqt_window():
             else:
                 self.quit_app()
 
-        def show_window(self):
-            self.show()
-            self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized | Qt.WindowState.WindowActive)
+        def bring_to_foreground(self):
+            """
+            Trae la ventana principal al primer plano y le otorga foco activo.
+            Maneja estados minimizados, ocultos o en segundo plano con soporte
+            multiplataforma (Linux X11/Wayland, Windows y macOS).
+            """
+            if not self.isVisible():
+                self.show()
+
+            current_state = self.windowState()
+            if current_state & Qt.WindowState.WindowMinimized:
+                self.setWindowState(current_state & ~Qt.WindowState.WindowMinimized)
+                self.showNormal()
+
+            self.setWindowState(self.windowState() | Qt.WindowState.WindowActive)
             self.raise_()
             self.activateWindow()
+
+            # Forzar activación a nivel de Window Manager
+            try:
+                handle = self.windowHandle()
+                if handle:
+                    handle.requestActivate()
+            except Exception:
+                pass
+
+            # Soporte específico para Windows (prevenir bloqueo de focus stealing)
+            if sys.platform.startswith("win"):
+                try:
+                    import ctypes
+                    user32 = ctypes.windll.user32
+                    hwnd = int(self.winId())
+                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    user32.SetForegroundWindow(hwnd)
+                except Exception:
+                    pass
+
+        def show_window(self):
+            self.bring_to_foreground()
 
         def toggle_visibility(self):
             if self.isVisible() and not self.isMinimized():
                 self.hide()
             else:
-                self.show_window()
+                self.bring_to_foreground()
+
+        def show_notification(self, title: str, message: str):
+            try:
+                tray = getattr(self, "tray_icon", None)
+                if tray and QSystemTrayIcon.isSystemTrayAvailable():
+                    tray.showMessage(title or "MerkeMail", message or "", QSystemTrayIcon.MessageIcon.Information, 5000)
+                    return
+            except Exception as e:
+                print(f"Aviso en showMessage de bandeja: {e}")
+            try:
+                import subprocess
+                subprocess.run(["notify-send", "-a", "MerkeMail", title or "MerkeMail", message or ""], check=False)
+            except Exception:
+                pass
 
         def showEvent(self, event):
             super().showEvent(event)
@@ -661,37 +876,41 @@ def run_pyqt_window():
         initial_unread = get_unread_count()
         last_notified_unread = initial_unread
         tray_icon = QSystemTrayIcon(QIcon(create_tray_pixmap(initial_unread)), app)
+        window.tray_icon = tray_icon
         if initial_unread > 0:
             tray_icon.setToolTip(f"MerkeMail - {initial_unread} correo{'s' if initial_unread != 1 else ''} sin leer")
         else:
             tray_icon.setToolTip("MerkeMail - Todo al día (0 sin leer)")
 
-        # Menú simplificado: SOLO Ocultar Aplicación (o Mostrar Aplicación) y Cerrar
+        # Configurar menú contextual del tray (clic derecho) sin opciones duplicadas
         menu = QMenu()
-        toggle_action = QAction("Ocultar Aplicación", menu)
-        def update_menu_toggle_text(is_vis=None):
-            vis = is_vis if is_vis is not None else (window.isVisible() and not window.isMinimized())
-            if vis:
-                toggle_action.setText("Ocultar Aplicación")
-            else:
-                toggle_action.setText("Mostrar Aplicación")
+        open_action = QAction("Mostrar Aplicación", menu)
+        open_action.triggered.connect(window.bring_to_foreground)
+        menu.addAction(open_action)
+        menu.setDefaultAction(open_action)
 
-        window._on_visibility_changed = update_menu_toggle_text
-        toggle_action.triggered.connect(window.toggle_visibility)
-        menu.addAction(toggle_action)
+        hide_action = QAction("Ocultar en segundo plano", menu)
+        hide_action.triggered.connect(window.hide)
+        menu.addAction(hide_action)
+
+        menu.addSeparator()
 
         quit_action = QAction("Cerrar", menu)
         quit_action.triggered.connect(window.quit_app)
         menu.addAction(quit_action)
 
-        menu.aboutToShow.connect(lambda: update_menu_toggle_text())
         tray_icon.setContextMenu(menu)
 
-        tray_icon.activated.connect(lambda reason: (
-            window.toggle_visibility()
-            if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick)
-            else None
-        ))
+        # Clic izquierdo / activación del icono: mostrar y enfocar la aplicación en primer plano
+        def on_tray_activated(reason):
+            if reason in (
+                QSystemTrayIcon.ActivationReason.Trigger,
+                QSystemTrayIcon.ActivationReason.DoubleClick,
+                QSystemTrayIcon.ActivationReason.MiddleClick
+            ):
+                window.bring_to_foreground()
+
+        tray_icon.activated.connect(on_tray_activated)
 
         def update_tray_status():
             nonlocal last_notified_unread

@@ -45,14 +45,14 @@ class CalendarService:
             else:
                 task_cal_id = task_cal["id"]
 
-            # Reasignar cualquier tarea que tenga calendar_id huérfano al calendario de Tareas
+            # Reasignar cualquier tarea que tenga calendar_id huérfano o en un calendario normal al calendario de Tareas
             cursor.execute(
                 """
                 UPDATE events 
                 SET calendar_id = ?, account_id = ?
                 WHERE (is_task = 1 OR title LIKE '[Tarea]%')
                   AND (account_id = ? OR account_id IS NULL)
-                  AND (calendar_id IS NULL OR calendar_id NOT IN (SELECT id FROM calendars))
+                  AND (calendar_id IS NULL OR calendar_id NOT IN (SELECT id FROM calendars WHERE external_id LIKE 'tasks_%' OR name LIKE 'Tareas%'))
                 """,
                 (task_cal_id, acc_id, acc_id)
             )
@@ -269,12 +269,22 @@ class CalendarService:
         else:
             target_cal_id = valid_ids[0] if valid_ids else 1
 
-        # Detectar si el título indica que es tarea
-        if title.lower().startswith("[tarea]"):
-            is_task = 1
-
         conn = get_db()
         cursor = conn.cursor()
+
+        # Detectar si es tarea o el título indica tarea
+        if is_task or title.lower().startswith("[tarea]"):
+            is_task = 1
+            cal_row = cursor.execute("SELECT account_id FROM calendars WHERE id = ?", (target_cal_id,)).fetchone()
+            acc_for_task = account_id or (cal_row["account_id"] if cal_row else None)
+            if acc_for_task:
+                task_cal = cursor.execute(
+                    "SELECT id FROM calendars WHERE account_id = ? AND (external_id LIKE 'tasks_%' OR name LIKE 'Tareas%') ORDER BY id ASC LIMIT 1",
+                    (acc_for_task,)
+                ).fetchone()
+                if task_cal:
+                    target_cal_id = task_cal["id"]
+
         cal_meta = cursor.execute("SELECT provider, account_id, external_id FROM calendars WHERE id = ?", (target_cal_id,)).fetchone()
         cal_provider = cal_meta["provider"] if cal_meta else None
         cal_acc_id = cal_meta["account_id"] if cal_meta else account_id

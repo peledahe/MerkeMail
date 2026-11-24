@@ -1,13 +1,17 @@
-// Módulo de Gestión de Correos - MerkeMail
+// Módulo de Gestión de Correos - Senda
 
 const EmailManager = {
     currentFolder: 'INBOX',
     currentAccountId: null,
     currentLabelId: null,
+    activeFilterLabelIds: null,
     labels: [],
+    allLabels: [],
+    pendingLabelAssignEmailId: null,
     searchQuery: '',
     currentPage: 1,
     pageSize: parseInt(localStorage.getItem('merkemail_page_size') || '12', 10) || 12,
+    skipDeleteConfirm: localStorage.getItem('merkemail_skip_delete_confirm') === 'true',
     selectedEmailId: null,
     selectedBatchIds: new Set(),
     authorizedSpamImages: new Set(),
@@ -21,14 +25,39 @@ const EmailManager = {
     readTimerId: null,
     pendingReadEmailId: null,
     emailDetailCache: new Map(),
-    accountLabelsCache: {},
+    selectedCategory: '',
+    lastSummaryData: null,
+    emailTranslations: {},
+    emailOriginals: {},
+    emailShowingTranslation: {},
+    emailCurrentTranslationLang: {},
 
     getFolderDisplayName(folder) {
-        if (!folder) return 'Recibidos';
+        if (!folder) return (window.I18n ? I18n.t('nav.inbox') : 'Recibidos');
         const clean = String(folder).trim().toUpperCase();
+        if (window.I18n) {
+            const i18nMap = {
+                'INBOX': I18n.t('nav.inbox'),
+                'CATEGORY_UPDATES': I18n.t('nav.notifications'),
+                'CATEGORY_PROMOTIONS': I18n.t('nav.promotions'),
+                'CATEGORY_SOCIAL': I18n.t('nav.social'),
+                'CATEGORY_FORUMS': I18n.t('nav.forums'),
+                'CATEGORY_PERSONAL': I18n.t('filter.personal'),
+                'SENT': I18n.t('nav.sent'),
+                'DRAFT': I18n.t('nav.drafts'),
+                'DRAFTS': I18n.t('nav.drafts'),
+                'TRASH': I18n.t('nav.trash'),
+                'SPAM': I18n.t('nav.spam'),
+                'STARRED': I18n.t('nav.starred'),
+                'IMPORTANT': I18n.t('nav.important'),
+                'ALL': I18n.t('nav.all_mail'),
+                'ARCHIVE': I18n.t('email.move')
+            };
+            if (i18nMap[clean]) return i18nMap[clean];
+        }
         const map = {
             'INBOX': 'Recibidos',
-            'CATEGORY_UPDATES': 'Actualizaciones',
+            'CATEGORY_UPDATES': 'Notificaciones',
             'CATEGORY_PROMOTIONS': 'Promociones',
             'CATEGORY_SOCIAL': 'Social',
             'CATEGORY_FORUMS': 'Foros',
@@ -49,8 +78,29 @@ const EmailManager = {
     getLabelDisplayName(name) {
         if (!name) return '';
         const clean = String(name).trim();
+        if (window.I18n) {
+            const i18nMap = {
+                'CATEGORY_UPDATES': I18n.t('nav.notifications'),
+                'CATEGORY_PROMOTIONS': I18n.t('nav.promotions'),
+                'CATEGORY_SOCIAL': I18n.t('nav.social'),
+                'CATEGORY_FORUMS': I18n.t('nav.forums'),
+                'CATEGORY_PERSONAL': I18n.t('filter.personal'),
+                'INBOX': I18n.t('nav.inbox'),
+                'SENT': I18n.t('nav.sent'),
+                'DRAFT': I18n.t('nav.drafts'),
+                'DRAFTS': I18n.t('nav.drafts'),
+                'TRASH': I18n.t('nav.trash'),
+                'SPAM': I18n.t('nav.spam'),
+                'STARRED': I18n.t('nav.starred'),
+                'UNREAD': I18n.t('nav.unread') || 'No leídos',
+                'IMPORTANT': I18n.t('nav.important')
+            };
+            if (i18nMap[clean] || i18nMap[clean.toUpperCase()]) {
+                return i18nMap[clean] || i18nMap[clean.toUpperCase()];
+            }
+        }
         const map = {
-            'CATEGORY_UPDATES': 'Actualizaciones',
+            'CATEGORY_UPDATES': 'Notificaciones',
             'CATEGORY_PROMOTIONS': 'Promociones',
             'CATEGORY_SOCIAL': 'Social',
             'CATEGORY_FORUMS': 'Foros',
@@ -66,6 +116,101 @@ const EmailManager = {
             'IMPORTANT': 'Importante'
         };
         return map[clean] || map[clean.toUpperCase()] || name;
+    },
+
+    renderAiCategoryBadge(aiTags) {
+        if (!aiTags) return '';
+        let tags = [];
+        try {
+            tags = typeof aiTags === 'string' ? JSON.parse(aiTags) : aiTags;
+        } catch (e) {
+            tags = [String(aiTags)];
+        }
+        if (!Array.isArray(tags) || tags.length === 0) return '';
+        const cat = String(tags[0]).toLowerCase();
+        const map = {
+            'trabajo': {
+                icon: '<svg class="w-3 h-3 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>',
+                text: window.I18n ? I18n.t('filter.work') : 'Trabajo',
+                cls: 'bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
+            },
+            'finanzas': {
+                icon: '<svg class="w-3 h-3 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>',
+                text: window.I18n ? I18n.t('filter.finance') : 'Finanzas',
+                cls: 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+            },
+            'personal': {
+                icon: '<svg class="w-3 h-3 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>',
+                text: window.I18n ? I18n.t('filter.personal') : 'Personal',
+                cls: 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+            },
+            'boletines': {
+                icon: '<svg class="w-3 h-3 text-purple-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/></svg>',
+                text: window.I18n ? I18n.t('filter.newsletters') : 'Boletines',
+                cls: 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800'
+            }
+        };
+        const badge = map[cat];
+        if (!badge) return '';
+        const titleCat = window.I18n && I18n.currentLang === 'en' ? `AI Category: ${badge.text}` : `Categoría IA: ${badge.text}`;
+        return `<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.2 rounded border ${badge.cls}" title="${titleCat}">${badge.icon}<span>${badge.text}</span></span>`;
+    },
+
+    matchesCategory(email, category) {
+        if (!category) return true;
+        if (!email.ai_tags) return false;
+        try {
+            const tags = typeof email.ai_tags === 'string' ? JSON.parse(email.ai_tags) : email.ai_tags;
+            return Array.isArray(tags) && tags.some(t => String(t).toLowerCase() === category.toLowerCase());
+        } catch (e) {
+            return String(email.ai_tags).toLowerCase().includes(category.toLowerCase());
+        }
+    },
+
+    setCategoryFilter(category) {
+        this.selectedCategory = category || '';
+        document.querySelectorAll('.ai-cat-chip').forEach(chip => {
+            const cat = chip.getAttribute('data-category') || '';
+            if (cat === this.selectedCategory) {
+                chip.className = 'ai-cat-chip px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer bg-indigo-600 text-white shadow-2xs flex items-center gap-1.5';
+            } else {
+                chip.className = 'ai-cat-chip px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all cursor-pointer bg-slate-200/70 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700 flex items-center gap-1.5';
+            }
+        });
+
+        this.currentPage = 1;
+        this.loadEmails();
+    },
+
+    triggerAutoCategoryClassification() {
+        if (!this.emails || this.emails.length === 0) return;
+        const unclassified = this.emails.filter(e => !e.ai_tags || e.ai_tags === '[]' || e.ai_tags === 'null');
+        if (unclassified.length === 0) return;
+
+        const batchIds = unclassified.slice(0, 50).map(e => e.id);
+        fetch('/api/ai/classify-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email_ids: batchIds })
+        })
+        .then(r => r.json())
+        .then(res => {
+            const items = res.results || (res.classified ? res.classified.map(c => ({ id: c.id, tags: [c.category] })) : []);
+            if (res.success && items && items.length > 0) {
+                let updated = false;
+                items.forEach(r => {
+                    const target = this.emails.find(e => e.id === r.id);
+                    if (target) {
+                        target.ai_tags = JSON.stringify(r.tags || [r.category]);
+                        updated = true;
+                    }
+                });
+                if (updated) {
+                    this.renderEmailsTable();
+                }
+            }
+        })
+        .catch(err => console.debug('Aviso en clasificación automática:', err));
     },
 
     accountErrors: {},
@@ -108,6 +253,54 @@ const EmailManager = {
         }
     },
 
+    toggleSkipDeleteConfirm() {
+        this.setSkipDeleteConfirm(!this.skipDeleteConfirm, true);
+    },
+
+    async setSkipDeleteConfirm(newVal, showNotification = true) {
+        this.skipDeleteConfirm = Boolean(newVal);
+        try {
+            localStorage.setItem('merkemail_skip_delete_confirm', this.skipDeleteConfirm ? 'true' : 'false');
+        } catch (e) {}
+
+        const switchEl = document.getElementById('settings-skip-delete-confirm-switch');
+        const thumbEl = document.getElementById('settings-skip-delete-confirm-thumb');
+        if (switchEl && thumbEl) {
+            if (this.skipDeleteConfirm) {
+                switchEl.classList.remove('bg-slate-300', 'dark:bg-slate-700');
+                switchEl.classList.add('bg-indigo-600');
+                thumbEl.classList.remove('translate-x-0');
+                thumbEl.classList.add('translate-x-5');
+            } else {
+                switchEl.classList.remove('bg-indigo-600');
+                switchEl.classList.add('bg-slate-300', 'dark:bg-slate-700');
+                thumbEl.classList.remove('translate-x-5');
+                thumbEl.classList.add('translate-x-0');
+            }
+        }
+
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ skip_delete_confirm: this.skipDeleteConfirm ? 'true' : 'false' })
+            });
+        } catch (e) {
+            console.warn('Error guardando skip_delete_confirm en backend:', e);
+        }
+
+        if (showNotification && window.UI) {
+            UI.showStickyToast(
+                'Preferencia Guardada',
+                this.skipDeleteConfirm
+                    ? 'Se omitirá el diálogo de confirmación al mover correos a la papelera.'
+                    : 'Se solicitará confirmación antes de mover correos a la papelera.',
+                'info',
+                2500
+            );
+        }
+    },
+
     updateSystemSyncPill(status, customTitle = null) {
         if (!status) {
             if (this.syncSystemStatus === 'inactive') status = 'inactive';
@@ -125,27 +318,31 @@ const EmailManager = {
         btn.classList.remove('hidden');
         btn.classList.add('lg:flex');
 
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
         if (status === 'active') {
             btn.className = 'hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-400 text-xs font-semibold shadow-2xs hover:opacity-90 active:scale-95 transition-all cursor-pointer';
-            btn.title = customTitle || 'Todas las cuentas conectadas y sincronizadas. Haz clic para suspender o sincronizar.';
+            btn.title = customTitle || (isEn ? 'Automatic sync active. Click to pause' : 'Sincronización automática activa. Haz clic para suspender (pausar)');
             dot.className = 'w-2 h-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse';
-            text.textContent = 'Activo';
+            text.textContent = isEn ? 'Active' : 'Activo';
         } else if (status === 'problems') {
             const errAccounts = Object.keys(this.accountErrors).length;
             btn.className = 'hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800/60 text-amber-700 dark:text-amber-400 text-xs font-semibold shadow-2xs hover:opacity-90 active:scale-95 transition-all cursor-pointer';
-            btn.title = customTitle || `${errAccounts} cuenta(s) presentan problemas de sincronización. Haz clic para ver detalles o reintentar.`;
+            btn.title = customTitle || (isEn ? `${errAccounts} account(s) have sync issues. Click to view details or retry.` : `${errAccounts} cuenta(s) presentan problemas de sincronización. Haz clic para ver detalles o reintentar.`);
             dot.className = 'w-2 h-2 rounded-full bg-amber-500 dark:bg-amber-400 animate-pulse';
-            text.textContent = 'Problemas';
+            text.textContent = isEn ? 'Issues' : 'Problemas';
         } else if (status === 'inactive') {
             btn.className = 'hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800/60 text-rose-700 dark:text-rose-400 text-xs font-semibold shadow-2xs hover:opacity-90 active:scale-95 transition-all cursor-pointer';
-            btn.title = customTitle || 'Sin conexión con el servidor. Haz clic para reintentar conectar.';
+            btn.title = customTitle || (isEn ? 'No backend connection. Click to retry connection.' : 'Sin conexión con el servidor. Haz clic para reintentar conectar.');
             dot.className = 'w-2 h-2 rounded-full bg-rose-500 dark:bg-rose-400 animate-pulse';
-            text.textContent = 'Inactivo';
+            text.textContent = isEn ? 'Offline' : 'Inactivo';
         } else if (status === 'paused') {
             btn.className = 'hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-semibold shadow-2xs hover:opacity-90 active:scale-95 transition-all cursor-pointer';
-            btn.title = 'Sincronización automática suspendida. Haz clic para reactivar.';
+            btn.title = isEn ? 'Automatic sync paused. Click to resume' : 'Sincronización automática suspendida. Haz clic para reactivar.';
             dot.className = 'w-2 h-2 rounded-full bg-slate-400';
-            text.textContent = 'Pausado';
+            text.textContent = isEn ? 'Paused' : 'Pausado';
+        }
+        if (btn.dataset.appTooltip !== undefined) {
+            btn.dataset.appTooltip = btn.title;
         }
     },
 
@@ -171,9 +368,19 @@ const EmailManager = {
             if (window.CalendarManager) await CalendarManager.init();
             this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
 
+            // Monitorear y alertar de correos nuevos recibidos
+            if (window.NotificationManager && typeof NotificationManager.checkNewEmails === 'function') {
+                NotificationManager.checkNewEmails(this.emails, this.currentFolder);
+            }
+
             // Actualizar la descripción de bienvenida del asistente Elio
             if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
                 AntigravityCopilot.updateConnectedServices();
+            }
+
+            // Actualizar badge de contactos pendientes en el menú lateral
+            if (window.ContactsManager && typeof ContactsManager.loadContacts === 'function') {
+                ContactsManager.loadContacts();
             }
             UI.showStickyToast('Conectado', 'Conexión con el servidor restablecida con éxito', 'success');
         } catch (e) {
@@ -189,9 +396,19 @@ const EmailManager = {
         if (this.autoSyncEnabled) {
             this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
 
+            // Monitorear y alertar de correos nuevos recibidos
+            if (window.NotificationManager && typeof NotificationManager.checkNewEmails === 'function') {
+                NotificationManager.checkNewEmails(this.emails, this.currentFolder);
+            }
+
             // Actualizar la descripción de bienvenida del asistente Elio
             if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
                 AntigravityCopilot.updateConnectedServices();
+            }
+
+            // Actualizar badge de contactos pendientes en el menú lateral
+            if (window.ContactsManager && typeof ContactsManager.loadContacts === 'function') {
+                ContactsManager.loadContacts();
             }
             UI.showStickyToast('Sincronización Automática', 'Sincronización periódica reanudada', 'success');
             this.checkAutoSync();
@@ -246,11 +463,18 @@ const EmailManager = {
                 try {
                     const res = await fetch(`/api/emails/sync?account_id=${acc.id}`, { method: 'POST' });
                     const data = await res.json();
-                    if (data.success) {
+                    if (data.success && (!data.errors || data.errors.length === 0)) {
                         delete this.accountErrors[acc.id];
                         if (data.synced_count > 0) anySynced = true;
                     } else {
-                        this.accountErrors[acc.id] = data.error || 'Fallo de sincronización';
+                        const errMsg = (data.errors && data.errors.join(', ')) || data.error || 'Fallo de sincronización';
+                        this.accountErrors[acc.id] = errMsg;
+                        if (data.needs_reauth || errMsg.toLowerCase().includes('expir') || errMsg.toLowerCase().includes('reconecta') || errMsg.toLowerCase().includes('invalid_grant')) {
+                            if (!this._notifiedReauthOnce) {
+                                this._notifiedReauthOnce = true;
+                                UI.showStickyToast('Reconexión Requerida', `La sesión de Google para ${acc.email} expiró. Abre Cuentas y pulsa "Reconectar".`, 'warning', 8000);
+                            }
+                        }
                     }
                 } catch (e) {
                     console.warn(`Error en auto-sync para cuenta ${acc.email}:`, e);
@@ -548,6 +772,9 @@ const EmailManager = {
     },
 
     clearMainSearch() {
+        if (window.UI && typeof UI.switchMainView === 'function') {
+            UI.switchMainView('mail');
+        }
         const mainInput = document.getElementById('main-search-input');
         const clearBtn = document.getElementById('btn-clear-search');
         const elioBtn = document.getElementById('btn-submit-to-elio');
@@ -715,11 +942,25 @@ const EmailManager = {
             // Renderizar cuentas en todos los contenedores y selectores
             this.renderAccounts();
 
+            // Las etiquetas pueden haberse cargado antes que las cuentas (carga en paralelo):
+            // re-renderizar para mostrar la cuenta dueña de cada etiqueta
+            if (this.allLabels && this.allLabels.length > 0) this.renderLabels();
+
             this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
+
+            // Monitorear y alertar de correos nuevos recibidos
+            if (window.NotificationManager && typeof NotificationManager.checkNewEmails === 'function') {
+                NotificationManager.checkNewEmails(this.emails, this.currentFolder);
+            }
 
             // Actualizar la descripción de bienvenida del asistente Elio
             if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
                 AntigravityCopilot.updateConnectedServices();
+            }
+
+            // Actualizar badge de contactos pendientes en el menú lateral
+            if (window.ContactsManager && typeof ContactsManager.loadContacts === 'function') {
+                ContactsManager.loadContacts();
             }
         } catch (e) {
             console.error("Error al cargar cuentas:", e);
@@ -783,6 +1024,12 @@ const EmailManager = {
                     </div>
                     <div id="account-test-status-${a.id}" class="hidden text-[11px] p-2 rounded-lg"></div>
                     <div class="pt-2 border-t border-slate-200/70 dark:border-slate-750 flex items-center justify-between gap-2">
+                        ${a.auth_type === 'oauth2' ? `
+                            <button type="button" onclick="EmailManager.connectWithGoogle()" class="py-1.5 px-3 bg-amber-50 hover:bg-amber-100/90 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-400 border border-amber-200/90 dark:border-amber-800/70 rounded-lg text-[11px] font-semibold transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer" title="Renovar sesión y reconectar con Google">
+                                <svg class="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" viewBox="0 0 24 24"><path fill="currentColor" d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0020 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 004 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+                                <span>Reconectar Google</span>
+                            </button>
+                        ` : ''}
                         <button type="button" onclick="EmailManager.startFullAccountSync(${a.id})" class="flex-1 py-1.5 px-3 bg-indigo-50 hover:bg-indigo-100/90 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200/90 dark:border-indigo-800/70 rounded-lg text-[11px] font-semibold transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-700" title="Sincronizar todos los correos del servidor de todas las carpetas en segundo plano">
                             <svg class="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                             <span>Sincronización Total (Todas las carpetas)</span>
@@ -874,11 +1121,15 @@ const EmailManager = {
 
     selectAccount(accountId) {
         if (window.innerWidth < 768 && window.UI) UI.closeMobileSidebar();
+        if (window.UI && typeof UI.switchMainView === 'function') {
+            UI.switchMainView('mail');
+        }
         this.currentAccountId = accountId;
         this.currentPage = 1;
         this.selectedEmailId = null;
         this.currentFolder = 'INBOX';
         this.currentLabelId = null;
+        this.activeFilterLabelIds = null;
         this.clearSelection();
 
         // Actualizar visualmente la carpeta activa en el sidebar a "Recibidos"
@@ -902,27 +1153,61 @@ const EmailManager = {
 
     async loadLabels() {
         try {
-            // Cargar todas las etiquetas para pre-popular la caché por cuenta
+            // Se cargan todas las etiquetas de todas las cuentas una sola vez y se filtran en cliente
             const allRes = await fetch('/api/labels');
             const allLabels = await allRes.json();
-            this.accountLabelsCache = {};
-            (allLabels || []).forEach(l => {
-                if (l.account_id) {
-                    if (!this.accountLabelsCache[l.account_id]) this.accountLabelsCache[l.account_id] = [];
-                    this.accountLabelsCache[l.account_id].push(l);
-                }
-            });
+            this.allLabels = Array.isArray(allLabels) ? allLabels : [];
 
-            if (this.currentAccountId) {
-                this.labels = (allLabels || []).filter(l => !l.account_id || l.account_id === this.currentAccountId);
-            } else {
-                this.labels = allLabels;
-            }
+            this.labels = this.getSidebarLabelsForAccount(this.currentAccountId);
             await this.updateUnreadCounts();
             this.renderLabels();
         } catch (e) {
             console.error("Error al cargar etiquetas:", e);
         }
+    },
+
+    // Etiquetas que se listan en la barra lateral según el selector superior de cuentas:
+    //  - "Todas las cuentas" (null): todas las etiquetas de todas las cuentas.
+    //  - Una cuenta: solo las de esa cuenta (propias + las que estén en uso en sus correos).
+    getSidebarLabelsForAccount(accountId) {
+        const all = this.allLabels || [];
+        if (!accountId) return all;
+        return all.filter(l =>
+            l.account_id === accountId ||
+            (Array.isArray(l.account_ids) && l.account_ids.includes(accountId))
+        );
+    },
+
+    // Texto para distinguir etiquetas con el mismo nombre dentro de una lista:
+    // nombre de la cuenta dueña o "Compartida" para las etiquetas sin cuenta.
+    getLabelOwnerHint(label, list) {
+        const key = String(label.name || '').trim().toLowerCase();
+        const dupes = (list || []).filter(x => String(x.name || '').trim().toLowerCase() === key).length > 1;
+        if (!dupes) return '';
+        if (!label.account_id) return 'Compartida';
+        const acc = (this.accounts || []).find(a => a.id === label.account_id);
+        return acc ? acc.name : '';
+    },
+
+    // Lista de etiquetas de los menús "Etiquetar" (barra superior de la lista y vista del correo):
+    // exactamente la misma lista de la barra lateral, que respeta el selector superior de cuentas
+    // ("Todas las cuentas" = todas las etiquetas; una cuenta = solo las etiquetas de esa cuenta).
+    // Si se elige una etiqueta de otra cuenta, el backend usa la homónima de la cuenta del correo.
+    getLabelMenu() {
+        return this.labels || [];
+    },
+
+    // ¿La etiqueta del menú está aplicada al correo? Una etiqueta de otra cuenta cuenta como
+    // aplicada si el correo tiene la homónima de su propia cuenta (es la que usará el backend).
+    isLabelAppliedToEmail(label, email, assignedLabelIds) {
+        if (assignedLabelIds.has(label.id)) return true;
+        if (!label.account_id || label.account_id === email.account_id) return false;
+        const name = String(label.name || '').trim().toLowerCase();
+        return (this.allLabels || []).some(l =>
+            assignedLabelIds.has(l.id) &&
+            l.account_id === email.account_id &&
+            String(l.name || '').trim().toLowerCase() === name
+        );
     },
 
     async syncRemoteLabels() {
@@ -944,6 +1229,46 @@ const EmailManager = {
     },
 
     async syncCurrentView() {
+        const globalBtn = document.getElementById('btn-global-sync');
+        const globalIcon = globalBtn ? globalBtn.querySelector('svg') : null;
+        if (globalIcon) globalIcon.classList.add('animate-spin');
+
+        // Detección del contexto activo: Calendario, Contactos o Bandeja de Correos
+        const sectionCalendar = document.getElementById('main-calendar-section');
+        const isCalendarVisible = sectionCalendar && !sectionCalendar.classList.contains('hidden');
+        const drawerContacts = document.getElementById('drawer-contacts');
+        const isContactsVisible = drawerContacts && !drawerContacts.classList.contains('hidden');
+
+        if (isCalendarVisible) {
+            try {
+                if (window.CalendarManager && typeof CalendarManager.syncNow === 'function') {
+                    await CalendarManager.syncNow(globalBtn);
+                } else {
+                    await fetch('/api/calendars/sync', { method: 'POST' });
+                }
+            } catch (err) {
+                console.warn('Error sincronizando calendario desde barra global:', err);
+            } finally {
+                if (globalIcon) setTimeout(() => globalIcon.classList.remove('animate-spin'), 600);
+            }
+            return;
+        }
+
+        if (isContactsVisible) {
+            try {
+                if (window.ContactsManager && typeof ContactsManager.syncNow === 'function') {
+                    await ContactsManager.syncNow(globalBtn);
+                } else {
+                    await fetch('/api/contacts/sync', { method: 'POST' });
+                }
+            } catch (err) {
+                console.warn('Error sincronizando contactos desde barra global:', err);
+            } finally {
+                if (globalIcon) setTimeout(() => globalIcon.classList.remove('animate-spin'), 600);
+            }
+            return;
+        }
+
         try {
             UI.showStickyToast('Sincronizando', 'Actualizando correos desde el servidor...', 'info', 2500);
             const params = new URLSearchParams();
@@ -960,7 +1285,7 @@ const EmailManager = {
                 return;
             }
             const data = await res.json();
-            if (data.success) {
+            if (data.success && (!data.errors || data.errors.length === 0)) {
                 if (this.currentAccountId) {
                     delete this.accountErrors[this.currentAccountId];
                 } else {
@@ -968,24 +1293,31 @@ const EmailManager = {
                 }
                 this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
 
-            // Actualizar la descripción de bienvenida del asistente Elio
-            if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
-                AntigravityCopilot.updateConnectedServices();
-            }
+                // Actualizar la descripción de bienvenida del asistente Elio
+                if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
+                    AntigravityCopilot.updateConnectedServices();
+                }
                 UI.showStickyToast('Sincronización Exitosa', `${data.synced_count || 0} correos actualizados`, 'success');
                 await this.loadEmails();
                 await this.loadLabels();
             } else {
+                const errText = (data.errors && data.errors.join(' | ')) || data.error || 'Hubo un error con una cuenta';
                 if (this.currentAccountId) {
-                    this.accountErrors[this.currentAccountId] = data.error || 'Error de sincronización';
+                    this.accountErrors[this.currentAccountId] = errText;
                 }
-                this.updateSystemSyncPill('problems', data.error);
-                UI.showStickyToast('Problemas al sincronizar', data.error || 'Hubo un error con una cuenta', 'warning');
+                this.updateSystemSyncPill('problems', errText);
+                if (data.needs_reauth || errText.toLowerCase().includes('expir') || errText.toLowerCase().includes('reconecta') || errText.toLowerCase().includes('invalid_grant')) {
+                    UI.showStickyToast('Reconexión Requerida', 'La sesión con Google expiró. Abre el menú de Cuentas y pulsa "Reconectar Google".', 'warning', 7000);
+                } else {
+                    UI.showStickyToast('Problemas al sincronizar', errText, 'warning', 5000);
+                }
             }
         } catch (e) {
             this.updateSystemSyncPill('inactive', 'Sin conexión con el servidor backend');
             if (window.GeminiAI) GeminiAI.setDisconnectedState();
             UI.showStickyToast('Error de sincronización', e.message, 'error');
+        } finally {
+            if (globalIcon) setTimeout(() => globalIcon.classList.remove('animate-spin'), 600);
         }
     },
 
@@ -1161,6 +1493,254 @@ const EmailManager = {
         }
     },
 
+    getLabelAndDescendantIds(labelId) {
+        const labelPool = (this.allLabels && this.allLabels.length > 0) ? this.allLabels : (this.labels || []);
+        const parent = labelPool.find(l => l.id === labelId);
+        if (!parent || !parent.name) return [labelId];
+        const prefix = String(parent.name).trim() + '/';
+        const accId = parent.account_id;
+        const matchedIds = [labelId];
+        labelPool.forEach(l => {
+            if (l.id !== labelId && l.name) {
+                const name = String(l.name).trim();
+                if (name.startsWith(prefix)) {
+                    if (!accId || !l.account_id || l.account_id === accId) {
+                        if (!matchedIds.includes(l.id)) {
+                            matchedIds.push(l.id);
+                        }
+                    }
+                }
+            }
+        });
+        return matchedIds;
+    },
+
+    isLabelCollapsed(labelId) {
+        const labelPool = (this.allLabels && this.allLabels.length > 0) ? this.allLabels : (this.labels || []);
+        const parent = labelPool.find(l => l.id === labelId);
+        if (!parent || !parent.name) return false;
+        const fullPath = String(parent.name).trim();
+        const accKey = (this.currentAccountId ? '' : (parent.account_id || 'shared')) + '::';
+        const nodeKey = accKey + fullPath;
+        const prefix = fullPath + '/';
+        const hasChildren = labelPool.some(l => l.id !== labelId && String(l.name || '').trim().startsWith(prefix));
+        if (!hasChildren) return false;
+        if (!this.collapsedLabelNodes) {
+            try {
+                const saved = JSON.parse(localStorage.getItem('merkemail_collapsed_label_nodes') || '[]');
+                this.collapsedLabelNodes = new Set(Array.isArray(saved) ? saved : []);
+            } catch (e) {
+                this.collapsedLabelNodes = new Set();
+            }
+        }
+        return this.collapsedLabelNodes.has(nodeKey);
+    },
+
+    buildLabelTree(labels) {
+        const rootNodes = [];
+        const nodeMap = new Map();
+
+        // Inicializar conjunto de nodos colapsados desde localStorage
+        if (!this.collapsedLabelNodes) {
+            try {
+                const saved = JSON.parse(localStorage.getItem('merkemail_collapsed_label_nodes') || '[]');
+                this.collapsedLabelNodes = new Set(Array.isArray(saved) ? saved : []);
+            } catch (e) {
+                this.collapsedLabelNodes = new Set();
+            }
+        }
+
+        (labels || []).forEach(label => {
+            const fullPath = String(label.name || '').trim();
+            const parts = fullPath.split('/').map(p => p.trim()).filter(Boolean);
+            if (parts.length === 0) return;
+
+            const accKey = (this.currentAccountId ? '' : (label.account_id || 'shared')) + '::';
+            let currentPath = '';
+
+            for (let i = 0; i < parts.length; i++) {
+                const partName = parts[i];
+                const parentPath = currentPath;
+                currentPath = currentPath ? `${currentPath}/${partName}` : partName;
+                const fullKey = accKey + currentPath;
+
+                if (!nodeMap.has(fullKey)) {
+                    const isLeaf = (i === parts.length - 1);
+                    const node = {
+                        key: fullKey,
+                        path: currentPath,
+                        name: partName,
+                        fullPath: currentPath,
+                        level: i,
+                        label: isLeaf ? label : null,
+                        children: [],
+                        account_id: label.account_id
+                    };
+                    nodeMap.set(fullKey, node);
+
+                    if (i === 0) {
+                        rootNodes.push(node);
+                    } else {
+                        const parentKey = accKey + parentPath;
+                        const parentNode = nodeMap.get(parentKey);
+                        if (parentNode) {
+                            parentNode.children.push(node);
+                        } else {
+                            rootNodes.push(node);
+                        }
+                    }
+                } else if (i === parts.length - 1) {
+                    const node = nodeMap.get(fullKey);
+                    node.label = label;
+                    node.account_id = label.account_id;
+                }
+            }
+        });
+
+        return rootNodes;
+    },
+
+    getLabelTreeTotalUnread(node) {
+        let total = (node.label && this.unreadCounts?.labels && this.unreadCounts.labels[String(node.label.id)]) || 0;
+        if (node.children && node.children.length > 0) {
+            node.children.forEach(child => {
+                total += this.getLabelTreeTotalUnread(child);
+            });
+        }
+        return total;
+    },
+
+    toggleLabelCollapse(nodeKey) {
+        if (!this.collapsedLabelNodes) {
+            try {
+                const saved = JSON.parse(localStorage.getItem('merkemail_collapsed_label_nodes') || '[]');
+                this.collapsedLabelNodes = new Set(Array.isArray(saved) ? saved : []);
+            } catch (e) {
+                this.collapsedLabelNodes = new Set();
+            }
+        }
+        if (this.collapsedLabelNodes.has(nodeKey)) {
+            this.collapsedLabelNodes.delete(nodeKey);
+        } else {
+            this.collapsedLabelNodes.add(nodeKey);
+        }
+        try {
+            localStorage.setItem('merkemail_collapsed_label_nodes', JSON.stringify([...this.collapsedLabelNodes]));
+        } catch (e) {}
+        this.renderLabels();
+
+        // Si la etiqueta activa es la que se colapsó o expandió, actualizar la vista de correos
+        if (this.currentLabelId) {
+            const labelPool = (this.allLabels && this.allLabels.length > 0) ? this.allLabels : (this.labels || []);
+            const activeLabel = labelPool.find(l => l.id === this.currentLabelId);
+            if (activeLabel) {
+                const accKey = (this.currentAccountId ? '' : (activeLabel.account_id || 'shared')) + '::';
+                const activeKey = accKey + String(activeLabel.name || '').trim();
+                if (activeKey === nodeKey) {
+                    if (this.isLabelCollapsed(this.currentLabelId)) {
+                        this.activeFilterLabelIds = this.getLabelAndDescendantIds(this.currentLabelId);
+                    } else {
+                        this.activeFilterLabelIds = null;
+                    }
+                    const titleEl = document.getElementById('current-folder-title');
+                    if (titleEl) {
+                        const hasChildren = this.getLabelAndDescendantIds(this.currentLabelId).length > 1;
+                        const suffix = (this.isLabelCollapsed(this.currentLabelId) && hasChildren) ? ' (incluye sub-etiquetas)' : '';
+                        titleEl.textContent = `Etiqueta: ${this.getLabelDisplayName(activeLabel.name)}${suffix}`;
+                    }
+                    this.loadEmails(false);
+                }
+            }
+        }
+    },
+
+    renderLabelNode(node, nameCounts) {
+        const hasChildren = node.children && node.children.length > 0;
+        const isCollapsed = hasChildren && this.collapsedLabelNodes.has(node.key);
+        const l = node.label;
+        const isActive = l && this.currentLabelId === l.id;
+        
+        let unread = 0;
+        if (l) {
+            unread = (this.unreadCounts?.labels && this.unreadCounts.labels[String(l.id)]) || 0;
+        }
+        if (hasChildren && isCollapsed) {
+            unread = this.getLabelTreeTotalUnread(node);
+        }
+
+        // Para raíces mostramos el nombre formateado; para sub-categorías el nombre del concepto hijo
+        const leafDisplayName = node.level === 0 ? this.getLabelDisplayName(node.name) : node.name;
+
+        // En "Todas las cuentas" se indica la cuenta dueña
+        const ownerAcc = (!this.currentAccountId && l && l.account_id)
+            ? (this.accounts || []).find(a => a.id === l.account_id)
+            : null;
+        const isDuplicateName = l && nameCounts[String(l.name || '').trim().toLowerCase()] > 1;
+        const ownerName = ownerAcc ? ownerAcc.name : ((l && !l.account_id && isDuplicateName) ? 'Compartida' : '');
+        const ownerHint = ownerName ? ` (${ownerName})` : '';
+        const color = (l && l.color) ? l.color : '#6366f1';
+
+        const paddingClass = node.level === 0 ? 'px-3 sm:px-4' : 'pl-2 pr-3 sm:pr-4';
+
+        let html = `
+            <div class="label-tree-node flex flex-col">
+                <div class="label-nav-btn group flex items-center justify-between ${paddingClass} py-1.5 rounded-r-full cursor-pointer transition-colors ${
+                    isActive 
+                        ? 'bg-indigo-50 dark:bg-indigo-950/70 font-bold text-indigo-700 dark:text-indigo-300 border-l-2 border-indigo-600 dark:border-indigo-400' 
+                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                }" ${l ? `onclick="EmailManager.filterByLabel(${l.id})"` : `onclick="EmailManager.toggleLabelCollapse('${this.escapeHtml(node.key)}')"`} title="${this.escapeHtml((node.fullPath || leafDisplayName) + ownerHint)}">
+                    
+                    <div class="label-left-content flex items-center gap-1.5 min-w-0 flex-1">
+                        ${hasChildren ? `
+                            <button type="button" 
+                                    class="label-collapse-btn sidebar-text p-0.5 -ml-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded transition-transform cursor-pointer shrink-0" 
+                                    onclick="event.stopPropagation(); EmailManager.toggleLabelCollapse('${this.escapeHtml(node.key)}')" 
+                                    title="${isCollapsed ? 'Desplegar sub-etiquetas' : 'Colapsar sub-etiquetas'}">
+                                <svg class="w-3.5 h-3.5 transition-transform duration-150 ${isCollapsed ? '-rotate-90' : 'rotate-0'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </button>
+                        ` : `
+                            <span class="sidebar-text w-3.5 h-3.5 shrink-0 -ml-1"></span>
+                        `}
+                        <span class="label-dot w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style="background-color: ${color}"></span>
+                        <span class="sidebar-text truncate text-xs">${this.escapeHtml(leafDisplayName)}${ownerName ? `<span class="ml-1 text-[10px] font-normal text-slate-400 dark:text-slate-500">· ${this.escapeHtml(ownerName)}</span>` : ''}</span>
+                    </div>
+
+                    <div class="sidebar-text flex items-center gap-1.5 shrink-0 ml-1">
+                        ${l ? `
+                            <span class="sidebar-badge text-[11px] px-2 py-0.5 rounded-full font-bold bg-slate-200/80 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 ${unread > 0 ? '' : 'hidden'}" id="label-badge-${l.id}">
+                                ${unread > 999 ? '999+' : unread}
+                            </span>
+                            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onclick="event.stopPropagation(); EmailManager.openEditLabelModal(${l.id}, '${this.escapeHtml(l.name)}', '${l.color || '#3b82f6'}')" class="p-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400" title="Editar etiqueta">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                                </button>
+                                <button onclick="event.stopPropagation(); EmailManager.deleteLabel(${l.id}, '${this.escapeHtml(l.name)}')" class="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400" title="Eliminar etiqueta">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                </button>
+                            </div>
+                        ` : `
+                            <span class="sidebar-badge text-[11px] px-2 py-0.5 rounded-full font-bold bg-slate-200/80 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 ${unread > 0 ? '' : 'hidden'}">
+                                ${unread > 999 ? '999+' : unread}
+                            </span>
+                        `}
+                    </div>
+                </div>
+        `;
+
+        if (hasChildren) {
+            html += `
+                <div class="label-children-container flex flex-col space-y-0.5 border-l border-slate-200/70 dark:border-slate-800/70 ml-4 my-0.5 ${isCollapsed ? 'hidden' : ''}">
+                    ${node.children.map(child => this.renderLabelNode(child, nameCounts)).join('')}
+                </div>
+            `;
+        }
+
+        html += `</div>`;
+        return html;
+    },
+
     renderLabels() {
         const container = document.getElementById('sidebar-labels-list');
         const countBadge = document.getElementById('sidebar-labels-count-badge');
@@ -1183,36 +1763,15 @@ const EmailManager = {
             return;
         }
 
-        container.innerHTML = this.labels.map(l => {
-            const isActive = this.currentLabelId === l.id;
-            const unread = (this.unreadCounts?.labels && this.unreadCounts.labels[String(l.id)]) || 0;
-            const displayName = this.getLabelDisplayName(l.name);
-            return `
-                <div class="label-nav-btn group flex items-center justify-between px-3 sm:px-4 py-1.5 rounded-r-full cursor-pointer transition-colors ${
-                    isActive 
-                        ? 'bg-indigo-50 dark:bg-indigo-950/70 font-bold text-indigo-700 dark:text-indigo-300 border-l-2 border-indigo-600 dark:border-indigo-400' 
-                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60'
-                }" onclick="EmailManager.filterByLabel(${l.id})" title="${this.escapeHtml(displayName)}">
-                    <div class="label-left-content flex items-center gap-2.5 min-w-0 flex-1">
-                        <span class="label-dot w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style="background-color: ${l.color || '#3b82f6'}"></span>
-                        <span class="sidebar-text truncate text-xs">${this.escapeHtml(displayName)}</span>
-                    </div>
-                    <div class="sidebar-text flex items-center gap-1.5 shrink-0 ml-1">
-                        <span class="sidebar-badge text-[11px] px-2 py-0.5 rounded-full font-bold bg-slate-200/80 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 ${unread > 0 ? '' : 'hidden'}" id="label-badge-${l.id}">
-                            ${unread > 999 ? '999+' : unread}
-                        </span>
-                        <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onclick="event.stopPropagation(); EmailManager.openEditLabelModal(${l.id}, '${this.escapeHtml(l.name)}', '${l.color || '#3b82f6'}')" class="p-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400" title="Editar etiqueta">
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-                            </button>
-                            <button onclick="event.stopPropagation(); EmailManager.deleteLabel(${l.id}, '${this.escapeHtml(displayName)}')" class="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400" title="Eliminar etiqueta">
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }).join('');
+        // Nombres repetidos en la lista (p. ej. "Trabajo" compartida y "Trabajo" de una cuenta)
+        const nameCounts = {};
+        this.labels.forEach(l => {
+            const key = String(l.name || '').trim().toLowerCase();
+            nameCounts[key] = (nameCounts[key] || 0) + 1;
+        });
+
+        const rootNodes = this.buildLabelTree(this.labels);
+        container.innerHTML = rootNodes.map(node => this.renderLabelNode(node, nameCounts)).join('');
     },
 
     filterByLabel(labelId) {
@@ -1223,16 +1782,23 @@ const EmailManager = {
         this.currentPage = 1;
         this.clearSelection();
 
-        // Asegurar vista de correo
-        const sectionMail = document.getElementById('main-mail-section');
-        const sectionCalendar = document.getElementById('main-calendar-section');
-        const btnNavCalendar = document.getElementById('nav-item-calendar');
-        if (sectionMail && sectionCalendar) {
-            sectionMail.classList.remove('hidden');
-            sectionCalendar.classList.add('hidden');
+        // Si la etiqueta tiene sub-etiquetas y está colapsada, mostrar correos de ella y todos sus descendientes
+        if (this.isLabelCollapsed(labelId)) {
+            this.activeFilterLabelIds = this.getLabelAndDescendantIds(labelId);
+        } else {
+            this.activeFilterLabelIds = null;
         }
-        if (btnNavCalendar) {
-            btnNavCalendar.classList.remove('bg-indigo-50', 'dark:bg-indigo-950/60', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
+
+        // Asegurar vista de correo y desaparecer cualquier otra vista activa (notas o calendario)
+        if (window.UI && typeof UI.switchMainView === 'function') {
+            UI.switchMainView('mail');
+        } else {
+            const sectionMail = document.getElementById('main-mail-section');
+            const sectionCalendar = document.getElementById('main-calendar-section');
+            const sectionNotes = document.getElementById('main-notes-section');
+            if (sectionMail) sectionMail.classList.remove('hidden');
+            if (sectionCalendar) sectionCalendar.classList.add('hidden');
+            if (sectionNotes) sectionNotes.classList.add('hidden');
         }
 
         // Quitar active-folder de carpetas
@@ -1242,10 +1808,13 @@ const EmailManager = {
         });
 
         // Actualizar título
-        const label = this.labels.find(l => l.id === labelId);
+        const labelPool = (this.allLabels && this.allLabels.length > 0) ? this.allLabels : (this.labels || []);
+        const label = labelPool.find(l => l.id === labelId);
         const titleEl = document.getElementById('current-folder-title');
         if (titleEl && label) {
-            titleEl.textContent = `Etiqueta: ${this.getLabelDisplayName(label.name)}`;
+            const hasChildren = this.getLabelAndDescendantIds(labelId).length > 1;
+            const suffix = (this.isLabelCollapsed(labelId) && hasChildren) ? ' (incluye sub-etiquetas)' : '';
+            titleEl.textContent = `Etiqueta: ${this.getLabelDisplayName(label.name)}${suffix}`;
         }
 
         this.renderLabels();
@@ -1253,35 +1822,97 @@ const EmailManager = {
         this.loadEmails();
     },
 
-    openCreateLabelModal() {
-        document.getElementById('modal-label-title').textContent = 'Nueva Etiqueta';
-        document.getElementById('manage-label-id').value = '';
+    // Cuenta principal: la marcada como predeterminada (is_default) o, si no hay, la primera
+    getPrimaryAccountId() {
+        const accs = this.accounts || [];
+        const def = accs.find(a => Number(a.is_default) === 1) || accs.find(a => Number(a.is_active) === 1) || accs[0];
+        return def ? def.id : null;
+    },
+
+    // Abre el modal de etiqueta. `accountId` = cuenta donde se creará; `assignToEmailId` = correo
+    // al que se asignará automáticamente tras crearla (creación desde la vista del correo).
+    _openLabelModal({ title, labelId = '', name = '', color = '#3b82f6', accountId = null, assignToEmailId = null, info = '' }) {
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
+        const titleEl = document.getElementById('modal-label-title');
+        if (titleEl) {
+            titleEl.textContent = window.I18n ? I18n.translateText(title) : title;
+        }
+        document.getElementById('manage-label-id').value = labelId;
         const accEl = document.getElementById('manage-label-account-id');
-        if (accEl) accEl.value = this.currentAccountId || '';
-        document.getElementById('manage-label-name').value = '';
-        this.selectLabelColor('#3b82f6');
+        if (accEl) accEl.value = accountId || '';
+        this.pendingLabelAssignEmailId = assignToEmailId;
+        const infoEl = document.getElementById('manage-label-account-info');
+        if (infoEl) {
+            infoEl.innerHTML = info;
+            infoEl.classList.toggle('hidden', !info);
+        }
+        document.getElementById('manage-label-name').value = name;
+        this.selectLabelColor(color || '#3b82f6');
+        const submitBtn = document.querySelector('#manage-label-form button[type="submit"]');
+        if (submitBtn) {
+            submitBtn.textContent = isEn ? 'Save Label' : 'Guardar Etiqueta';
+        }
         document.getElementById('modal-manage-label').classList.remove('hidden');
         setTimeout(() => document.getElementById('manage-label-name').focus(), 100);
     },
 
-    openCreateLabelModalForAccount(accountId) {
-        document.getElementById('modal-label-title').textContent = 'Nueva Etiqueta en Cuenta';
-        document.getElementById('manage-label-id').value = '';
-        const accEl = document.getElementById('manage-label-account-id');
-        if (accEl) accEl.value = accountId || '';
-        document.getElementById('manage-label-name').value = '';
-        this.selectLabelColor('#3b82f6');
-        document.getElementById('modal-manage-label').classList.remove('hidden');
-        setTimeout(() => document.getElementById('manage-label-name').focus(), 100);
+    _accountLabelText(accountId) {
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
+        const acc = (this.accounts || []).find(a => a.id === accountId);
+        return acc ? `<strong>${this.escapeHtml(acc.name)}</strong> (${this.escapeHtml(acc.email)})` : (isEn ? 'the selected account' : 'la cuenta seleccionada');
+    },
+
+    // Crear desde la barra lateral:
+    //  - "Todas las cuentas": en la cuenta principal (si luego se asigna a correos de otras
+    //    cuentas, el backend crea la etiqueta homónima en cada una de esas cuentas).
+    //  - Una cuenta seleccionada: en la cuenta del correo abierto y asignada a ese correo;
+    //    si no hay correo abierto, en la cuenta seleccionada.
+    openCreateLabelModal() {
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
+        if (!this.currentAccountId) {
+            const accountId = this.getPrimaryAccountId();
+            this._openLabelModal({
+                title: isEn ? 'New Label' : 'Nueva Etiqueta', accountId,
+                info: isEn 
+                    ? `It will be created in primary account ${this._accountLabelText(accountId)}. If assigned to emails of other accounts, it will also be created in those accounts.`
+                    : `Se creará en la cuenta principal ${this._accountLabelText(accountId)}. Si la asignas a correos de otras cuentas, se creará también en esas cuentas.`
+            });
+            return;
+        }
+        const opened = this.getOpenedEmail();
+        if (opened) {
+            this.openCreateLabelModalForAccount(opened.account_id, opened.id);
+            return;
+        }
+        this._openLabelModal({
+            title: isEn ? 'New Label' : 'Nueva Etiqueta', accountId: this.currentAccountId,
+            info: isEn 
+                ? `It will be created in account ${this._accountLabelText(this.currentAccountId)}.`
+                : `Se creará en la cuenta ${this._accountLabelText(this.currentAccountId)}.`
+        });
+    },
+
+    // Correo abierto actualmente en el visor (o null)
+    getOpenedEmail() {
+        const em = this.currentOpenedEmail;
+        return (em && this.selectedEmailId && em.id === this.selectedEmailId) ? em : null;
+    },
+
+    // Crear desde la vista del correo: en la cuenta del correo abierto y asignada a ese correo
+    openCreateLabelModalForAccount(accountId, emailId = null) {
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
+        document.querySelectorAll('[id^="email-label-dropdown"]').forEach(el => el.classList.add('hidden'));
+        const opened = this.getOpenedEmail();
+        const subject = (opened && opened.id === emailId) ? (opened.subject || (isEn ? '(no subject)' : '(sin asunto)')) : '';
+        const info = isEn
+            ? `It will be created in account ${this._accountLabelText(accountId)}` + (emailId ? ` and assigned to the opened email${subject ? `: <em>${this.escapeHtml(subject)}</em>` : ''}` : '') + '.'
+            : `Se creará en la cuenta ${this._accountLabelText(accountId)}` + (emailId ? ` y se asignará al correo abierto${subject ? `: <em>${this.escapeHtml(subject)}</em>` : ''}` : '') + '.';
+        this._openLabelModal({ title: isEn ? 'New Label on Account' : 'Nueva Etiqueta en Cuenta', accountId, assignToEmailId: emailId, info });
     },
 
     openEditLabelModal(labelId, labelName, labelColor) {
-        document.getElementById('modal-label-title').textContent = 'Editar Etiqueta';
-        document.getElementById('manage-label-id').value = labelId;
-        document.getElementById('manage-label-name').value = labelName;
-        this.selectLabelColor(labelColor || '#3b82f6');
-        document.getElementById('modal-manage-label').classList.remove('hidden');
-        setTimeout(() => document.getElementById('manage-label-name').focus(), 100);
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
+        this._openLabelModal({ title: isEn ? 'Edit Label' : 'Editar Etiqueta', labelId, name: labelName, color: labelColor });
     },
 
     selectLabelColor(color) {
@@ -1297,7 +1928,8 @@ const EmailManager = {
         const name = document.getElementById('manage-label-name').value.trim();
         const color = document.getElementById('manage-label-color').value;
         const accIdVal = document.getElementById('manage-label-account-id')?.value;
-        const account_id = accIdVal ? parseInt(accIdVal) : (this.currentAccountId || null);
+        const account_id = accIdVal ? parseInt(accIdVal) : (this.currentAccountId || this.getPrimaryAccountId());
+        const assignToEmailId = id ? null : this.pendingLabelAssignEmailId;
 
         if (!name) {
             UI.showStickyToast('Nombre requerido', 'Ingresa el nombre de la etiqueta', 'warning');
@@ -1312,7 +1944,11 @@ const EmailManager = {
                     body: JSON.stringify({ name, color, account_id })
                 });
                 if (!res.ok) throw new Error('Error al actualizar');
+                const upd = await res.json().catch(() => ({}));
                 UI.showStickyToast('Etiqueta Actualizada', `Se guardó "${name}" correctamente`, 'success');
+                if (upd.gmail_error) {
+                    UI.showStickyToast('Gmail', 'El cambio se guardó en Senda pero no se pudo aplicar en Gmail.', 'warning', 6000);
+                }
             } else {
                 const res = await fetch('/api/labels', {
                     method: 'POST',
@@ -1320,15 +1956,42 @@ const EmailManager = {
                     body: JSON.stringify({ name, color, account_id })
                 });
                 if (!res.ok) throw new Error('Error al crear');
-                UI.showStickyToast('Etiqueta Creada', `La etiqueta "${name}" ha sido creada`, 'success');
+                const created = await res.json();
+
+                // Creada desde la vista del correo: asignarla automáticamente a ese correo
+                if (assignToEmailId && created.label_id) {
+                    const resAssign = await fetch(`/api/emails/${assignToEmailId}/labels`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ label_id: created.label_id })
+                    });
+                    if (!resAssign.ok) throw new Error('La etiqueta se creó pero no se pudo asignar al correo');
+                    this.emailDetailCache.delete(assignToEmailId);
+                }
+
+                const accName = ((this.accounts || []).find(a => a.id === account_id) || {}).name || 'la cuenta';
+                const what = created.existing ? `La etiqueta "${name}" ya existía en ${accName}` : `La etiqueta "${name}" se creó en ${accName}`;
+                const gmail = created.gmail || {};
+                const gmailTxt = gmail.is_gmail ? (gmail.synced ? ' (también en Gmail)' : '') : '';
+                UI.showStickyToast(
+                    created.existing ? 'Etiqueta Existente' : 'Etiqueta Creada',
+                    (assignToEmailId ? `${what}${gmailTxt} y se asignó al correo` : `${what}${gmailTxt}`),
+                    'success'
+                );
+                if (gmail.is_gmail && !gmail.synced) {
+                    UI.showStickyToast('Gmail no disponible',
+                        'La etiqueta quedó guardada en Senda y se creará en Gmail en la próxima sincronización.',
+                        'warning', 6000);
+                }
             }
 
+            this.pendingLabelAssignEmailId = null;
             document.getElementById('modal-manage-label').classList.add('hidden');
             await this.loadLabels();
             if (this.selectedEmailId) {
                 await this.openEmailDetail(this.selectedEmailId);
             }
-            if (this.currentLabelId) {
+            if (this.currentLabelId || assignToEmailId) {
                 await this.loadEmails(false);
             }
         } catch (err) {
@@ -1339,7 +2002,8 @@ const EmailManager = {
     async deleteLabel(labelId, labelName) {
         const confirmed = await UI.confirm({
             title: '¿Eliminar etiqueta?',
-            message: `¿Estás seguro de eliminar la etiqueta "${labelName}"? Los correos no se borrarán, solo perderán esta etiqueta.`,
+            message: `¿Estás seguro de eliminar la etiqueta "${labelName}"? Los correos no se borrarán, solo perderán esta etiqueta.` +
+                (((this.allLabels || []).find(l => l.id === labelId) || {}).remote_id ? ' La etiqueta también se eliminará en Gmail.' : ''),
             confirmText: 'Eliminar Etiqueta',
             cancelText: 'Cancelar',
             isDanger: true
@@ -1349,7 +2013,10 @@ const EmailManager = {
 
         try {
             const res = await fetch(`/api/labels/${labelId}`, { method: 'DELETE' });
-            if (!res.ok) throw new Error('No se pudo eliminar la etiqueta');
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.detail || 'No se pudo eliminar la etiqueta');
+            }
 
             UI.showStickyToast('Etiqueta Eliminada', `Se eliminó "${labelName}" con éxito`, 'success');
 
@@ -1380,7 +2047,8 @@ const EmailManager = {
             UI.showStickyToast('Etiqueta Asignada', 'Se ha asignado la etiqueta al correo', 'success');
             await this.openEmailDetail(emailId);
             await this.loadEmails(false);
-            await this.updateUnreadCounts();
+            // Recargar etiquetas: el uso por cuenta cambia y también los contadores
+            await this.loadLabels();
         } catch (err) {
             UI.showStickyToast('Error', err.message, 'error');
         }
@@ -1398,7 +2066,8 @@ const EmailManager = {
             UI.showStickyToast('Etiqueta Removida', 'Se quitó la etiqueta del correo actual', 'info');
             await this.openEmailDetail(emailId);
             await this.loadEmails(false);
-            await this.updateUnreadCounts();
+            // Recargar etiquetas: el uso por cuenta cambia y también los contadores
+            await this.loadLabels();
         } catch (err) {
             UI.showStickyToast('Error', err.message, 'error');
         }
@@ -1413,6 +2082,10 @@ const EmailManager = {
     },
 
     async archiveCurrentEmail(emailId) {
+        if (!this.canBatchArchiveInCurrentFolder() && ['ALL', 'TODOS'].includes((this.currentFolder || '').toUpperCase())) {
+            UI.showStickyToast('Acción no permitida', 'No se permite archivar correos desde Todos', 'warning');
+            return;
+        }
         const folderUpper = (this.currentFolder || (this.currentOpenedEmail && this.currentOpenedEmail.folder) || '').toUpperCase();
         if (['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes(folderUpper) || (this.currentOpenedEmail && ['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes((this.currentOpenedEmail.folder || '').toUpperCase()))) {
             UI.showStickyToast('Acción no permitida', 'No se permite almacenar o archivar correos en Spam, Papelera o Borradores', 'warning');
@@ -1558,6 +2231,10 @@ const EmailManager = {
         params.append('page', this.currentPage);
         params.append('page_size', this.pageSize);
 
+        if (this.selectedCategory) {
+            params.append('ai_category', this.selectedCategory);
+        }
+
         const hasAdv = this.hasActiveAdvancedFilters();
 
         if (hasAdv) {
@@ -1586,6 +2263,8 @@ const EmailManager = {
             // Múltiples etiquetas
             if (f.labelIds && f.labelIds.length > 0) {
                 params.append('label_ids', f.labelIds.join(','));
+            } else if (this.activeFilterLabelIds && this.activeFilterLabelIds.length > 0) {
+                params.append('label_ids', this.activeFilterLabelIds.join(','));
             } else if (this.currentLabelId) {
                 params.append('label_id', this.currentLabelId);
             }
@@ -1607,7 +2286,9 @@ const EmailManager = {
             // Urgencia IA
             if (f.aiUrgency) params.append('ai_urgency', f.aiUrgency);
         } else {
-            if (this.currentLabelId) {
+            if (this.activeFilterLabelIds && this.activeFilterLabelIds.length > 0) {
+                params.append('label_ids', this.activeFilterLabelIds.join(','));
+            } else if (this.currentLabelId) {
                 params.append('label_id', this.currentLabelId);
             } else {
                 params.append('folder', this.currentFolder || 'INBOX');
@@ -1637,6 +2318,7 @@ const EmailManager = {
             this.updateActiveFiltersBanner();
             this.renderEmailsTable();
             this.renderPagination();
+            this.triggerAutoCategoryClassification();
             this.updateSystemSyncPill(Object.keys(this.accountErrors).length > 0 ? 'problems' : 'active');
 
             // Si el backend lanzó una sincronización en segundo plano para poblar una carpeta vacía, refrescar silenciosamente
@@ -1646,9 +2328,19 @@ const EmailManager = {
                 }, 2200);
             }
 
+            // Monitorear y alertar de correos nuevos recibidos
+            if (window.NotificationManager && typeof NotificationManager.checkNewEmails === 'function') {
+                NotificationManager.checkNewEmails(this.emails, this.currentFolder);
+            }
+
             // Actualizar la descripción de bienvenida del asistente Elio
             if (window.AntigravityCopilot && typeof AntigravityCopilot.updateConnectedServices === 'function') {
                 AntigravityCopilot.updateConnectedServices();
+            }
+
+            // Actualizar badge de contactos pendientes en el menú lateral
+            if (window.ContactsManager && typeof ContactsManager.loadContacts === 'function') {
+                ContactsManager.loadContacts();
             }
         } catch (e) {
             this.resetDetailView();
@@ -1668,23 +2360,27 @@ const EmailManager = {
         const listContainer = document.getElementById('emails-split-list');
         if (!listContainer) return;
 
-        if (this.emails.length === 0) {
+        const displayEmails = this.selectedCategory 
+            ? this.emails.filter(e => this.matchesCategory(e, this.selectedCategory))
+            : this.emails;
+
+        if (displayEmails.length === 0) {
             this.resetDetailView();
             listContainer.innerHTML = `
                 <div class="py-16 text-center text-slate-400 dark:text-slate-500 text-xs">
                     <svg class="w-8 h-8 stroke-1 opacity-50 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
-                    <span>No se encontraron correos en esta bandeja</span>
+                    <span data-i18n="email.no_emails">${this.selectedCategory ? (window.I18n ? I18n.t('email.no_emails') : `No se encontraron correos en la categoría '${this.selectedCategory}'`) : (window.I18n ? I18n.t('email.no_emails') : 'No se encontraron correos en esta bandeja')}</span>
                 </div>
             `;
             return;
         }
 
         // Si el correo actualmente seleccionado ya no se encuentra en la lista filtrada o nueva carpeta, resetear visor
-        if (this.selectedEmailId && !this.emails.some(e => e.id === this.selectedEmailId)) {
+        if (this.selectedEmailId && !displayEmails.some(e => e.id === this.selectedEmailId)) {
             this.resetDetailView();
         }
 
-        listContainer.innerHTML = this.emails.map(email => {
+        listContainer.innerHTML = displayEmails.map(email => {
             const isUnread = !email.is_read;
             const isStarred = Boolean(email.is_starred);
             const isSelected = this.selectedEmailId === email.id;
@@ -1702,6 +2398,25 @@ const EmailManager = {
                 }
             }
 
+            // Obtener datos del remitente y cuenta receptora
+            const accId = email.account_id;
+            const matchedAcc = (this.accounts && this.accounts.length > 0)
+                ? this.accounts.find(a => a.id === accId)
+                : null;
+            const accName = email.account_name || (matchedAcc ? matchedAcc.name : '') || 'Cuenta';
+
+            // En Enviados/Borradores mostrar avatar del destinatario; en Bandeja de Entrada/resto mostrar del remitente que lo envió
+            const isSentOrDraft = ['SENT', 'DRAFT', 'DRAFTS', 'BORRADORES', 'ENVIADOS'].includes(String(email.folder || '').toUpperCase());
+            const contactTarget = isSentOrDraft ? (email.recipient || email.sender) : (email.sender || email.recipient);
+            const contactName = isSentOrDraft ? (email.recipient_name || contactTarget) : (email.sender_name || contactTarget);
+            const cleanTargetEmail = (window.AvatarService ? AvatarService.cleanEmail(contactTarget) : contactTarget) || contactTarget;
+            const displayName = contactName || cleanTargetEmail.split('@')[0] || 'U';
+            const safeAvatarTitle = `${this.escapeHtml(displayName)}${cleanTargetEmail ? ' (' + this.escapeHtml(cleanTargetEmail) + ')' : ''}${accName ? ' • Cuenta: ' + this.escapeHtml(accName) : ''}`;
+
+            const senderAvatarHtml = (window.AvatarService)
+                ? `<div class="email-sender-avatar shrink-0 flex items-center justify-center" title="${safeAvatarTitle}">${AvatarService.render(cleanTargetEmail, displayName, 'w-5 h-5 text-[10px]', 'shadow-2xs', accColor)}</div>`
+                : `<span class="email-sender-avatar w-5 h-5 rounded-full shrink-0 flex items-center justify-center font-bold text-white text-[10px] shadow-2xs select-none" style="background-color: ${accColor}" title="${safeAvatarTitle}">${(displayName || 'U').charAt(0).toUpperCase()}</span>`;
+
             return `
                 <div onclick="EmailManager.openEmailDetail(${email.id})" id="email-item-${email.id}" data-account-color="${accColor}" style="--account-accent-color: ${accColor}; ${isSelected ? `border-left-color: ${accColor} !important;` : ''}" class="email-list-item group relative px-3 py-2.5 cursor-pointer transition-all select-none ${isSelected ? 'selected' : ''} ${
                     isUnread 
@@ -1717,8 +2432,8 @@ const EmailManager = {
                             <svg class="w-3.5 h-3.5 ${isStarred ? 'text-amber-400 fill-amber-400' : 'fill-none'}" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
                         </button>
 
-                        <!-- Indicativo Color Cuenta -->
-                        <span class="w-2 h-2 rounded-full shrink-0 shadow-2xs" style="background-color: ${email.account_color || '#3b82f6'}" title="${this.escapeHtml(email.account_name || 'Cuenta')}"></span>
+                        <!-- Avatar del Remitente -->
+                        ${senderAvatarHtml}
 
                         <!-- Remitente -->
                         <span class="email-item-sender text-xs truncate flex-1 min-w-0 ${isUnread ? 'font-bold text-slate-900 dark:text-white' : 'font-medium text-slate-700 dark:text-slate-300'}">
@@ -1745,8 +2460,9 @@ const EmailManager = {
                         ${this.escapeHtml(email.subject || '(Sin Asunto)')}
                     </div>
 
-                    <!-- Snippet Vista Previa & Badges Etiquetas -->
+                    <!-- Snippet Vista Previa & Badges Etiquetas y Categorías IA -->
                     <div class="email-item-snippet text-[11px] text-slate-500 dark:text-slate-400 truncate pl-6 font-normal flex items-center gap-1.5 flex-wrap">
+                        ${this.renderAiCategoryBadge(email.ai_tags)}
                         ${(email.labels && email.labels.length > 0) ? email.labels.map(lbl => `
                             <span class="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.2 rounded" style="background-color: ${lbl.color}22; color: ${lbl.color}; border: 1px solid ${lbl.color}44;">
                                 ${this.escapeHtml(this.getLabelDisplayName(lbl.name))}
@@ -1762,8 +2478,8 @@ const EmailManager = {
         this.updateUnreadCounts();
 
         // Si no hay correo seleccionado y hay correos en la lista, abrir automáticamente el primero
-        if (!this.selectedEmailId && this.emails.length > 0 && window.innerWidth >= 768) {
-            this.openEmailDetail(this.emails[0].id);
+        if (!this.selectedEmailId && displayEmails.length > 0 && window.innerWidth >= 768) {
+            this.openEmailDetail(displayEmails[0].id);
         } else if (this.selectedEmailId) {
             this.highlightSelectedItem(this.selectedEmailId);
         }
@@ -1825,6 +2541,14 @@ const EmailManager = {
         // Cancelar cualquier temporizador de lectura en curso si se cambia de correo antes de los 7s
         this.cancelReadTimer();
 
+        // Al abrir un correo, asegurar que la vista de correos esté activa y desaparecer notas o calendario
+        if (window.UI && typeof UI.switchMainView === 'function') {
+            const sectionNotes = document.getElementById('main-notes-section');
+            if (sectionNotes && !sectionNotes.classList.contains('hidden')) {
+                UI.switchMainView('mail');
+            }
+        }
+
         this.selectedEmailId = emailId;
         this.highlightSelectedItem(emailId);
         
@@ -1872,14 +2596,16 @@ const EmailManager = {
             const emailLabels = email.labels || [];
             const assignedLabelIds = new Set(emailLabels.map(l => l.id));
 
-            // Obtener etiquetas de la cuenta desde caché en memoria inmediata
-            let originLabels = this.accountLabelsCache[email.account_id] || [];
+            // Etiquetas del menú según el selector de cuentas (misma lista que la barra lateral)
+            let originLabels = this.getLabelMenu();
             const originAccount = (this.accounts || []).find(a => a.id === email.account_id);
             const originAccountLabel = originAccount ? (originAccount.email || originAccount.name) : 'Cuenta origen';
             const folderDisplayName = this.getFolderDisplayName(email.folder);
             const isInboxCategory = ['INBOX', 'CATEGORY_UPDATES', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_FORUMS', 'CATEGORY_PERSONAL'].includes((email.folder || '').toUpperCase());
             const isSpam = (email.folder === 'SPAM' || this.currentFolder === 'SPAM');
             const isTrashOrSpamOrDraft = ['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes((this.currentFolder || '').toUpperCase()) || ['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes((email.folder || '').toUpperCase());
+            // Archivar no se ofrece en Papelera/Spam/Borradores ni cuando el correo se abre desde "Todos" (ALL)
+            const canArchiveHere = !isTrashOrSpamOrDraft && this.canBatchArchiveInCurrentFolder();
             const hasImages = Boolean(email.body_html && (/<img\b|background-image\s*:/i.test(email.body_html)));
             const hasImagesAuthorized = this.authorizedSpamImages.has(email.id);
 
@@ -1890,12 +2616,12 @@ const EmailManager = {
                 
                 <div class="py-1">
                     ${originLabels.length > 0 ? originLabels.map(l => {
-                        const isAssigned = assignedLabelIds.has(l.id);
+                        const isAssigned = this.isLabelAppliedToEmail(l, email, assignedLabelIds);
                         return `
                             <div onclick="EmailManager.toggleLabelOnCurrentEmail(${email.id}, ${l.id}, ${isAssigned})" class="w-full text-left px-3 py-1.5 flex items-center justify-between gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors">
                                 <div class="flex items-center gap-2 min-w-0">
                                     <span class="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style="background-color: ${l.color}"></span>
-                                    <span class="truncate text-slate-700 dark:text-slate-200 ${isAssigned ? 'font-semibold text-indigo-600 dark:text-indigo-400' : ''}">${this.escapeHtml(this.getLabelDisplayName(l.name))}</span>
+                                    <span class="truncate text-slate-700 dark:text-slate-200 ${isAssigned ? 'font-semibold text-indigo-600 dark:text-indigo-400' : ''}">${this.escapeHtml(this.getLabelDisplayName(l.name))}${(() => { const h = this.getLabelOwnerHint(l, originLabels); return h ? `<span class="ml-1 text-[10px] font-normal text-slate-400">· ${this.escapeHtml(h)}</span>` : ''; })()}</span>
                                 </div>
                                 <span class="w-4 h-4 rounded border flex items-center justify-center shrink-0 text-xs ${
                                     isAssigned 
@@ -1914,7 +2640,7 @@ const EmailManager = {
                 </div>
 
                 <div class="border-t border-slate-100 dark:border-slate-800 pt-1 px-1">
-                    <button onclick="EmailManager.openCreateLabelModalForAccount(${email.account_id})" class="w-full text-left px-2.5 py-1.5 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-lg flex items-center gap-1.5 font-medium transition-colors">
+                    <button onclick="EmailManager.openCreateLabelModalForAccount(${email.account_id}, ${email.id})" class="w-full text-left px-2.5 py-1.5 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-lg flex items-center gap-1.5 font-medium transition-colors">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                         <span>Nueva etiqueta en esta cuenta...</span>
                     </button>
@@ -1928,40 +2654,37 @@ const EmailManager = {
                 <div class="h-full flex flex-col min-w-0 bg-white dark:bg-slate-950 overflow-hidden select-text">
                     <!-- Top Action Bar del Correo -->
                     <div class="email-top-action-bar relative z-40 h-12 px-3 md:px-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-900/60 shrink-0 min-w-0 overflow-visible">
-                        <!-- Sección Izquierda: Botón Volver + Slot Superior de Etiquetas -->
+                        <!-- Sección Izquierda: Slot Superior de Etiquetas -->
                         <div class="flex items-center min-w-0 flex-1 mr-2 sm:mr-3 overflow-hidden">
-                            <!-- Volver (visible en móviles y vistas estrechas) -->
-                            <button onclick="EmailManager.backToList()" class="p-1.5 text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-lg md:hidden shrink-0 mr-1.5" title="Volver a la lista">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
-                            </button>
-
                             <!-- Slot Superior de Etiquetas (con scroll horizontal si cabe arriba) -->
                             <div id="email-labels-top-slot" class="email-labels-scroll flex-1 min-w-0 flex items-center gap-1.5 sm:gap-2 overflow-x-auto flex-nowrap py-1 select-none" onwheel="if(event.deltaY !== 0){this.scrollLeft += event.deltaY; event.preventDefault();}">
                                 <!-- Indicador Carpeta / Recibidos con botón de archivar -->
                                 <span class="inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full font-medium ${isSpam ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'} shrink-0 whitespace-nowrap" title="${folderDisplayName}">
                                     <span>${folderDisplayName}</span>
-                                    ${isInboxCategory ? `
-                                        <button onclick="EmailManager.archiveCurrentEmail(${email.id})" class="hover:text-rose-500 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-full w-3.5 h-3.5 flex items-center justify-center text-xs leading-none transition-colors ml-0.5 cursor-pointer shrink-0" title="Archivar (quitar de ${folderDisplayName})">&times;</button>
+                                    ${isInboxCategory && canArchiveHere ? `
+                                        <button onclick="EmailManager.archiveCurrentEmail(${email.id})" data-i18n-title="email.archive" class="hover:text-rose-500 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-full w-3.5 h-3.5 flex items-center justify-center text-xs leading-none transition-colors ml-0.5 cursor-pointer shrink-0" title="${window.I18n ? I18n.t('email.archive') : `Archivar (quitar de ${folderDisplayName})`}">&times;</button>
                                     ` : ''}
                                 </span>
 
                                 ${email.has_attachments ? `
-                                    <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-200/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 shadow-2xs shrink-0 whitespace-nowrap" title="Contiene archivos adjuntos">
+                                    <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-200/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 shadow-2xs shrink-0 whitespace-nowrap" data-i18n-title="email.attachments" title="${window.I18n && I18n.currentLang === 'en' ? 'Contains attachments' : 'Contiene archivos adjuntos'}">
                                         <svg class="w-3 h-3 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
                                         </svg>
-                                        <span>Adjuntos</span>
+                                        <span>${window.I18n ? I18n.t('email.attachments') : 'Adjuntos'}</span>
                                     </span>
                                 ` : ''}
 
                                 <!-- Badges de Etiquetas Asignadas con botón '×' claro para eliminarlas -->
                                 ${emailLabels.map(lbl => {
                                     const labelDisplayName = this.getLabelDisplayName(lbl.name);
+                                    const lblTitle = window.I18n && I18n.currentLang === 'en' ? `Label: ${this.escapeHtml(labelDisplayName)}` : `Etiqueta: ${this.escapeHtml(labelDisplayName)}`;
+                                    const removeTitle = window.I18n && I18n.currentLang === 'en' ? `Remove label '${this.escapeHtml(labelDisplayName)}' from this email` : `Eliminar etiqueta '${this.escapeHtml(labelDisplayName)}' de este correo`;
                                     return `
-                                    <span class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-0.5 rounded-full shadow-2xs shrink-0 whitespace-nowrap transition-all" style="background-color: ${lbl.color}22; color: ${lbl.color}; border: 1px solid ${lbl.color}55;" title="Etiqueta: ${this.escapeHtml(labelDisplayName)}">
+                                    <span class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-0.5 rounded-full shadow-2xs shrink-0 whitespace-nowrap transition-all" style="background-color: ${lbl.color}22; color: ${lbl.color}; border: 1px solid ${lbl.color}55;" title="${lblTitle}">
                                         <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: ${lbl.color}"></span>
                                         <span class="whitespace-nowrap">${this.escapeHtml(labelDisplayName)}</span>
-                                        <button onclick="EmailManager.removeLabelFromEmail(${email.id}, ${lbl.id}, event)" class="hover:bg-black/15 dark:hover:bg-white/20 rounded-full w-4 h-4 flex items-center justify-center text-xs leading-none transition-transform hover:scale-110 ml-0.5 shrink-0 cursor-pointer" title="Eliminar etiqueta '${this.escapeHtml(labelDisplayName)}' de este correo">&times;</button>
+                                        <button onclick="EmailManager.removeLabelFromEmail(${email.id}, ${lbl.id}, event)" class="hover:bg-black/15 dark:hover:bg-white/20 rounded-full w-4 h-4 flex items-center justify-center text-xs leading-none transition-transform hover:scale-110 ml-0.5 shrink-0 cursor-pointer" title="${removeTitle}">&times;</button>
                                     </span>
                                 `;}).join('')}
                             </div>
@@ -1969,25 +2692,39 @@ const EmailManager = {
 
                         <!-- Acciones Rápidas Superior Derecha (Gestión Individual & Redacción) -->
                         <div id="email-top-actions-right" class="relative z-40 flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end overflow-visible">
-                            <!-- 1. Botón Archivar / Almacenar (Oculto en Papelera, Spam y Borradores) -->
-                            ${!isTrashOrSpamOrDraft ? `
-                                <button onclick="EmailManager.archiveCurrentEmail(${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Archivar correo (quitar de Recibidos)">
+                            <!-- Botón Volver a la Lista de Correos (Exclusivo en Móvil < 768px) -->
+                            <button id="btn-detail-back-mobile" onclick="EmailManager.backToList()" data-i18n-title="email.back_to_list" class="md:hidden flex items-center justify-center min-w-[44px] min-h-[44px] p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer shrink-0" title="${window.I18n ? I18n.t('email.back_to_list') : 'Volver a la lista de correos'}" aria-label="Return to email list">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                                </svg>
+                            </button>
+
+                            <!-- 0. Botón Mover a Carpeta -->
+                            <button id="btn-detail-move" onclick="EmailManager.toggleMoveMenu(event, 'detail', ${email.id})" data-i18n-title="email.move_to_folder" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer shrink-0" title="${window.I18n ? I18n.t('email.move_to_folder') : 'Mover a carpeta'}">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m0 0l-3-3m3 3l-3 3"/>
+                                </svg>
+                            </button>
+                            <!-- 1. Botón Archivar / Almacenar (Oculto en Papelera, Spam, Borradores y en "Todos") -->
+                            ${canArchiveHere ? `
+                                <button onclick="EmailManager.archiveCurrentEmail(${email.id})" data-i18n-title="email.archive" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${window.I18n ? I18n.t('email.archive') : 'Archivar correo (quitar de Recibidos)'}">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
                                 </button>
                             ` : ''}
 
                             <!-- 2. Botón Marcar como Spam / No es spam -->
-                            <button onclick="EmailManager.markSpamCurrentEmail(${email.id})" class="p-2 ${isSpam ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800' : 'text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-slate-200 dark:border-slate-800'} rounded-lg border transition-colors shadow-2xs cursor-pointer" title="${isSpam ? 'Marcar como legítimo (mover a Recibidos)' : 'Marcar como spam'}">
+                            <button onclick="EmailManager.markSpamCurrentEmail(${email.id})" data-i18n-title="${isSpam ? 'email.mark_not_spam' : 'email.mark_spam'}" class="p-2 ${isSpam ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800' : 'text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-slate-200 dark:border-slate-800'} rounded-lg border transition-colors shadow-2xs cursor-pointer" title="${isSpam ? (window.I18n ? I18n.t('email.mark_not_spam') : 'Marcar como legítimo (mover a Recibidos)') : (window.I18n ? I18n.t('email.mark_spam') : 'Marcar como spam')}">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
                             </button>
 
                             <!-- 3. Botón Eliminar / Mover a Papelera -->
-                            <button onclick="EmailManager.deleteCurrentEmail(${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Mover a papelera">
+                            <button onclick="EmailManager.deleteCurrentEmail(${email.id})" data-i18n-title="email.move_to_trash" class="p-2 text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${window.I18n ? I18n.t('email.move_to_trash') : 'Mover a papelera'}">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                             </button>
 
                             <!-- 4. Botón Marcar como visto / no leído -->
-                            <button id="btn-top-toggle-read" onclick="EmailManager.toggleReadCurrentEmail(${email.id})" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${email.is_read ? 'Marcar como no leído' : 'Marcar como visto'}">
+                            <button id="btn-top-toggle-read" onclick="EmailManager.toggleReadCurrentEmail(${email.id})" data-i18n-title="${email.is_read ? 'email.mark_unread' : 'email.mark_read'}" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${email.is_read ? (window.I18n ? I18n.t('email.mark_unread') : 'Marcar como no leído') : (window.I18n ? I18n.t('email.mark_read') : 'Marcar como visto')}">
                                 ${email.is_read ? `
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                                 ` : `
@@ -1997,7 +2734,7 @@ const EmailManager = {
 
                             <!-- 5. Botón Asignar Etiquetas (Individual) con menú desplegable en primer plano -->
                             <div class="relative inline-block shrink-0">
-                                <button id="btn-toggle-email-labels-top-${email.id}" onclick="EmailManager.toggleAssignLabelDropdown(${email.id}, event, 'top')" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Asignar o quitar etiquetas a este correo">
+                                <button id="btn-toggle-email-labels-top-${email.id}" onclick="EmailManager.toggleAssignLabelDropdown(${email.id}, event, 'top')" data-i18n-title="email.assign_labels" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${window.I18n ? I18n.t('email.assign_labels') : 'Asignar o quitar etiquetas a este correo'}">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
                                 </button>
                                 <div id="email-label-dropdown-top-${email.id}" class="hidden fixed w-64 max-h-80 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-[9999] py-1.5 text-xs backdrop-blur-md">
@@ -2006,7 +2743,7 @@ const EmailManager = {
                             </div>
 
                             <!-- 6. Botón Destacar -->
-                            <button onclick="EmailManager.toggleStar(${email.id}, event)" class="p-2 text-slate-500 dark:text-slate-400 hover:text-amber-500 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${isStarred ? 'Quitar de destacados' : 'Destacar'}">
+                            <button onclick="EmailManager.toggleStar(${email.id}, event)" data-i18n-title="${isStarred ? 'email.unstar' : 'email.star'}" class="p-2 text-slate-500 dark:text-slate-400 hover:text-amber-500 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${isStarred ? (window.I18n ? I18n.t('email.unstar') : 'Quitar de destacados') : (window.I18n ? I18n.t('email.star') : 'Destacar')}">
                                 <svg class="w-4 h-4 ${isStarred ? 'text-amber-400 fill-amber-400' : 'fill-none'}" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
                             </button>
 
@@ -2014,27 +2751,37 @@ const EmailManager = {
                             <div class="h-4 w-px bg-slate-200 dark:bg-slate-700/80 mx-0.5"></div>
 
                             <!-- 7. Responder -->
-                            <button onclick="EmailManager.prepareReply()" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Responder">
+                            <button onclick="EmailManager.prepareReply()" data-i18n-title="email.reply" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${window.I18n ? I18n.t('email.reply') : 'Responder'}">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
                             </button>
 
                             <!-- 8. Reenviar -->
-                            <button onclick="EmailManager.prepareForward()" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Reenviar">
+                            <button onclick="EmailManager.prepareForward()" data-i18n-title="email.forward" class="p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${window.I18n ? I18n.t('email.forward') : 'Reenviar'}">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6"/></svg>
                             </button>
 
                             <!-- 9. Responder con IA (Elio) -->
-                            <button id="btn-top-reply-ai" onclick="EmailManager.replyWithAI(${email.id})" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-purple-600 dark:text-purple-300 hover:text-white bg-purple-50 dark:bg-purple-950/40 hover:bg-gradient-to-r hover:from-indigo-600 hover:to-pink-600 rounded-lg border border-purple-200 dark:border-purple-800/60 transition-all shadow-2xs group btn-reply-ai-feature cursor-pointer" title="Responder con Elio (@elio)">
+                            <button id="btn-top-reply-ai" onclick="EmailManager.replyWithAI(${email.id})" data-i18n-title="email.reply_ai" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-purple-600 dark:text-purple-300 hover:text-white bg-purple-50 dark:bg-purple-950/40 hover:bg-gradient-to-r hover:from-indigo-600 hover:to-pink-600 rounded-lg border border-purple-200 dark:border-purple-800/60 transition-all shadow-2xs group btn-reply-ai-feature cursor-pointer" title="${window.I18n ? I18n.t('email.reply_ai') : 'Responder con Elio (@elio)'}">
                                 <svg class="w-4 h-4 text-purple-600 dark:text-purple-400 group-hover:text-amber-300 animate-spin-slow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                             </button>
 
                             <!-- 10. Agendar Cita IA -->
-                            <button id="btn-top-schedule-ai" onclick="EmailManager.scheduleFromEmail(${email.id})" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded-lg border border-emerald-200 dark:border-emerald-800/60 transition-colors shadow-2xs btn-schedule-ai-feature cursor-pointer" title="Agendar en Calendario con Elio (@elio)">
+                            <button id="btn-top-schedule-ai" onclick="EmailManager.scheduleFromEmail(${email.id})" data-i18n-title="email.schedule_ai" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded-lg border border-emerald-200 dark:border-emerald-800/60 transition-colors shadow-2xs btn-schedule-ai-feature cursor-pointer" title="${window.I18n ? I18n.t('email.schedule_ai') : 'Agendar en Calendario con Elio (@elio)'}">
                                 <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                             </button>
 
-                            <!-- 11. Imprimir (solo visible en modo browser y PWA, oculto en modo instalado/desktop) -->
-                            <button id="btn-print-email" onclick="EmailManager.printCurrentEmail()" class="${(window.DesktopBridge && window.DesktopBridge.isDesktop) ? 'hidden' : ''} p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="Imprimir correo">
+                            <!-- 10b. Detectar Compromisos y Tareas IA -->
+                            <button id="btn-top-commitments-ai-${email.id}" onclick="EmailManager.detectCommitments(${email.id})" data-i18n-title="email.commitments_ai" class="${(window.GeminiAI && GeminiAI.isAiActive) ? '' : 'hidden'} p-2 text-cyan-600 dark:text-cyan-300 hover:bg-cyan-50 dark:hover:bg-cyan-950/50 rounded-lg border border-cyan-200 dark:border-cyan-800/60 transition-colors shadow-2xs btn-commitments-ai-feature cursor-pointer" title="${window.I18n ? I18n.t('email.commitments_ai') : 'Detectar compromisos, tareas y acuerdos con Elio (@elio)'}">
+                                <svg class="w-4 h-4 text-cyan-600 dark:text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                            </button>
+
+                            <!-- 10c. Traducir Correo (Bilingüe ES/EN) -->
+                            <button id="btn-top-translate-ai-${email.id}" onclick="EmailManager.toggleTranslateEmail(${email.id})" data-i18n-title="email.translate" class="p-2 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-lg border border-indigo-200 dark:border-indigo-800/60 transition-colors shadow-2xs btn-translate-ai-feature cursor-pointer" title="${window.I18n ? I18n.t('email.translate') : 'Traducir correo'}">
+                                <svg class="w-4 h-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg>
+                            </button>
+
+                            <!-- 11. Imprimir correo (en desktop abre visor con vista previa, en web/PWA usa el navegador nativo) -->
+                            <button id="btn-print-email" onclick="EmailManager.openPrintPreview()" data-i18n-title="email.print" class="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg border border-slate-200 dark:border-slate-800 transition-colors shadow-2xs cursor-pointer" title="${window.I18n ? I18n.t('email.print') : 'Imprimir correo (Ctrl+P)'}">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
                             </button>
                         </div>
@@ -2046,7 +2793,7 @@ const EmailManager = {
                     <!-- Cabecera del Correo (Asunto & Ficha Remitente) -->
                     <div class="px-4 md:px-8 pt-6 pb-4 border-b border-slate-200 dark:border-slate-800/80 shrink-0 min-w-0">
                         <div class="flex items-start justify-between gap-4 mb-4 min-w-0">
-                            <h2 class="text-lg md:text-xl font-bold text-slate-900 dark:text-white leading-snug break-words min-w-0">
+                            <h2 id="email-detail-subject-${email.id}" class="text-lg md:text-xl font-bold text-slate-900 dark:text-white leading-snug break-words min-w-0">
                                 ${this.escapeHtml(email.subject || '(Sin Asunto)')}
                             </h2>
                         </div>
@@ -2088,6 +2835,32 @@ const EmailManager = {
                         </p>
                     </div>
 
+                    <!-- Compromisos y Acciones Clave Elio (@elio) -->
+                    <div id="ai-commitments-box-${email.id}" class="hidden mx-4 md:mx-8 mt-2.5 p-3.5 rounded-xl bg-cyan-50/80 dark:bg-cyan-950/40 border border-cyan-200 dark:border-cyan-800/50 min-w-0 transition-all">
+                        <div class="flex items-center gap-2 mb-2 min-w-0">
+                            <svg class="w-4 h-4 text-cyan-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                            <span class="text-xs font-bold text-cyan-800 dark:text-cyan-300">Compromisos & Tareas Detectadas (@elio)</span>
+                            <span id="ai-commitments-status-${email.id}" class="ml-auto text-[11px] text-cyan-700 dark:text-cyan-400"></span>
+                        </div>
+                        <div id="ai-commitments-list-${email.id}" class="space-y-2"></div>
+                    </div>
+
+                    <!-- Panel de Traducción Bilingüe (@elio) -->
+                    <div id="ai-translation-box-${email.id}" class="hidden mx-4 md:mx-8 mt-2.5 p-3 rounded-xl bg-indigo-50/90 dark:bg-slate-850 border border-indigo-200 dark:border-indigo-800/60 min-w-0 transition-all shadow-2xs">
+                        <div class="flex flex-wrap items-center justify-between gap-2 min-w-0 text-xs">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <svg class="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg>
+                                <span id="ai-translation-status-${email.id}" class="font-bold text-indigo-900 dark:text-indigo-200">Traducción de correo</span>
+                            </div>
+                            <div class="flex items-center gap-1.5 shrink-0">
+                                <button type="button" onclick="EmailManager.switchTranslationLang(${email.id}, 'es')" id="btn-trans-es-${email.id}" class="px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer bg-indigo-600 text-white border-indigo-600">Español</button>
+                                <button type="button" onclick="EmailManager.switchTranslationLang(${email.id}, 'en')" id="btn-trans-en-${email.id}" class="px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400">English</button>
+                                <div class="h-3.5 w-px bg-slate-300 dark:bg-slate-700 mx-1"></div>
+                                <button type="button" onclick="EmailManager.toggleTranslationView(${email.id})" id="btn-toggle-original-${email.id}" class="text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 underline cursor-pointer">Ver Original</button>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Cuerpo del Correo en Scroll Independiente Contenido Aislado -->
                     <div id="email-detail-scroll-container" class="flex-1 p-4 md:p-8 overflow-y-auto overflow-x-hidden min-w-0 leading-relaxed text-sm text-slate-800 dark:text-slate-200">
                         ${isSpam ? `
@@ -2126,11 +2899,11 @@ const EmailManager = {
                             </div>
                         ` : ''}
 
-                        <div class="max-w-4xl w-full mx-auto ${email.body_html ? 'bg-white' : 'bg-white dark:bg-slate-900'} rounded-2xl p-1.5 md:p-3 border border-slate-200 dark:border-slate-800 shadow-2xs overflow-x-auto min-w-0 mb-3 transition-all">
+                        <div id="email-body-content-${email.id}" class="max-w-4xl w-full mx-auto ${email.body_html ? 'bg-white' : 'bg-white dark:bg-slate-900'} rounded-2xl p-1.5 md:p-3 border border-slate-200 dark:border-slate-800 shadow-2xs overflow-x-auto min-w-0 mb-3 transition-all">
                             ${email.body_html ? `
                                 <iframe id="email-body-frame-${email.id}" class="email-body-frame w-full border-0 rounded-xl" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" scrolling="no" style="width: 100%; border: none; overflow: hidden; display: block; min-height: 30px; background-color: #ffffff;"></iframe>
                             ` : `
-                                <div class="p-3 whitespace-pre-wrap font-sans text-xs md:text-sm text-slate-800 dark:text-slate-200 break-words">${this.escapeHtml(email.body_text || email.snippet || '')}</div>
+                                <div id="email-body-text-${email.id}" class="p-3 whitespace-pre-wrap font-sans text-xs md:text-sm text-slate-800 dark:text-slate-200 break-words">${this.escapeHtml(email.body_text || email.snippet || '')}</div>
                             `}
                         </div>
 
@@ -2434,6 +3207,9 @@ const EmailManager = {
 
                     // Evaluar y ajustar ubicación de etiquetas según espacio disponible
                     EmailManager.setupLabelsResponsivePlacement();
+                    if (window.I18n) {
+                        I18n.applyToDom();
+                    }
                 }
             }, 60);
         } catch (e) {
@@ -2529,13 +3305,17 @@ const EmailManager = {
         }
     },
 
-    mountEmailBodyFrame(email, allowImages = false) {
-        if (!email || !email.body_html) return;
+    mountEmailBodyFrame(email, allowImages = false, customHtml = null) {
+        if (!email) return;
         const frame = document.getElementById(`email-body-frame-${email.id}`);
         if (!frame) return;
 
         try {
-            let html = email.body_html;
+            let html = (customHtml !== null && customHtml !== undefined) ? customHtml : email.body_html;
+            if (!html) html = email.body_text || email.snippet || '';
+            if (!/<[a-z][\s\S]*>/i.test(html)) {
+                html = `<div style="white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #1e293b; padding: 14px 6px;">${this.escapeHtml(html)}</div>`;
+            }
             const isSpam = (email.folder === 'SPAM' || this.currentFolder === 'SPAM');
             const shouldBlockImages = isSpam && !this.authorizedSpamImages.has(email.id) && !allowImages;
 
@@ -2582,15 +3362,18 @@ const EmailManager = {
             margin: 0 !important;
             padding: 0 !important;
             width: 100% !important;
+            min-width: 100% !important;
             height: auto !important;
             min-height: 0 !important;
-            overflow: hidden !important;
+            overflow-x: auto !important;
+            overflow-y: hidden !important;
             background-color: #ffffff;
             color: #1e293b;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             box-sizing: border-box;
             word-wrap: break-word;
             overflow-wrap: break-word;
+            -webkit-text-size-adjust: 100%;
         }
         /* Eliminar margen y espaciado residual de los últimos elementos del correo */
         #merke-email-content > *:last-child,
@@ -2600,10 +3383,39 @@ const EmailManager = {
             margin-bottom: 0 !important;
             padding-bottom: 0 !important;
         }
-        /* Contención segura para respetar el diseño original de tablas e imágenes */
+        /* Tablas: contención adaptativa respetando estructura interna */
+        table {
+            border-collapse: collapse;
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+            max-width: 100%;
+        }
+        /* Imágenes: contención fluida respetando proporciones nativas */
         img {
-            max-width: 100% !important;
+            border: 0;
+            outline: none;
+            text-decoration: none;
+            -ms-interpolation-mode: bicubic;
+            max-width: 100%;
+        }
+        /* Si la imagen no tiene height explícito en atributos, permitir auto-proporción */
+        img:not([height]) {
             height: auto;
+        }
+        /* Eliminar espacio fantasma bajo imágenes en celdas de tabla */
+        td > img, th > img, a > img {
+            vertical-align: middle;
+        }
+        /* Spacers y píxeles de seguimiento de 0 o 1px no deben expandirse */
+        img[width="0"], img[width="1"], img[height="0"], img[height="1"],
+        img[width="1px"], img[height="1px"],
+        img[style*="width: 1px"], img[style*="height: 1px"],
+        img[style*="width:1px"], img[style*="height:1px"] {
+            max-width: 1px !important;
+            max-height: 1px !important;
+            width: 1px !important;
+            height: 1px !important;
+            display: inline-block !important;
         }
         ${shouldBlockImages ? `
             img {
@@ -2617,9 +3429,6 @@ const EmailManager = {
                 display: inline-block;
             }
         ` : ''}
-        table {
-            max-width: 100% !important;
-        }
     </style>
 </head>
 <body style="margin: 0; padding: 0;">
@@ -2688,52 +3497,137 @@ const EmailManager = {
                     if (exactHeight > 0) {
                         const targetHeight = Math.max(exactHeight, 20);
                         const currentHeight = parseInt(frame.style.height, 10) || 0;
-                        if (Math.abs(targetHeight - currentHeight) >= 2) {
+                        if (Math.abs(targetHeight - currentHeight) >= 6) {
                             frame.style.height = targetHeight + 'px';
                         }
                     }
                 } catch (err) {}
             };
 
-            adjustHeight();
-            frame.onload = adjustHeight;
+            let isAdjusting = false;
+            let rafAdjustId = null;
+            const scheduleAdjustHeight = () => {
+                if (isAdjusting || rafAdjustId) return;
+                rafAdjustId = requestAnimationFrame(() => {
+                    rafAdjustId = null;
+                    isAdjusting = true;
+                    adjustHeight();
+                    isAdjusting = false;
+                });
+            };
 
-            // Manejo de errores de carga de imágenes con fallback al proxy backend
+            scheduleAdjustHeight();
+            frame.onload = scheduleAdjustHeight;
+
+            // Normalizar y blindar proporciones y dimensiones de imágenes
             const images = doc.images || [];
             Array.from(images).forEach(img => {
-                if (!img.complete) {
-                    img.addEventListener('load', adjustHeight);
+                // 1. Spacers y píxeles de rastreo de 0 o 1px
+                const wAttr = img.getAttribute('width');
+                const hAttr = img.getAttribute('height');
+                const numW = parseInt(wAttr, 10);
+                const numH = parseInt(hAttr, 10);
+
+                const isTracker = (wAttr === '0' || wAttr === '1' || numW === 1 || numW === 0) &&
+                                  (hAttr === '0' || hAttr === '1' || numH === 1 || numH === 0);
+                if (isTracker) {
+                    img.style.setProperty('max-width', '1px', 'important');
+                    img.style.setProperty('max-height', '1px', 'important');
+                    img.style.setProperty('width', '1px', 'important');
+                    img.style.setProperty('height', '1px', 'important');
+                    img.style.setProperty('display', 'inline-block', 'important');
+                    return;
                 }
+
+                // 2. Imágenes con altura fija pero sin ancho (ej. logos o iconos de 20px, 24px, 33px)
+                // Evita que queden desproporcionadas por resoluciones nativas retina
+                if (hAttr && (!wAttr || wAttr === 'auto') && !img.style.width) {
+                    if (numH > 1) {
+                        img.style.setProperty('height', `${numH}px`, 'important');
+                        img.style.setProperty('width', 'auto', 'important');
+                        img.style.setProperty('max-width', '100%');
+                    }
+                }
+
+                // 3. Imágenes con dimensiones fijas (atributos o estilo en píxeles)
+                // Si el contenedor se reduce por debajo de su ancho, asegurar que la altura escale
+                // proporcionalmente con aspect-ratio en lugar de estirarse o aplastarse
+                let explicitW = numW;
+                let explicitH = numH;
+                if (!explicitW && img.style.width && img.style.width.endsWith('px')) {
+                    explicitW = parseInt(img.style.width, 10);
+                }
+                if (!explicitH && img.style.height && img.style.height.endsWith('px')) {
+                    explicitH = parseInt(img.style.height, 10);
+                }
+
+                if (explicitW > 0 && explicitH > 0) {
+                    img.style.aspectRatio = `${explicitW} / ${explicitH}`;
+                    // Si tiene altura fija en style y es un banner/imagen grande (>100px),
+                    // permitir que la altura escale cuando el ancho se restrinja por max-width: 100%
+                    if (explicitW > 100 && img.style.height && img.style.height !== 'auto' && !img.style.height.includes('%')) {
+                        img.style.height = 'auto';
+                        img.style.maxWidth = '100%';
+                    }
+                }
+
+                // 4. Asegurar que al cargar, imágenes sin dimensiones nativas calculen su aspect-ratio
+                const onImageReady = () => {
+                    if (img.naturalWidth && img.naturalHeight && img.naturalWidth > 0 && img.naturalHeight > 0) {
+                        if (!img.style.aspectRatio && !isTracker) {
+                            img.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+                        }
+                    }
+                    scheduleAdjustHeight();
+                };
+
+                if (img.complete) {
+                    onImageReady();
+                } else {
+                    img.addEventListener('load', onImageReady);
+                }
+
+                // Manejo de errores de carga de imágenes con fallback al proxy backend
                 img.addEventListener('error', function onImgError() {
                     img.removeEventListener('error', onImgError);
                     const originalSrc = this.getAttribute('src') || this.src;
                     if (originalSrc && !this.dataset.fallbackTried && (originalSrc.startsWith('http://') || originalSrc.startsWith('https://'))) {
                         this.dataset.fallbackTried = "true";
                         this.src = `/api/image-proxy?url=${encodeURIComponent(originalSrc)}`;
-                        this.addEventListener('load', adjustHeight);
+                        this.addEventListener('load', onImageReady);
                     } else {
-                        adjustHeight();
+                        scheduleAdjustHeight();
                     }
                 });
             });
 
-            // ResizeObserver únicamente sobre el contenedor interno de contenido (sin observar documentElement)
+            // Limpiar observadores previos del iframe para evitar acumulación en memoria
+            if (this._emailIframeRO) {
+                try { this._emailIframeRO.disconnect(); } catch (e) {}
+                this._emailIframeRO = null;
+            }
+            if (this._emailIframeMO) {
+                try { this._emailIframeMO.disconnect(); } catch (e) {}
+                this._emailIframeMO = null;
+            }
+
+            // ResizeObserver únicamente sobre el contenedor interno con throttling
             const wrapper = doc.getElementById('merke-email-content') || doc.body;
             if (window.ResizeObserver && wrapper) {
-                const ro = new ResizeObserver(() => adjustHeight());
-                ro.observe(wrapper);
+                this._emailIframeRO = new ResizeObserver(() => scheduleAdjustHeight());
+                this._emailIframeRO.observe(wrapper);
             }
 
             // MutationObserver para detectar inserciones asíncronas
             if (window.MutationObserver && wrapper) {
-                const mo = new MutationObserver(() => adjustHeight());
-                mo.observe(wrapper, { childList: true, subtree: true, attributes: true });
+                this._emailIframeMO = new MutationObserver(() => scheduleAdjustHeight());
+                this._emailIframeMO.observe(wrapper, { childList: true, subtree: true, attributes: false });
             }
 
             // Pasadas de respaldo para cuando fuentes remotas e imágenes finalicen renderizado
-            setTimeout(adjustHeight, 150);
-            setTimeout(adjustHeight, 400);
-            setTimeout(adjustHeight, 1000);
+            setTimeout(scheduleAdjustHeight, 150);
+            setTimeout(scheduleAdjustHeight, 400);
+            setTimeout(scheduleAdjustHeight, 1000);
         } catch (e) {
             console.error("Error montando iframe aislado de correo:", e);
         }
@@ -2741,7 +3635,7 @@ const EmailManager = {
 
     openEmailLink(url) {
         if (!url) return;
-        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop) || (window.location.port === '6524');
+        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop);
         const isPwa = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 
         if (isDesktop) {
@@ -2869,8 +3763,8 @@ const EmailManager = {
                 <div class="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center mb-4 shadow-2xs">
                     <svg class="w-8 h-8 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                 </div>
-                <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">Ningún correo seleccionado</h3>
-                <p class="text-xs text-slate-500 mt-1 max-w-sm">Haz clic en un correo de la lista izquierda para previsualizarlo y responder con IA.</p>
+                <h3 data-i18n="email.no_selection" class="text-sm font-semibold text-slate-700 dark:text-slate-300">${window.I18n ? I18n.t('email.no_selection') : 'Ningún correo seleccionado'}</h3>
+                <p data-i18n="email.no_selection_desc" class="text-xs text-slate-500 mt-1 max-w-sm">${window.I18n ? I18n.t('email.no_selection_desc') : 'Haz clic en un correo de la lista izquierda para previsualizarlo y responder con IA.'}</p>
             </div>
         `;
 
@@ -2880,6 +3774,451 @@ const EmailManager = {
             const listPanel = document.getElementById('email-list-container');
             if (listPanel) listPanel.classList.remove('hidden');
         }
+    },
+
+    onBrandClick() {
+        if (window.UI && typeof UI.switchMainView === 'function') {
+            UI.switchMainView('mail');
+        } else {
+            const sectionMail = document.getElementById('main-mail-section');
+            const sectionCalendar = document.getElementById('main-calendar-section');
+            const sectionNotes = document.getElementById('main-notes-section');
+            if (sectionMail) sectionMail.classList.remove('hidden');
+            if (sectionCalendar) sectionCalendar.classList.add('hidden');
+            if (sectionNotes) sectionNotes.classList.add('hidden');
+        }
+        this.currentFolder = 'INBOX';
+        this.currentLabelId = null;
+        this.clearSelection();
+        this.renderLabels();
+        // Mostrar siempre el resumen ejecutivo 360° de Elio al pulsar en el logo o título de la aplicación
+        this.showElioInboxSummary(true);
+        this.loadEmails();
+    },
+
+    async toggleTaskFromDashboard(taskId, checkboxEl) {
+        if (!taskId) return;
+        try {
+            const res = await fetch(`/api/events/${taskId}/complete`, { method: 'POST' });
+            if (res.ok) {
+                if (window.UI) UI.showStickyToast('Tarea Actualizada', 'El estado de la tarea ha sido modificado', 'success', 2000);
+                const item = checkboxEl ? checkboxEl.closest('.task-dashboard-item') : null;
+                if (item) {
+                    item.classList.toggle('opacity-40');
+                    const textEl = item.querySelector('.task-dashboard-title');
+                    if (textEl) textEl.classList.toggle('line-through');
+                }
+                if (window.CalendarManager && typeof CalendarManager.loadEvents === 'function') {
+                    CalendarManager.loadEvents();
+                }
+            }
+        } catch (e) {
+            console.error('Error al actualizar tarea desde resumen:', e);
+        }
+    },
+
+    async showElioInboxSummary(force = false) {
+        const isAiActive = !!(window.GeminiAI && GeminiAI.isAiActive);
+        if (!isAiActive && !force) return;
+
+        this.cancelReadTimer();
+        this.selectedEmailId = null;
+        this.currentOpenedEmail = null;
+        document.querySelectorAll('.email-item-container').forEach(el => el.classList.remove('bg-indigo-50/60', 'dark:bg-slate-800/80', 'border-indigo-400/50'));
+
+        const detailPanel = document.getElementById('email-detail-container');
+        if (!detailPanel) return;
+
+        if (window.innerWidth < 768) {
+            const listPanel = document.getElementById('email-list-container');
+            if (listPanel) listPanel.classList.add('hidden');
+            detailPanel.classList.remove('hidden');
+            detailPanel.classList.add('flex');
+        } else {
+            detailPanel.classList.remove('hidden');
+            detailPanel.classList.add('flex');
+        }
+
+        if (this.lastSummaryData && !force) {
+            this.renderElioInboxSummaryView(this.lastSummaryData, detailPanel);
+        } else {
+            detailPanel.innerHTML = `
+                <div class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400 animate-pulse">
+                    <div class="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-indigo-500 shadow-sm">
+                        <svg class="w-7 h-7 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">${window.I18n && I18n.currentLang === 'en' ? 'Elio is preparing your 360° executive summary...' : 'Elio está preparando tu resumen ejecutivo 360°...'}</h3>
+                    <p class="text-xs text-slate-500 mt-1 max-w-sm">${window.I18n && I18n.currentLang === 'en' ? 'Consolidating in real time emails, week schedule, tasks, notes, and AI insights.' : 'Consolidando en tiempo real correos, agenda de la semana, tareas, notas y recomendaciones de IA.'}</p>
+                </div>
+            `;
+        }
+
+        try {
+            const currentLang = (window.I18n && I18n.currentLang) || 'es';
+            const forceParam = force ? '&force=true' : '';
+            const res = await fetch(`/api/agent/summary?lang=${encodeURIComponent(currentLang)}${forceParam}`);
+            if (!res.ok) throw new Error('Error al obtener resumen de Elio');
+            const data = await res.json();
+            this.renderElioInboxSummaryView(data, detailPanel);
+        } catch (err) {
+            console.error('Error cargando resumen de Elio:', err);
+            if (force && !this.lastSummaryData) {
+                detailPanel.innerHTML = `
+                    <div class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400">
+                        <div class="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mb-4 text-rose-500">
+                            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                        </div>
+                        <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300">No se pudo generar el resumen</h3>
+                        <p class="text-xs text-slate-500 mt-1 max-w-sm">${err.message || 'Error de conexión con el agente.'}</p>
+                        <button onclick="EmailManager.showElioInboxSummary(true)" class="mt-4 px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">Reintentar</button>
+                    </div>
+                `;
+            } else if (!this.lastSummaryData) {
+                this.resetDetailView();
+            }
+        }
+    },
+
+    renderElioInboxSummaryView(data, detailPanel) {
+        this.lastSummaryData = data;
+        const t = (k, p) => (window.I18n ? I18n.t(k, p) : k);
+        const unreadCount = data.unread_count || 0;
+        const inboxTotal = data.inbox_total || 0;
+        const upcoming = data.upcoming_event;
+        const recommendation = data.recommendation || (window.I18n ? I18n.t('dashboard.today_synthesis') : 'Todo está en orden en tu espacio de trabajo.');
+        const priorityEmails = (data.priority_emails && data.priority_emails.length > 0) ? data.priority_emails : (data.recent_unreads || []);
+        const weekEvents = data.week_events || [];
+        const pendingTasks = data.pending_tasks || [];
+        const notes = data.notes || [];
+        const notesCount = data.notes_count || notes.length || 0;
+        const contactsCount = data.contacts_count || 0;
+        const pendingContacts = data.pending_contacts_count || 0;
+
+        // 1. Correos Prioritarios
+        let priorityCardsHtml = '';
+        if (priorityEmails.length === 0) {
+            priorityCardsHtml = `
+                <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 text-center text-xs text-slate-500">
+                    ${t('email.empty_folder')}
+                </div>
+            `;
+        } else {
+            priorityCardsHtml = priorityEmails.map(em => {
+                const subject = this.escapeHtml(em.subject || (window.I18n ? I18n.t('email.no_selection') : 'Sin Asunto'));
+                const sender = this.escapeHtml(em.sender || 'Remitente Desconocido');
+                const snippet = this.escapeHtml(em.snippet || '');
+                const date = em.date ? new Date(em.date).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+                return `
+                    <div class="group p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500/60 hover:shadow-xs transition-all cursor-pointer flex flex-col gap-1.5" onclick="EmailManager.openEmailDetail(${em.id})">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[70%]">${sender}</span>
+                            <span class="text-[11px] text-slate-400 font-mono shrink-0">${date}</span>
+                        </div>
+                        <h4 class="text-xs font-medium text-slate-900 dark:text-white line-clamp-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">${subject}</h4>
+                        <p class="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">${snippet}</p>
+                        <div class="flex items-center justify-end gap-1 mt-0.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span>${t('dashboard.open_email')}</span>
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 2. Próxima Cita en Agenda
+        let upcomingEventHtml = '';
+        if (upcoming) {
+            const evTitle = this.escapeHtml(upcoming.title || 'Evento programado');
+            let evTime = '';
+            if (upcoming.start_time) {
+                const d = new Date(upcoming.start_time);
+                evTime = !isNaN(d.getTime()) ? d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : upcoming.start_time.replace('T', ' ');
+            }
+            const calName = this.escapeHtml(upcoming.calendar_name || 'Calendario');
+            const calColor = upcoming.effective_color || upcoming.calendar_color || '#f59e0b';
+            upcomingEventHtml = `
+                <div class="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-start justify-between gap-3 cursor-pointer hover:bg-amber-500/15 transition-colors" onclick="UI.switchMainView('calendar')" title="Abrir en Calendario">
+                    <div class="flex items-start gap-3 min-w-0">
+                        <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-500 flex items-center justify-center shrink-0 mt-0.5">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">${t('dashboard.next_appointment')}</span>
+                                <span class="px-1.5 py-0.2 rounded text-[9px] font-semibold text-white truncate max-w-[120px]" style="background-color: ${calColor};">${calName}</span>
+                            </div>
+                            <p class="text-xs font-bold text-slate-800 dark:text-slate-100 truncate mt-1">${evTitle}</p>
+                            <span class="text-[11px] text-slate-500 dark:text-slate-400 font-mono block mt-0.5 capitalize">${evTime}</span>
+                        </div>
+                    </div>
+                    <span class="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold shrink-0 mt-1 flex items-center gap-0.5">${t('dashboard.see_more')}</span>
+                </div>
+            `;
+        }
+
+        // 3. Citas de la Semana Actual
+        let weekEventsHtml = '';
+        if (weekEvents.length === 0) {
+            weekEventsHtml = `
+                <div class="p-3 text-center text-xs text-slate-400 dark:text-slate-500 bg-slate-50/60 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-800">
+                    ${t('dashboard.no_events')}
+                </div>
+            `;
+        } else {
+            weekEventsHtml = weekEvents.slice(0, 5).map(ev => {
+                const title = this.escapeHtml(ev.title || 'Evento');
+                let timeStr = '';
+                if (ev.start_time) {
+                    const d = new Date(ev.start_time);
+                    timeStr = !isNaN(d.getTime()) ? d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ev.start_time.replace('T', ' ');
+                }
+                const calColor = ev.effective_color || ev.calendar_color || '#6366f1';
+                return `
+                    <div class="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500/60 transition-all cursor-pointer" onclick="UI.switchMainView('calendar')">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${calColor};"></span>
+                            <span class="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">${title}</span>
+                        </div>
+                        <span class="text-[11px] text-slate-400 font-mono shrink-0 capitalize">${timeStr}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 4. Tareas Pendientes
+        let tasksHtml = '';
+        if (pendingTasks.length === 0) {
+            tasksHtml = `
+                <div class="p-3 text-center text-xs text-slate-400 dark:text-slate-500 bg-slate-50/60 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-800">
+                    ${t('dashboard.no_tasks')}
+                </div>
+            `;
+        } else {
+            tasksHtml = pendingTasks.map(t => {
+                const rawTitle = t.title || 'Tarea';
+                const title = this.escapeHtml(rawTitle.replace(/^\[Tarea\]\s*/i, ''));
+                return `
+                    <div class="task-dashboard-item flex items-center justify-between gap-2.5 p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 transition-all">
+                        <div class="flex items-center gap-2.5 min-w-0">
+                            <input type="checkbox" onchange="EmailManager.toggleTaskFromDashboard(${t.id}, this)" class="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0">
+                            <span class="task-dashboard-title text-xs font-medium text-slate-800 dark:text-slate-200 truncate">${title}</span>
+                        </div>
+                        <button onclick="UI.switchMainView('calendar')" class="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline shrink-0 font-medium">Ver</button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 5. Pizarra de Notas Adhesivas (Mini Cards)
+        const noteColorMap = {
+            yellow: '#fef08a',
+            green: '#bbf7d0',
+            blue: '#bfdbfe',
+            pink: '#fbcfe8',
+            purple: '#e9d5ff',
+            orange: '#fed7aa',
+            white: '#f1f5f9'
+        };
+        let notesHtml = '';
+        if (notes.length === 0) {
+            notesHtml = `
+                <div class="col-span-full p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 text-center text-xs text-slate-500">
+                    ${t('dashboard.no_notes')} <button onclick="UI.switchMainView('notes')" class="text-indigo-600 dark:text-indigo-400 font-semibold underline ml-1">${t('dashboard.create_first_note')}</button>
+                </div>
+            `;
+        } else {
+            notesHtml = notes.slice(0, 4).map(n => {
+                const bg = noteColorMap[n.color] || '#fef08a';
+                const snippet = this.escapeHtml(n.content || '(Nota sin texto)');
+                return `
+                    <div class="p-3 rounded-xl border border-black/10 shadow-xs cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all flex flex-col justify-between min-h-[95px]" style="background-color: ${bg}; color: #1e1e2e;" onclick="UI.switchMainView('notes')" title="Abrir en Pizarra de Notas">
+                        <p class="text-xs font-medium line-clamp-3 leading-relaxed whitespace-pre-wrap">${snippet}</p>
+                        <div class="flex items-center justify-between text-[10px] opacity-60 mt-2 font-mono">
+                            <span>#${n.id}</span>
+                            <span>Editar →</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 6. Aviso de Contactos Pendientes si existen
+        let pendingContactsAlert = '';
+        if (pendingContacts > 0) {
+            pendingContactsAlert = `
+                <div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 text-xs">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                        <span class="text-slate-800 dark:text-slate-200">Tienes <strong>${pendingContacts} contacto(s) nuevo(s)</strong> pendientes de confirmación.</span>
+                    </div>
+                    <button onclick="UI.openDrawer('drawer-contacts')" class="px-2.5 py-1 bg-amber-500 text-white font-semibold rounded-lg text-xs hover:bg-amber-600 transition-colors shrink-0">Revisar</button>
+                </div>
+            `;
+        }
+
+        detailPanel.innerHTML = `
+            <div class="flex-1 flex flex-col h-full overflow-y-auto bg-slate-50/50 dark:bg-slate-950/40 p-4 sm:p-6 lg:p-8 space-y-5">
+                
+                <!-- Barra Superior Móvil: Volver a lista de correos (< 768px) -->
+                <div class="md:hidden flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                    <button onclick="EmailManager.backToList()" class="flex items-center gap-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                        <span>Volver a correos</span>
+                    </button>
+                    <span class="text-[11px] text-slate-400 font-medium">${t('dashboard.title')}</span>
+                </div>
+
+                <!-- Header del Resumen con Elio -->
+                <div class="flex items-start justify-between gap-4 pb-4 border-b border-slate-200/80 dark:border-slate-800">
+                    <div class="flex items-center gap-3.5">
+                        <div class="relative cursor-pointer" onclick="UI.openDrawer('drawer-antigravity')" title="Abrir asistente Elio">
+                            <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                            </div>
+                            <span class="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900" title="Elio Copiloto Activo"></span>
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight">${t('dashboard.title')}</h2>
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${data.ai_generated ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20' : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20'}">
+                                    <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                    <span>${data.ai_generated ? t('dashboard.ai_generated') : t('dashboard.vision_360')}</span>
+                                </span>
+                            </div>
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${t('dashboard.subtitle')}</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <!-- Botón Escuchar Briefing por Voz con Elio -->
+                        <button id="btn-voice-briefing" onclick="VoiceBriefing.toggle(this)" class="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer" title="Escuchar briefing ejecutivo narrado por Elio">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/></svg>
+                            <span id="voice-briefing-label">${t('dashboard.listen')}</span>
+                        </button>
+                        <button onclick="EmailManager.showElioInboxSummary(true)" class="p-2 rounded-xl text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-2xs" title="${t('dashboard.refresh')}">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        </button>
+                        <button onclick="UI.openDrawer('drawer-antigravity-copilot')" class="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors" title="Chatear con Elio">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+                            <span>${t('dashboard.copilot')}</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Síntesis Ejecutiva de Elio -->
+                <div class="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-pink-500/5 border border-indigo-500/20 shadow-2xs space-y-2">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">${t('dashboard.today_synthesis')}</h3>
+                    </div>
+                    <p class="text-xs text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line">${this.escapeHtml(recommendation)}</p>
+                </div>
+
+                ${pendingContactsAlert}
+
+                <!-- Tarjetas Métricas Rápidas 4x1 -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">${t('dashboard.unread')}</span>
+                        <div class="mt-1 flex items-baseline gap-1.5">
+                            <span class="text-2xl font-bold ${unreadCount > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-700 dark:text-slate-300'}">${unreadCount}</span>
+                            <span class="text-[10px] text-slate-400">/ ${inboxTotal}</span>
+                        </div>
+                    </div>
+                    <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs cursor-pointer hover:border-indigo-400 transition-colors" onclick="UI.switchMainView('calendar')">
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">${t('dashboard.week_appointments')}</span>
+                        <div class="mt-1 flex items-baseline gap-1.5">
+                            <span class="text-2xl font-bold text-amber-500">${weekEvents.length}</span>
+                            <span class="text-[10px] text-slate-400">${t('dashboard.events')}</span>
+                        </div>
+                    </div>
+                    <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs cursor-pointer hover:border-indigo-400 transition-colors" onclick="UI.switchMainView('notes')">
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">${t('dashboard.sticky_notes')}</span>
+                        <div class="mt-1 flex items-baseline gap-1.5">
+                            <span class="text-2xl font-bold text-emerald-500">${notesCount}</span>
+                            <span class="text-[10px] text-slate-400">${t('dashboard.on_board')}</span>
+                        </div>
+                    </div>
+                    <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs cursor-pointer hover:border-indigo-400 transition-colors" onclick="UI.openDrawer('drawer-contacts')">
+                        <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">${t('dashboard.contacts')}</span>
+                        <div class="mt-1 flex items-baseline gap-1.5">
+                            <span class="text-2xl font-bold text-sky-500">${contactsCount}</span>
+                            <span class="text-[10px] text-slate-400">${pendingContacts > 0 ? `(${pendingContacts} pend.)` : 'agenda'}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Contenido Principal Dividido en 2 Columnas -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    
+                    <!-- Columna 1: Correos Prioritarios -->
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                                <span>${t('dashboard.priority_emails')}</span>
+                            </h3>
+                            <span class="text-[11px] text-slate-400">${t('dashboard.click_to_open')}</span>
+                        </div>
+                        <div class="space-y-2.5">
+                            ${priorityCardsHtml}
+                        </div>
+                    </div>
+
+                    <!-- Columna 2: Calendario Semanal & Tareas -->
+                    <div class="space-y-4">
+                        
+                        <!-- Próxima Cita -->
+                        ${upcomingEventHtml}
+
+                        <!-- Eventos de la Semana -->
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                    <svg class="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                                    <span>${t('dashboard.week_schedule')}</span>
+                                </h3>
+                                <button onclick="UI.switchMainView('calendar')" class="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold hover:underline">${t('dashboard.see_calendar')}</button>
+                            </div>
+                            <div class="space-y-1.5">
+                                ${weekEventsHtml}
+                            </div>
+                        </div>
+
+                        <!-- Tareas Pendientes -->
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                    <svg class="w-4 h-4 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                                    <span>${t('dashboard.pending_tasks')}</span>
+                                </h3>
+                                <span class="text-[11px] text-slate-400">${t('dashboard.mark_to_complete')}</span>
+                            </div>
+                            <div class="space-y-1.5">
+                                ${tasksHtml}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sección Inferior: Pizarra de Notas Adhesivas -->
+                <div class="pt-4 border-t border-slate-200/80 dark:border-slate-800 space-y-3">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                            <svg class="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                            <span>${t('dashboard.sticky_board')}</span>
+                        </h3>
+                        <button onclick="UI.switchMainView('notes')" class="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold hover:underline">${t('dashboard.go_to_notes')}</button>
+                    </div>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        ${notesHtml}
+                    </div>
+                </div>
+
+            </div>
+        `;
     },
 
     backToList() {
@@ -2899,7 +4238,10 @@ const EmailManager = {
         const nowAuthorized = !isCurrentlyAuthorized;
 
         if (this.currentOpenedEmail && this.currentOpenedEmail.id === emailId) {
-            this.mountEmailBodyFrame(this.currentOpenedEmail, nowAuthorized);
+            const isShowingTrans = this.emailShowingTranslation[emailId];
+            const targetLang = this.emailCurrentTranslationLang[emailId];
+            const cached = (isShowingTrans && targetLang) ? this.emailTranslations[`${emailId}_${targetLang}`] : null;
+            this.mountEmailBodyFrame(this.currentOpenedEmail, nowAuthorized, cached ? cached.body : null);
             this.updateSpamBannerUI(emailId, nowAuthorized);
         }
     },
@@ -3061,21 +4403,45 @@ const EmailManager = {
     },
 
     async deleteCurrentEmail(emailId) {
-        const confirmed = await UI.confirm({
-            title: '¿Mover a la papelera?',
-            message: 'El correo seleccionado se moverá a la papelera.',
-            confirmText: 'Mover a papelera',
-            isDanger: true
-        });
+        // Si el correo ya está en la Papelera, la acción lo elimina definitivamente de Senda
+        const opened = (this.currentOpenedEmail && this.currentOpenedEmail.id === emailId) ? this.currentOpenedEmail : null;
+        const inTrash = ((opened && opened.folder) || '').toUpperCase() === 'TRASH';
 
-        if (!confirmed) return;
+        if (inTrash) {
+            // La eliminación definitiva de papelera siempre solicita confirmación por seguridad
+            const confirmed = await UI.confirm({
+                title: '¿Eliminar definitivamente?',
+                message: 'El correo se eliminará de Senda. Esta acción no se puede deshacer.',
+                confirmText: 'Eliminar definitivamente',
+                isDanger: true
+            });
+            if (!confirmed) return;
+        } else if (!this.skipDeleteConfirm) {
+            // Mover a papelera: solicitar confirmación si no se ha activado la omisión previa
+            const confirmed = await UI.confirm({
+                title: '¿Mover a la papelera?',
+                message: 'El correo seleccionado se moverá a la papelera.',
+                confirmText: 'Mover a papelera',
+                isDanger: true,
+                showDontAskAgain: true,
+                dontAskAgainLabel: 'No volver a preguntar al eliminar correos',
+                onDontAskAgain: (checked) => {
+                    if (checked) {
+                        this.setSkipDeleteConfirm(true, true);
+                    }
+                }
+            });
+            if (!confirmed) return;
+        }
 
         try {
             const res = await fetch(`/api/emails/${emailId}`, { method: 'DELETE' });
             if (res.ok) {
-                UI.showStickyToast('Correo Eliminado', 'El correo ha sido enviado a la papelera', 'success');
+                const data = await res.json().catch(() => ({}));
+                UI.showStickyToast('Correo Eliminado', data.permanent ? 'El correo fue eliminado definitivamente' : 'El correo ha sido enviado a la papelera', 'success');
                 this.backToList();
                 this.loadEmails();
+                if (typeof this.updateUnreadCounts === 'function') this.updateUnreadCounts();
             }
         } catch (e) {
             UI.showStickyToast('Error', e.message, 'error');
@@ -3271,17 +4637,30 @@ const EmailManager = {
             }
         }
 
-        // Ocultar botón de archivar masivo en carpetas Papelera (TRASH), Spam (SPAM) y Borradores (DRAFT/DRAFTS)
+        // Ocultar botón de archivar masivo en Papelera, Spam, Borradores y en "Todos" (ALL)
+        // (se usa una clase en el contenedor porque las reglas responsivas de app.css usan !important)
+        const listContainer = document.getElementById('email-list-container');
+        if (listContainer) {
+            listContainer.classList.toggle('batch-archive-disabled', !this.canBatchArchiveInCurrentFolder());
+        }
+
+        // Si el menú flotante de mover está visible en modo selección masiva, actualizar cantidad y opciones reactivamente
+        const moveDrop = document.getElementById('universal-move-dropdown');
+        if (moveDrop && !moveDrop.classList.contains('hidden') && this.pendingMoveContext && this.pendingMoveContext.source === 'batch') {
+            if (count === 0) {
+                this.closeMoveMenu();
+            } else {
+                this.pendingMoveContext.emailIds = this.getSelectedEmailIds();
+                this.renderMoveMenuContent(moveDrop, 'batch', this.pendingMoveContext.emailIds);
+            }
+        }
+    },
+
+    // Carpetas donde NO se permite archivar en lote: Spam, Papelera, Borradores y "Todos" (ALL),
+    // ya que en "Todos" archivar no tiene efecto visible (los archivados también se muestran ahí)
+    canBatchArchiveInCurrentFolder() {
         const folderUpper = (this.currentFolder || '').toUpperCase();
-        const canArchiveInFolder = !['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes(folderUpper);
-        const batchArchiveBtn = document.getElementById('btn-batch-archive');
-        const batchMoreArchiveBtn = document.getElementById('batch-more-item-archive');
-        if (batchArchiveBtn) {
-            batchArchiveBtn.style.display = canArchiveInFolder ? '' : 'none';
-        }
-        if (batchMoreArchiveBtn) {
-            batchMoreArchiveBtn.style.display = canArchiveInFolder ? '' : 'none';
-        }
+        return !['SPAM', 'TRASH', 'DRAFT', 'DRAFTS', 'ALL', 'TODOS'].includes(folderUpper);
     },
 
     onCheckboxChange(emailId, isChecked) {
@@ -3337,12 +4716,9 @@ const EmailManager = {
         const ids = this.getSelectedEmailIds();
         if (ids.length === 0) return;
 
-        if (action === 'archive') {
-            const folderUpper = (this.currentFolder || '').toUpperCase();
-            if (['SPAM', 'TRASH', 'DRAFT', 'DRAFTS'].includes(folderUpper)) {
-                UI.showStickyToast('Acción no permitida', 'No se permite almacenar o archivar correos en Spam, Papelera o Borradores', 'warning');
-                return;
-            }
+        if (action === 'archive' && !this.canBatchArchiveInCurrentFolder()) {
+            UI.showStickyToast('Acción no permitida', 'No se permite archivar correos desde Todos, Spam, Papelera o Borradores', 'warning');
+            return;
         }
 
         // Cerrar posibles dropdowns
@@ -3366,6 +4742,9 @@ const EmailManager = {
                 // Deseleccionar todo inmediatamente al aplicar una acción
                 this.clearSelection();
                 await this.loadEmails();
+                if (action === 'add_label' || action === 'remove_label' || action === 'toggle_label') {
+                    await this.loadLabels();
+                }
             } else {
                 UI.showStickyToast('Error', data.detail || 'No se pudo completar la acción', 'error');
             }
@@ -3382,13 +4761,16 @@ const EmailManager = {
 
         const isHidden = drop.classList.contains('hidden');
         if (isHidden) {
-            if (!this.labels || this.labels.length === 0) {
-                listEl.innerHTML = '<div class="px-3 py-2 text-slate-400 text-[11px] italic">Sin etiquetas creadas</div>';
+            // Misma lista que la barra lateral (según el selector de cuentas)
+            const batchLabels = this.getLabelMenu();
+
+            if (batchLabels.length === 0) {
+                listEl.innerHTML = '<div class="px-3 py-2 text-slate-400 text-[11px] italic">Sin etiquetas disponibles</div>';
             } else {
-                listEl.innerHTML = this.labels.map(l => `
+                listEl.innerHTML = batchLabels.map(l => `
                     <button onclick="EmailManager.executeBatchAction('add_label', { label_id: ${l.id} })" class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center gap-2">
                         <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${l.color}"></span>
-                        <span class="truncate">${this.escapeHtml(l.name)}</span>
+                        <span class="truncate">${this.escapeHtml(l.name)}${(() => { const h = this.getLabelOwnerHint(l, batchLabels); return h ? `<span class="ml-1 text-[10px] text-slate-400">· ${this.escapeHtml(h)}</span>` : ''; })()}</span>
                     </button>
                 `).join('');
             }
@@ -3409,18 +4791,298 @@ const EmailManager = {
         if (drop) drop.classList.add('hidden');
     },
 
+    pendingMoveContext: null,
+
+    renderMoveMenuContent(drop, source, targetIds) {
+        if (!drop) return;
+        const count = targetIds.length;
+        if (count === 0) {
+            this.closeMoveMenu();
+            return;
+        }
+
+        const normFolder = (f) => {
+            if (!f) return '';
+            const u = String(f).toUpperCase().trim();
+            if (['INBOX', 'RECIBIDOS', 'CATEGORY_PERSONAL'].includes(u)) return 'INBOX';
+            if (['ARCHIVE', 'ARCHIVED', 'ARCHIVO'].includes(u)) return 'ARCHIVE';
+            if (['SPAM'].includes(u)) return 'SPAM';
+            if (['TRASH', 'PAPELERA'].includes(u)) return 'TRASH';
+            if (['CATEGORY_PROMOTIONS', 'PROMOCIONES', 'PROMOTIONS'].includes(u)) return 'CATEGORY_PROMOTIONS';
+            if (['CATEGORY_SOCIAL', 'SOCIAL'].includes(u)) return 'CATEGORY_SOCIAL';
+            if (['CATEGORY_UPDATES', 'NOTIFICACIONES', 'ACTUALIZACIONES', 'UPDATES'].includes(u)) return 'CATEGORY_UPDATES';
+            if (['CATEGORY_FORUMS', 'FOROS', 'FORUMS'].includes(u)) return 'CATEGORY_FORUMS';
+            return u;
+        };
+
+        const excluded = new Set();
+
+        // 1. Excluir la vista actual de la carpeta o categoría (no tiene sentido mover a donde ya estás)
+        const viewF = normFolder(this.currentFolder);
+        if (viewF && !['ALL', 'TODOS', 'STARRED', 'DESTACADOS', 'IMPORTANT', 'IMPORTANTES'].includes(viewF)) {
+            excluded.add(viewF);
+        }
+
+        // 2. Excluir la carpeta/categoría intrínseca del correo
+        if (source === 'detail') {
+            const email = (this.currentOpenedEmail && this.currentOpenedEmail.id === targetIds[0])
+                ? this.currentOpenedEmail
+                : this.emails.find(e => e.id === targetIds[0]);
+            if (email) {
+                if (email.folder) {
+                    excluded.add(normFolder(email.folder));
+                }
+                if (email.labels && Array.isArray(email.labels)) {
+                    email.labels.forEach(l => {
+                        const lname = typeof l === 'string' ? l : (l.name || l.remote_id || '');
+                        const norm = normFolder(lname);
+                        if (norm.startsWith('CATEGORY_')) {
+                            excluded.add(norm);
+                        }
+                    });
+                }
+            }
+        } else {
+            // Modo lote: si todos los correos seleccionados pertenecen a la misma carpeta o categoría, excluirla
+            const batchFolders = new Set();
+            targetIds.forEach(id => {
+                const item = this.emails.find(e => e.id === id);
+                if (item && item.folder) {
+                    batchFolders.add(normFolder(item.folder));
+                }
+            });
+            if (batchFolders.size === 1) {
+                excluded.add([...batchFolders][0]);
+            }
+        }
+
+        const systemButtons = [
+            {
+                key: 'INBOX',
+                label: 'Recibidos',
+                icon: '<svg class="w-4 h-4 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>',
+                hover: 'hover:bg-indigo-50 dark:hover:bg-indigo-950/50 hover:text-indigo-600 dark:hover:text-indigo-400'
+            },
+            {
+                key: 'ARCHIVE',
+                label: 'Archivo',
+                icon: '<svg class="w-4 h-4 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>',
+                hover: 'hover:bg-slate-100 dark:hover:bg-slate-700/60'
+            },
+            {
+                key: 'SPAM',
+                label: 'Spam',
+                icon: '<svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>',
+                hover: 'hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:text-amber-600 dark:hover:text-amber-400'
+            },
+            {
+                key: 'TRASH',
+                label: 'Papelera',
+                icon: '<svg class="w-4 h-4 text-rose-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>',
+                hover: 'hover:bg-rose-50 dark:hover:bg-rose-950/40 hover:text-rose-600 dark:hover:text-rose-400'
+            }
+        ];
+
+        const categoryButtons = [
+            {
+                key: 'CATEGORY_PROMOTIONS',
+                label: 'Promociones',
+                icon: '<svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>',
+                hover: 'hover:bg-emerald-50 dark:hover:bg-emerald-950/40 hover:text-emerald-600 dark:hover:text-emerald-400'
+            },
+            {
+                key: 'CATEGORY_SOCIAL',
+                label: 'Social',
+                icon: '<svg class="w-4 h-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>',
+                hover: 'hover:bg-blue-50 dark:hover:bg-blue-950/40 hover:text-blue-600 dark:hover:text-blue-400'
+            },
+            {
+                key: 'CATEGORY_UPDATES',
+                label: 'Notificaciones',
+                icon: '<svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>',
+                hover: 'hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:text-amber-600 dark:hover:text-amber-400'
+            },
+            {
+                key: 'CATEGORY_FORUMS',
+                label: 'Foros',
+                icon: '<svg class="w-4 h-4 text-purple-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"/></svg>',
+                hover: 'hover:bg-purple-50 dark:hover:bg-purple-950/40 hover:text-purple-600 dark:hover:text-purple-400'
+            }
+        ];
+
+        const visibleSystem = systemButtons.filter(b => !excluded.has(b.key));
+        const visibleCategories = categoryButtons.filter(b => !excluded.has(b.key));
+
+        let html = `
+            <div class="px-3 py-1 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-100 dark:border-slate-700/80 mb-1 flex items-center justify-between">
+                <span>Mover a carpeta</span>
+                <span id="universal-move-count" class="text-[10px] font-normal text-slate-400">${count === 1 ? '1 correo' : `${count} correos`}</span>
+            </div>
+        `;
+
+        if (visibleSystem.length > 0) {
+            html += `<div class="space-y-0.5">`;
+            visibleSystem.forEach(b => {
+                html += `
+                    <button type="button" onclick="EmailManager.applyMoveToFolder('${b.key}')" class="w-full text-left px-3 py-1.5 ${b.hover} text-slate-700 dark:text-slate-200 flex items-center gap-2.5 transition-colors cursor-pointer">
+                        ${b.icon}
+                        <span class="font-medium">${b.label}</span>
+                    </button>
+                `;
+            });
+            html += `</div>`;
+        }
+
+        if (visibleCategories.length > 0) {
+            if (visibleSystem.length > 0) {
+                html += `<div class="my-1 border-t border-slate-100 dark:border-slate-700/80"></div>`;
+            }
+            html += `
+                <div class="px-3 py-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Categorías</div>
+                <div class="space-y-0.5">
+            `;
+            visibleCategories.forEach(b => {
+                html += `
+                    <button type="button" onclick="EmailManager.applyMoveToFolder('${b.key}')" class="w-full text-left px-3 py-1.5 ${b.hover} text-slate-700 dark:text-slate-200 flex items-center gap-2.5 transition-colors cursor-pointer">
+                        ${b.icon}
+                        <span>${b.label}</span>
+                    </button>
+                `;
+            });
+            html += `</div>`;
+        }
+
+        drop.innerHTML = html;
+    },
+
+    toggleMoveMenu(e, source, emailId = null) {
+        if (e) {
+            e.stopPropagation();
+            e.preventDefault();
+        }
+        let drop = document.getElementById('universal-move-dropdown');
+        if (drop && !drop.classList.contains('hidden') && this.pendingMoveContext && this.pendingMoveContext.source === source && (!emailId || this.pendingMoveContext.emailIds[0] === emailId)) {
+            this.closeMoveMenu();
+            return;
+        }
+
+        let targetIds = [];
+        if (source === 'batch') {
+            targetIds = this.getSelectedEmailIds();
+            if (targetIds.length === 0) {
+                UI.showStickyToast('Sin selección', 'Selecciona uno o más correos para mover', 'warning');
+                return;
+            }
+        } else {
+            const id = emailId || (this.currentOpenedEmail && this.currentOpenedEmail.id);
+            if (!id) return;
+            targetIds = [id];
+        }
+
+        this.pendingMoveContext = { source, emailIds: targetIds };
+
+        if (!drop) {
+            drop = document.createElement('div');
+            drop.id = 'universal-move-dropdown';
+            drop.className = 'fixed w-52 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-[9999] py-1.5 text-xs select-none';
+            document.body.appendChild(drop);
+        }
+
+        this.renderMoveMenuContent(drop, source, targetIds);
+
+        const btn = e ? e.currentTarget : null;
+        if (btn && btn.getBoundingClientRect) {
+            const rect = btn.getBoundingClientRect();
+            drop.style.top = `${Math.round(rect.bottom + 6)}px`;
+            const rightOffset = Math.max(12, Math.round(window.innerWidth - rect.right));
+            if (rect.left + 215 > window.innerWidth) {
+                drop.style.right = `${rightOffset}px`;
+                drop.style.left = 'auto';
+            } else {
+                drop.style.left = `${Math.round(rect.left)}px`;
+                drop.style.right = 'auto';
+            }
+        }
+        drop.classList.remove('hidden');
+    },
+
+    closeMoveMenu() {
+        const drop = document.getElementById('universal-move-dropdown');
+        if (drop) drop.classList.add('hidden');
+        this.pendingMoveContext = null;
+    },
+
+    async applyMoveToFolder(targetFolder) {
+        if (!this.pendingMoveContext) return;
+        const { source, emailIds } = this.pendingMoveContext;
+        this.closeMoveMenu();
+        if (!emailIds || emailIds.length === 0) return;
+
+        if (targetFolder === 'TRASH') {
+            if (source === 'batch') {
+                await this.deleteSelectedBatch();
+            } else {
+                await this.deleteCurrentEmail(emailIds[0]);
+            }
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/emails/batch-action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'move_folder',
+                    email_ids: emailIds,
+                    folder: targetFolder
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                UI.showStickyToast('Correo movido', data.message || `Movido a ${this.getFolderDisplayName(targetFolder)}`, 'success');
+                if (source === 'batch') {
+                    this.clearSelection();
+                } else if (this.currentOpenedEmail && this.currentOpenedEmail.id === emailIds[0]) {
+                    this.currentOpenedEmail.folder = targetFolder;
+                    this.emailDetailCache.delete(emailIds[0]);
+                    const curF = (this.currentFolder || 'INBOX').toUpperCase();
+                    if (curF !== 'ALL' && curF !== targetFolder && targetFolder !== 'INBOX') {
+                        this.selectedEmailId = null;
+                        this.backToList();
+                    } else {
+                        await this.openEmailDetail(emailIds[0]);
+                    }
+                }
+                await this.loadEmails(false);
+                await this.updateUnreadCounts();
+            } else {
+                UI.showStickyToast('Error', data.detail || 'No se pudo mover el correo', 'error');
+            }
+        } catch (err) {
+            UI.showStickyToast('Error', err.message || 'Error al mover correo', 'error');
+        }
+    },
+
     async deleteSelectedBatch() {
         const ids = this.getSelectedEmailIds();
         if (ids.length === 0) return;
 
-        const confirmed = await UI.confirm({
-            title: `¿Eliminar ${ids.length} correos?`,
-            message: `Los ${ids.length} correos seleccionados se moverán a la papelera.`,
-            confirmText: 'Mover a papelera',
-            isDanger: true
-        });
-
-        if (!confirmed) return;
+        if (!this.skipDeleteConfirm) {
+            const confirmed = await UI.confirm({
+                title: `¿Eliminar ${ids.length} correos?`,
+                message: `Los ${ids.length} correos seleccionados se moverán a la papelera.`,
+                confirmText: 'Mover a papelera',
+                isDanger: true,
+                showDontAskAgain: true,
+                dontAskAgainLabel: 'No volver a preguntar al eliminar correos',
+                onDontAskAgain: (checked) => {
+                    if (checked) {
+                        this.setSkipDeleteConfirm(true, true);
+                    }
+                }
+            });
+            if (!confirmed) return;
+        }
 
         try {
             const res = await fetch('/api/emails/batch-action', {
@@ -3461,6 +5123,324 @@ const EmailManager = {
         } catch (e) {
             UI.showStickyToast('Error', e.message, 'error');
         }
+    },
+
+    async detectCommitments(emailId) {
+        if (window.GeminiAI && !GeminiAI.isAiActive) {
+            UI.showStickyToast('IA Inactiva', 'El servicio de IA está desactivado. Actívalo en Ajustes para analizar compromisos.', 'warning');
+            return;
+        }
+        const box = document.getElementById(`ai-commitments-box-${emailId}`);
+        const list = document.getElementById(`ai-commitments-list-${emailId}`);
+        const statusEl = document.getElementById(`ai-commitments-status-${emailId}`);
+        if (!box || !list) return;
+
+        box.classList.remove('hidden');
+        list.innerHTML = `
+            <div class="flex items-center gap-2 text-xs text-cyan-600 dark:text-cyan-400 py-1">
+                <svg class="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>Elio está extrayendo compromisos, acuerdos y plazos del correo...</span>
+            </div>
+        `;
+        try {
+            const res = await fetch(`/api/ai/commitments/${emailId}`);
+            const data = await res.json();
+            if (!data.success || !data.commitments || data.commitments.length === 0) {
+                list.innerHTML = `<p class="text-xs text-slate-500 dark:text-slate-400">No se detectaron compromisos pendientes ni tareas específicas en este correo.</p>`;
+                if (statusEl) statusEl.textContent = '0 detectados';
+                return;
+            }
+            if (statusEl) statusEl.textContent = `${data.commitments.length} detectados`;
+            list.innerHTML = data.commitments.map((c, idx) => {
+                const escapedTitle = this.escapeHtml(c.title || '');
+                const safeAttrTitle = (c.title || '').replace(/"/g, '&quot;').replace(/'/g, "\\'");
+                const escapedDue = this.escapeHtml(c.due_hint || '');
+                const safeAttrDue = (c.due_hint || '').replace(/"/g, '&quot;').replace(/'/g, "\\'");
+                return `
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/70 border border-cyan-200/80 dark:border-cyan-800/40 text-xs shadow-2xs">
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2">
+                                <span class="font-semibold text-slate-900 dark:text-slate-100">${escapedTitle}</span>
+                                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${c.priority === 'alta' ? 'bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}">${c.priority || 'media'}</span>
+                            </div>
+                            ${escapedDue ? `<div class="text-[11px] text-cyan-600 dark:text-cyan-400 mt-0.5">⏳ Plazo estimado: ${escapedDue}</div>` : ''}
+                        </div>
+                        <div class="flex items-center gap-1.5 shrink-0 self-end sm:self-center" id="commitment-actions-${emailId}-${idx}">
+                            <button type="button" onclick="EmailManager.convertCommitment(${emailId}, '${safeAttrTitle}', 'task', '${safeAttrDue}', this)" class="inline-flex items-center gap-1 px-2.5 py-1.5 bg-cyan-600 hover:bg-cyan-700 text-white font-medium text-xs rounded-lg transition-colors shadow-2xs cursor-pointer" title="Convertir a tarea en el Calendario">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                <span>+ Tarea</span>
+                            </button>
+                            <button type="button" onclick="EmailManager.convertCommitment(${emailId}, '${safeAttrTitle}', 'note', '${safeAttrDue}', this)" class="inline-flex items-center gap-1 px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-medium text-xs rounded-lg transition-colors shadow-2xs cursor-pointer" title="Convertir a Nota Adhesiva en Pizarra">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                                <span>+ Nota</span>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } catch (e) {
+            list.innerHTML = `<p class="text-xs text-rose-500">Error al analizar compromisos: ${e.message}</p>`;
+        }
+    },
+
+    async convertCommitment(emailId, title, targetType, dueHint, btnEl) {
+        try {
+            if (btnEl) {
+                btnEl.disabled = true;
+                btnEl.classList.add('opacity-50', 'pointer-events-none');
+            }
+            const res = await fetch('/api/ai/commitments/convert', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email_id: emailId, title, target_type: targetType, due_hint: dueHint })
+            });
+            const data = await res.json();
+            if (data.success) {
+                UI.showStickyToast(
+                    targetType === 'task' ? 'Tarea Agendada' : 'Nota Creada',
+                    data.message || (targetType === 'task' ? 'Se añadió a tus tareas de Calendario' : 'Se añadió a tus Notas Adhesivas'),
+                    'success'
+                );
+                if (btnEl) {
+                    btnEl.innerHTML = `<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg><span>Añadido ✓</span>`;
+                    btnEl.classList.remove('bg-cyan-600', 'bg-amber-500');
+                    btnEl.classList.add('bg-emerald-600');
+                }
+                if (targetType === 'task' && window.CalendarManager) {
+                    CalendarManager.loadEvents();
+                } else if (targetType === 'note' && window.NotesManager) {
+                    NotesManager.loadNotes();
+                }
+            } else {
+                UI.showStickyToast('Error', data.detail || 'No se pudo guardar el compromiso', 'error');
+                if (btnEl) {
+                    btnEl.disabled = false;
+                    btnEl.classList.remove('opacity-50', 'pointer-events-none');
+                }
+            }
+        } catch (err) {
+            UI.showStickyToast('Error', err.message, 'error');
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.classList.remove('opacity-50', 'pointer-events-none');
+            }
+        }
+    },
+
+    detectEmailLanguage(email) {
+        if (!email) return 'es';
+        const sample = ((email.subject || '') + ' ' + (email.snippet || '') + ' ' + (email.body_text || '')).toLowerCase();
+        // Conteo de palabras distintivas en español
+        const esMatches = (sample.match(/\b(el|la|los|las|de|en|que|por|para|con|un|una|este|esta|su|sus|al|del|gracias|hola|saludos|correo|cuenta|factura|pago|nueva|nuevo|oferta|empleo|aviso|notificación)\b/gi) || []).length;
+        // Conteo de palabras distintivas en inglés
+        const enMatches = (sample.match(/\b(the|is|are|of|in|to|for|with|and|at|from|by|this|that|your|you|on|hello|thanks|regards|email|account|invoice|payment|new|job|alert|notice)\b/gi) || []).length;
+        return esMatches >= enMatches ? 'es' : 'en';
+    },
+
+    async toggleTranslateEmail(emailId) {
+        if (!emailId) emailId = this.selectedEmailId;
+        if (!emailId) return;
+
+        const email = this.currentOpenedEmail;
+        if (!email) return;
+
+        if (this.emailShowingTranslation[emailId]) {
+            this.toggleTranslationView(emailId);
+            return;
+        }
+
+        // Determinar el idioma destino: si el correo está en español -> traducir a inglés; si está en inglés -> traducir a español
+        const detected = this.detectEmailLanguage(email);
+        const targetLang = (detected === 'es') ? 'en' : 'es';
+        await this.translateCurrentEmail(emailId, targetLang);
+    },
+
+    async translateCurrentEmail(emailId, targetLang = 'es') {
+        const email = this.currentOpenedEmail;
+        if (!email) return;
+
+        if (!this.emailOriginals[emailId]) {
+            this.emailOriginals[emailId] = {
+                subject: email.subject || '',
+                body_html: email.body_html || '',
+                body_text: email.body_text || email.snippet || ''
+            };
+        }
+
+        const cacheKey = `${emailId}_${targetLang}`;
+        if (this.emailTranslations[cacheKey]) {
+            const cached = this.emailTranslations[cacheKey];
+            this.applyTranslationToView(emailId, cached.subject, cached.body, targetLang);
+            return;
+        }
+
+        const box = document.getElementById(`ai-translation-box-${emailId}`);
+        const statusEl = document.getElementById(`ai-translation-status-${emailId}`);
+        if (box) {
+            box.classList.remove('hidden');
+        }
+        if (statusEl) {
+            statusEl.innerHTML = `
+                <span class="inline-flex items-center gap-1.5 text-indigo-600 dark:text-indigo-400">
+                    <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                    <span>${window.I18n ? I18n.t('email.translating') : 'Traduciendo correo...'}</span>
+                </span>
+            `;
+        }
+
+        if (window.UI && typeof UI.showStickyToast === 'function') {
+            UI.showStickyToast(
+                window.I18n ? I18n.t('toast.translating_email') : 'Traduciendo Correo',
+                targetLang === 'en' ? 'Traduciendo al Inglés...' : 'Traduciendo al Español...',
+                'info',
+                3000
+            );
+        }
+
+        try {
+            const bodyToSend = email.body_html || email.body_text || email.snippet || '';
+            const res = await fetch('/api/ai/translate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email_id: emailId,
+                    text: bodyToSend,
+                    subject: email.subject || '',
+                    target_lang: targetLang
+                })
+            });
+
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.detail || 'Error al traducir el correo');
+            }
+
+            const data = await res.json();
+            const translatedSubject = data.translated_subject || data.subject || email.subject || '';
+            const translatedBody = data.translated_text || data.body || bodyToSend;
+
+            this.emailTranslations[cacheKey] = {
+                subject: translatedSubject,
+                body: translatedBody,
+                lang: targetLang
+            };
+
+            this.applyTranslationToView(emailId, translatedSubject, translatedBody, targetLang);
+
+            if (window.UI && typeof UI.showStickyToast === 'function') {
+                UI.showStickyToast(
+                    window.I18n ? I18n.t('toast.translated_success') : 'Correo Traducido',
+                    targetLang === 'en' ? 'Traducido al Inglés exitosamente' : 'Traducido al Español exitosamente',
+                    'success',
+                    3000
+                );
+            }
+        } catch (err) {
+            console.error('Error en traducción de correo:', err);
+            if (statusEl) {
+                statusEl.innerHTML = `<span class="text-rose-500 font-medium">Error: ${this.escapeHtml(err.message)}</span>`;
+            }
+            if (window.UI && typeof UI.showStickyToast === 'function') {
+                UI.showStickyToast('Error de Traducción', err.message, 'error');
+            }
+        }
+    },
+
+    applyTranslationToView(emailId, subject, body, targetLang) {
+        this.emailShowingTranslation[emailId] = true;
+        this.emailCurrentTranslationLang[emailId] = targetLang;
+
+        const email = this.currentOpenedEmail;
+        const subjectEl = document.getElementById(`email-detail-subject-${emailId}`);
+        if (subjectEl) {
+            subjectEl.textContent = subject;
+        }
+
+        const frame = document.getElementById(`email-body-frame-${emailId}`);
+        const textBody = document.getElementById(`email-body-text-${emailId}`);
+        if (frame && email) {
+            this.mountEmailBodyFrame(email, false, body);
+        } else if (textBody) {
+            if (/<[a-z][\s\S]*>/i.test(body)) {
+                textBody.innerHTML = body;
+            } else {
+                textBody.textContent = body;
+            }
+        }
+
+        const box = document.getElementById(`ai-translation-box-${emailId}`);
+        const statusEl = document.getElementById(`ai-translation-status-${emailId}`);
+        const btnEs = document.getElementById(`btn-trans-es-${emailId}`);
+        const btnEn = document.getElementById(`btn-trans-en-${emailId}`);
+        const btnToggleOriginal = document.getElementById(`btn-toggle-original-${emailId}`);
+
+        if (box) box.classList.remove('hidden');
+        if (statusEl) {
+            const langName = targetLang === 'en' ? 'English' : 'Español';
+            statusEl.textContent = `${window.I18n ? (targetLang === 'en' ? I18n.t('email.translated_to_en') : I18n.t('email.translated_to_es')) : 'Traducido al ' + langName}`;
+        }
+        if (btnToggleOriginal) {
+            btnToggleOriginal.textContent = window.I18n ? I18n.t('email.view_original') : 'Ver Original';
+        }
+
+        if (btnEs && btnEn) {
+            if (targetLang === 'es') {
+                btnEs.className = 'px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer bg-indigo-600 text-white border-indigo-600';
+                btnEn.className = 'px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400';
+            } else {
+                btnEn.className = 'px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer bg-indigo-600 text-white border-indigo-600';
+                btnEs.className = 'px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400';
+            }
+        }
+    },
+
+    toggleTranslationView(emailId) {
+        if (!this.emailOriginals[emailId]) return;
+        const showing = this.emailShowingTranslation[emailId];
+        const email = this.currentOpenedEmail;
+        const subjectEl = document.getElementById(`email-detail-subject-${emailId}`);
+        const frame = document.getElementById(`email-body-frame-${emailId}`);
+        const textBody = document.getElementById(`email-body-text-${emailId}`);
+        const statusEl = document.getElementById(`ai-translation-status-${emailId}`);
+        const btnToggleOriginal = document.getElementById(`btn-toggle-original-${emailId}`);
+
+        if (showing) {
+            const orig = this.emailOriginals[emailId];
+            if (subjectEl) subjectEl.textContent = orig.subject;
+            if (frame && email) {
+                this.mountEmailBodyFrame(email, false, orig.body_html || orig.body_text);
+            } else if (textBody) {
+                textBody.textContent = orig.body_text;
+            }
+            this.emailShowingTranslation[emailId] = false;
+            if (statusEl) {
+                statusEl.textContent = window.I18n ? I18n.t('email.view_original') : 'Mostrando original';
+            }
+            if (btnToggleOriginal) {
+                btnToggleOriginal.textContent = window.I18n ? I18n.t('email.view_translation') : 'Ver Traducción';
+            }
+        } else {
+            const detected = this.detectEmailLanguage(email);
+            const defaultTarget = (detected === 'es') ? 'en' : 'es';
+            const targetLang = this.emailCurrentTranslationLang[emailId] || defaultTarget;
+            const cacheKey = `${emailId}_${targetLang}`;
+            if (this.emailTranslations[cacheKey]) {
+                const cached = this.emailTranslations[cacheKey];
+                this.applyTranslationToView(emailId, cached.subject, cached.body, targetLang);
+            } else {
+                this.translateCurrentEmail(emailId, targetLang);
+            }
+        }
+    },
+
+    async switchTranslationLang(emailId, targetLang) {
+        await this.translateCurrentEmail(emailId, targetLang);
     },
 
     async setDefaultAccount(accountId) {
@@ -3577,9 +5557,12 @@ const EmailManager = {
     openNewAccountModal() {
         UI.closeDrawer('drawer-accounts');
         const form = document.getElementById('new-account-form');
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
         form.reset();
         document.getElementById('new-account-id').value = '';
-        document.getElementById('modal-account-title').textContent = 'Conectar Nueva Cuenta';
+        document.getElementById('modal-account-title').textContent = isEn ? 'Connect New Account' : 'Conectar Nueva Cuenta';
+        const submitBtn = document.querySelector('#new-account-form button[type="submit"]');
+        if (submitBtn) submitBtn.textContent = isEn ? 'Save Account' : 'Guardar Cuenta';
         document.getElementById('new-account-color').value = '#3b82f6';
         const userInput = document.getElementById('new-account-user');
         if (userInput) {
@@ -3594,13 +5577,16 @@ const EmailManager = {
 
     async openEditAccountModal(accountId) {
         UI.closeDrawer('drawer-accounts');
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
         try {
             const res = await fetch(`/api/accounts/${accountId}`);
-            if (!res.ok) throw new Error('Cuenta no encontrada');
+            if (!res.ok) throw new Error(isEn ? 'Account not found' : 'Cuenta no encontrada');
             const data = await res.json();
 
             document.getElementById('new-account-id').value = data.id;
-            document.getElementById('modal-account-title').textContent = `Editar Cuenta: ${data.name}`;
+            document.getElementById('modal-account-title').textContent = isEn ? `Edit Account: ${data.name}` : `Editar Cuenta: ${data.name}`;
+            const submitBtn = document.querySelector('#new-account-form button[type="submit"]');
+            if (submitBtn) submitBtn.textContent = isEn ? 'Save Changes' : 'Guardar Cambios';
             document.getElementById('new-account-name').value = data.name;
             document.getElementById('new-account-email').value = data.email;
             document.getElementById('new-account-provider').value = data.provider;
@@ -3648,10 +5634,15 @@ const EmailManager = {
             } else {
                 const errMsg = data.errors && data.errors.length ? data.errors.join(' | ') : 'Fallo de autenticación o puertos';
                 if (statusBox) {
-                    statusBox.className = 'text-[11px] p-2 rounded-lg bg-rose-950/60 text-rose-300 border border-rose-800/80';
-                    statusBox.textContent = `✖ Error: ${errMsg}`;
+                    if (data.needs_reauth) {
+                        statusBox.className = 'text-[11px] p-2.5 rounded-lg bg-amber-950/60 text-amber-200 border border-amber-800/80 flex items-center justify-between gap-2';
+                        statusBox.innerHTML = `<span>✖ La sesión con Google expiró.</span> <button type="button" onclick="EmailManager.connectWithGoogle()" class="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded text-[10px] shrink-0 cursor-pointer">Reconectar ahora</button>`;
+                    } else {
+                        statusBox.className = 'text-[11px] p-2 rounded-lg bg-rose-950/60 text-rose-300 border border-rose-800/80';
+                        statusBox.textContent = `✖ Error: ${errMsg}`;
+                    }
                 }
-                UI.showStickyToast('Fallo de Conexión', errMsg, 'error', 5000);
+                UI.showStickyToast(data.needs_reauth ? 'Reconexión Requerida' : 'Fallo de Conexión', errMsg, data.needs_reauth ? 'warning' : 'error', 6000);
             }
         } catch (e) {
             if (statusBox) {
@@ -3720,8 +5711,602 @@ const EmailManager = {
         }
     },
 
-    printCurrentEmail() {
+    printPreviewState: {
+        destination: 'pdf',
+        layout: 'portrait',
+        color: 'color',
+        paperSize: 'letter',
+        margins: 'default',
+        scale: 100,
+        headersFooters: true,
+        backgroundGraphics: true,
+        zoomLevel: 100
+    },
+
+    openPrintPreview() {
+        if (!this.currentOpenedEmail) {
+            if (window.UI) UI.showStickyToast('Impresión', 'Abre primero un correo para imprimir', 'info', 2000);
+            return;
+        }
+
+        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop);
+        if (!isDesktop) {
+            // En versión web y PWA: usar directamente la opción e interfaz nativa de impresión del navegador (Chrome / navegador del usuario)
+            this.printCurrentEmail();
+            return;
+        }
+
+        const email = this.currentOpenedEmail;
+
+        const dateFormatted = new Date(email.date).toLocaleString('es-ES', { 
+            dateStyle: 'full', 
+            timeStyle: 'short' 
+        });
+
+        // Contenido del cuerpo formateado
+        let bodyContent = '';
+        if (email.body_html) {
+            bodyContent = email.body_html;
+        } else {
+            const escaped = this.escapeHtml(email.body_text || email.snippet || '');
+            bodyContent = `<div style="white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 13.5px; line-height: 1.6; color: #1e293b;">${escaped}</div>`;
+        }
+
+        // Restablecer estado inicial de opciones
+        this.printPreviewState = {
+            destination: isDesktop ? 'pdf' : 'system',
+            layout: 'portrait',
+            color: 'color',
+            paperSize: 'letter',
+            margins: 'default',
+            scale: 100,
+            headersFooters: true,
+            backgroundGraphics: true,
+            zoomLevel: 100
+        };
+
+        // Eliminar modal previo si existiese
+        const prevModal = document.getElementById('print-preview-modal');
+        if (prevModal) prevModal.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'print-preview-modal';
+        modal.className = 'fixed inset-0 z-[99999] bg-[#202124]/90 backdrop-blur-xs flex flex-col md:flex-row overflow-hidden font-sans select-none';
+        modal.innerHTML = `
+            <!-- Panel Lateral de Ajustes estilo Google Chrome -->
+            <div class="w-full md:w-[340px] md:min-w-[340px] bg-[#292a2d] text-[#e8eaed] flex flex-col h-full border-r border-[#3c4043] shadow-2xl z-20 shrink-0">
+                <!-- Cabecera -->
+                <div class="px-5 py-4 border-b border-[#3c4043] flex items-center justify-between shrink-0">
+                    <div class="flex items-center gap-3">
+                        <button type="button" onclick="EmailManager.closePrintPreview()" class="p-1.5 -ml-1 text-[#9aa0a6] hover:text-white hover:bg-[#3c4043] rounded-full transition-colors cursor-pointer" title="Cerrar vista previa (Esc)">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+                        </button>
+                        <div>
+                            <h2 class="text-base font-medium text-white tracking-wide">Imprimir</h2>
+                            <p id="print-preview-pages-subtitle" class="text-[11px] text-[#9aa0a6]">1 hoja de papel &bull; Vista previa</p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="EmailManager.closePrintPreview()" class="text-[#9aa0a6] hover:text-white p-1 rounded-full hover:bg-[#3c4043] transition-colors cursor-pointer" title="Cerrar (Esc)">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+
+                <!-- Botones de Acción Principales -->
+                <div class="px-5 py-3 border-b border-[#3c4043] flex items-center gap-3 shrink-0 bg-[#292a2d]">
+                    <button type="button" id="btn-modal-print-action" onclick="EmailManager.executePrint()" class="flex-1 inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#1a73e8] hover:bg-[#1557b0] active:bg-[#174ea6] text-white font-medium text-xs rounded-full shadow-sm transition-all cursor-pointer">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+                        <span id="btn-modal-print-label">Imprimir</span>
+                    </button>
+                    <button type="button" onclick="EmailManager.closePrintPreview()" class="px-5 py-2.5 border border-[#5f6368] hover:bg-[#3c4043] active:bg-[#4a4d51] text-[#e8eaed] font-medium text-xs rounded-full transition-colors cursor-pointer">
+                        Cancelar
+                    </button>
+                </div>
+
+                <!-- Lista de Controles Chrome -->
+                <div class="p-5 space-y-4 text-xs text-[#bdc1c6] flex-1 overflow-y-auto">
+                    <!-- Destino -->
+                    <div>
+                        <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Destino</label>
+                        <select id="print-opt-destination" onchange="EmailManager.updatePrintOption('destination', this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#8ab4f8] transition-colors cursor-pointer">
+                            <option value="pdf" ${this.printPreviewState.destination === 'pdf' ? 'selected' : ''}>Guardar como PDF</option>
+                            <option value="system" ${this.printPreviewState.destination === 'system' ? 'selected' : ''}>Impresora del sistema / predeterminada</option>
+                        </select>
+                    </div>
+
+                    <!-- Páginas -->
+                    <div>
+                        <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Páginas</label>
+                        <select id="print-opt-pages" onchange="EmailManager.onPageSelectionChange(this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none cursor-pointer">
+                            <option value="all">Todas</option>
+                        </select>
+                    </div>
+
+                    <!-- Diseño / Orientación -->
+                    <div>
+                        <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Diseño</label>
+                        <select id="print-opt-layout" onchange="EmailManager.updatePrintOption('layout', this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#8ab4f8] transition-colors cursor-pointer">
+                            <option value="portrait" selected>Vertical (Retrato)</option>
+                            <option value="landscape">Horizontal (Paisaje)</option>
+                        </select>
+                    </div>
+
+                    <!-- Color -->
+                    <div>
+                        <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Color</label>
+                        <select id="print-opt-color" onchange="EmailManager.updatePrintOption('color', this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#8ab4f8] transition-colors cursor-pointer">
+                            <option value="color" selected>Color</option>
+                            <option value="monochrome">Blanco y negro</option>
+                        </select>
+                    </div>
+
+                    <!-- Más Ajustes -->
+                    <div class="pt-2 border-t border-[#3c4043]">
+                        <button type="button" onclick="document.getElementById('print-more-settings-box').classList.toggle('hidden')" class="flex items-center justify-between w-full py-1 text-xs text-[#8ab4f8] hover:text-[#aecbfa] font-medium transition-colors cursor-pointer">
+                            <span>Más opciones</span>
+                            <svg class="w-3.5 h-3.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        </button>
+                    </div>
+
+                    <!-- Contenedor Desplegable de Más Ajustes -->
+                    <div id="print-more-settings-box" class="space-y-4 pt-1">
+                        <!-- Tamaño de papel -->
+                        <div>
+                            <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Tamaño de papel</label>
+                            <select id="print-opt-paper" onchange="EmailManager.updatePrintOption('paperSize', this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none cursor-pointer">
+                                <option value="letter" selected>Carta (Letter - 21.6 &times; 27.9 cm)</option>
+                                <option value="a4">A4 (21.0 &times; 29.7 cm)</option>
+                                <option value="legal">Oficio (Legal - 21.6 &times; 35.6 cm)</option>
+                            </select>
+                        </div>
+
+                        <!-- Márgenes -->
+                        <div>
+                            <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Márgenes</label>
+                            <select id="print-opt-margins" onchange="EmailManager.updatePrintOption('margins', this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none cursor-pointer">
+                                <option value="default" selected>Predeterminado (Normal)</option>
+                                <option value="minimum">Mínimo</option>
+                                <option value="none">Ninguno</option>
+                            </select>
+                        </div>
+
+                        <!-- Escala -->
+                        <div>
+                            <label class="block text-[11px] font-medium text-[#9aa0a6] mb-1.5 uppercase tracking-wider">Escala</label>
+                            <select id="print-opt-scale" onchange="EmailManager.updatePrintOption('scale', this.value)" class="w-full bg-[#35363a] border border-[#5f6368] text-white rounded-lg px-3 py-2 text-xs focus:outline-none cursor-pointer">
+                                <option value="100" selected>Predeterminado (100%)</option>
+                                <option value="90">90%</option>
+                                <option value="80">80%</option>
+                                <option value="70">70%</option>
+                                <option value="fit">Ajustar a la página</option>
+                            </select>
+                        </div>
+
+                        <!-- Opciones (Checkboxes) -->
+                        <div class="space-y-2.5 pt-2">
+                            <label class="flex items-center gap-2.5 text-xs text-[#e8eaed] cursor-pointer">
+                                <input type="checkbox" id="print-opt-headers" checked onchange="EmailManager.updatePrintOption('headersFooters', this.checked)" class="rounded text-[#1a73e8] focus:ring-0 bg-[#35363a] border-[#5f6368]">
+                                <span>Encabezados y pies de página</span>
+                            </label>
+                            <label class="flex items-center gap-2.5 text-xs text-[#e8eaed] cursor-pointer">
+                                <input type="checkbox" id="print-opt-backgrounds" checked onchange="EmailManager.updatePrintOption('backgroundGraphics', this.checked)" class="rounded text-[#1a73e8] focus:ring-0 bg-[#35363a] border-[#5f6368]">
+                                <span>Gráficos de fondo</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Canvas Central estilo Chrome Print Preview -->
+            <div class="flex-1 bg-[#323639] flex flex-col h-full overflow-hidden relative">
+                <!-- Área con scroll de las hojas de papel -->
+                <div class="flex-1 overflow-auto p-4 sm:p-8 md:p-12 flex justify-center items-start print-preview-canvas" id="print-preview-scroll-area">
+                    <!-- Medidor invisible para calcular la altura exacta del contenido y dividir páginas -->
+                    <div id="print-measure-container" style="position: absolute; visibility: hidden; pointer-events: none; left: -9999px; top: 0; box-sizing: border-box;"></div>
+
+                    <!-- Contenedor reactivo de hojas de papel separadas -->
+                    <div id="print-preview-sheets-container" class="flex flex-col items-center transition-transform duration-150 origin-top">
+                        <!-- Las hojas divididas se generan dinámicamente mediante renderPrintPreviewPages() -->
+                    </div>
+                </div>
+
+                <!-- Barra de Zoom Flotante estilo Chrome en esquina inferior derecha -->
+                <div class="absolute bottom-5 right-6 bg-[#202124]/90 backdrop-blur-md border border-[#3c4043] rounded-full px-3 py-1.5 flex items-center gap-3 text-xs text-white shadow-xl z-30">
+                    <button type="button" onclick="EmailManager.changePrintZoom(-10)" class="p-1 hover:bg-[#3c4043] rounded-full text-slate-300 hover:text-white transition-colors cursor-pointer" title="Alejar (-)">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
+                    </button>
+                    <span id="print-zoom-label" class="text-[11px] font-mono text-slate-200 min-w-[36px] text-center">100%</span>
+                    <button type="button" onclick="EmailManager.changePrintZoom(10)" class="p-1 hover:bg-[#3c4043] rounded-full text-slate-300 hover:text-white transition-colors cursor-pointer" title="Acercar (+)">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    </button>
+                    <div class="h-3 w-px bg-[#5f6368]"></div>
+                    <button type="button" onclick="EmailManager.resetPrintZoom()" class="hover:text-[#8ab4f8] text-[11px] font-medium transition-colors cursor-pointer" title="Ajustar hoja al ancho">
+                        Ajustar
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // Actualizar texto del botón según destino inicial
+        const btnLabel = document.getElementById('btn-modal-print-label');
+        if (btnLabel && this.printPreviewState.destination === 'pdf') {
+            btnLabel.textContent = 'Guardar';
+        }
+
+        // Renderizar las páginas divididas de la vista previa
+        this.renderPrintPreviewPages();
+    },
+
+    renderPrintPreviewPages() {
         if (!this.currentOpenedEmail) return;
+        const email = this.currentOpenedEmail;
+        const state = this.printPreviewState || {};
+        const container = document.getElementById('print-preview-sheets-container');
+        const measure = document.getElementById('print-measure-container');
+        if (!container || !measure) return;
+
+        const isLandscape = state.layout === 'landscape';
+        const isMono = state.color === 'monochrome';
+        const showHF = state.headersFooters !== false;
+        const paperSize = state.paperSize || 'letter';
+        const margins = state.margins || 'default';
+
+        // Dimensiones estándar en px de la hoja a 96 DPI
+        let sheetW = 680;
+        let sheetH = (paperSize === 'a4') ? 960 : ((paperSize === 'legal') ? 1080 : 880);
+        if (isLandscape) {
+            const tmp = sheetW;
+            sheetW = sheetH;
+            sheetH = tmp;
+        }
+
+        // Márgenes / Relleno interior
+        let padX = 28;
+        let padY = 28;
+        if (margins === 'minimum') {
+            padX = 14;
+            padY = 14;
+        } else if (margins === 'none') {
+            padX = 0;
+            padY = 0;
+        }
+
+        const dateFormatted = new Date(email.date).toLocaleString('es-ES', { 
+            dateStyle: 'full', 
+            timeStyle: 'short' 
+        });
+
+        let bodyContent = '';
+        if (email.body_html) {
+            bodyContent = email.body_html;
+        } else {
+            const escaped = this.escapeHtml(email.body_text || email.snippet || '');
+            bodyContent = `<div style="white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 1.6; color: #1e293b;">${escaped}</div>`;
+        }
+
+        // Medir altura total del cuerpo en un contenedor del mismo ancho útil
+        const usableW = Math.max(300, sheetW - (padX * 2));
+        measure.style.width = `${usableW}px`;
+        measure.innerHTML = `<div id="print-measure-inner" style="width: 100%; font-size: 13px; line-height: 1.45; word-break: break-word;">${bodyContent}</div>`;
+        
+        // Ajustar imágenes en la medición y escuchar su carga para re-calcular con altura exacta
+        const measureImgs = measure.querySelectorAll('img');
+        measureImgs.forEach(img => {
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+            img.style.objectFit = 'contain';
+            if (!img.complete || img.naturalHeight === 0) {
+                img.addEventListener('load', () => {
+                    if (document.getElementById('print-preview-modal')) {
+                        this.renderPrintPreviewPages();
+                    }
+                }, { once: true });
+                img.addEventListener('error', () => {
+                    if (document.getElementById('print-preview-modal')) {
+                        this.renderPrintPreviewPages();
+                    }
+                }, { once: true });
+            }
+        });
+
+        const measureInner = document.getElementById('print-measure-inner') || measure;
+        const totalBodyH = Math.max(100, measureInner.scrollHeight);
+
+        // Altura disponible de contenido para la primera hoja y las siguientes
+        const header1H = showHF ? 84 : 0;
+        const headerSubH = showHF ? 26 : 0;
+        const footerH = showHF ? 32 : 0;
+
+        const contentH1 = Math.max(200, sheetH - (padY * 2) - header1H - footerH);
+        const contentHSub = Math.max(200, sheetH - (padY * 2) - headerSubH - footerH);
+
+        // Obtener elementos bloque para calcular saltos limpios que no corten imágenes ni tarjetas
+        const blockElements = [];
+        measureInner.querySelectorAll('img, table, tr, p, h1, h2, h3, h4, h5, h6, blockquote, figure, div').forEach(el => {
+            if (el.offsetHeight > 20) {
+                const rect = el.getBoundingClientRect();
+                const containerRect = measureInner.getBoundingClientRect();
+                const top = rect.top - containerRect.top;
+                blockElements.push({
+                    top: top,
+                    height: el.offsetHeight,
+                    isCritical: (el.tagName === 'IMG' || el.tagName === 'TABLE' || el.tagName === 'TR')
+                });
+            }
+        });
+        blockElements.sort((a, b) => a.top - b.top);
+
+        // Calcular rebanadas inteligentes (slices) para cada página evitando partir elementos críticos
+        const pageSlices = [];
+        let curY = 0;
+        let safetyMaxPages = 60;
+
+        while (curY < totalBodyH && safetyMaxPages-- > 0) {
+            const isFirst = (pageSlices.length === 0);
+            const availH = isFirst ? contentH1 : contentHSub;
+            const idealEnd = curY + availH;
+
+            if (idealEnd >= totalBodyH) {
+                // Última página: incluye todo el resto del documento sin recortar nada
+                pageSlices.push({
+                    start: curY,
+                    end: totalBodyH,
+                    height: Math.min(availH, totalBodyH - curY)
+                });
+                break;
+            }
+
+            // Buscar si algún elemento crítico (imagen, tabla, fila) cruza el límite idealEnd
+            let breakY = idealEnd;
+            for (const el of blockElements) {
+                const elBottom = el.top + el.height;
+                if (el.top < idealEnd && elBottom > idealEnd) {
+                    // Si el elemento empieza dejando al menos 80px de contenido previo en esta página
+                    if (el.top > curY + 80) {
+                        breakY = el.top;
+                        break;
+                    }
+                }
+            }
+
+            pageSlices.push({
+                start: curY,
+                end: breakY,
+                height: Math.min(availH, breakY - curY)
+            });
+            curY = breakY;
+        }
+
+        const numPages = Math.max(1, pageSlices.length);
+
+        // Actualizar subtítulo y selector de páginas en el panel lateral
+        const subtitle = document.getElementById('print-preview-pages-subtitle');
+        if (subtitle) {
+            subtitle.textContent = `${numPages} ${numPages === 1 ? 'hoja de papel' : 'hojas de papel'} • Vista previa`;
+        }
+
+        const pagesSelect = document.getElementById('print-opt-pages');
+        if (pagesSelect) {
+            const currentVal = pagesSelect.value;
+            pagesSelect.innerHTML = `
+                <option value="all">Todas (${numPages})</option>
+                ${numPages > 1 ? Array.from({length: numPages}, (_, i) => `<option value="${i+1}">Solo página ${i+1}</option>`).join('') : ''}
+            `;
+            if (currentVal && (currentVal === 'all' || parseInt(currentVal, 10) <= numPages)) {
+                pagesSelect.value = currentVal;
+            }
+        }
+
+        // Construir las hojas individuales de papel
+        let sheetsHtml = '';
+        const subjectEsc = this.escapeHtml(email.subject || '(Sin Asunto)');
+        const senderEsc = this.escapeHtml(email.sender || '');
+        const recipientEsc = this.escapeHtml(email.recipient || '');
+
+        for (let p = 0; p < numPages; p++) {
+            const slice = pageSlices[p];
+            const isFirst = (p === 0);
+            const curHeaderH = isFirst ? header1H : headerSubH;
+            const sliceH = slice ? slice.height : (isFirst ? contentH1 : contentHSub);
+            const offsetTop = slice ? slice.start : 0;
+
+            sheetsHtml += `
+                <div class="print-page-sheet bg-white text-slate-900 shadow-2xl relative flex flex-col shrink-0 mb-8 transition-all duration-150 select-text"
+                     data-page="${p + 1}"
+                     id="print-sheet-page-${p + 1}"
+                     style="width: ${sheetW}px; height: ${sheetH}px; padding: ${padY}px ${padX}px; box-sizing: border-box; overflow: hidden; border-radius: 2px; ${isMono ? 'filter: grayscale(100%);' : ''}">
+                    
+                    <!-- Encabezado -->
+                    ${isFirst ? `
+                        <div class="print-sheet-header border-b border-slate-300 pb-2.5 mb-3 shrink-0" style="${showHF ? '' : 'display: none;'}">
+                            <h1 class="text-base font-bold text-slate-900 leading-snug break-words mb-1.5">${subjectEsc}</h1>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px] text-slate-600">
+                                <div><strong class="text-slate-800">De:</strong> ${senderEsc}</div>
+                                <div><strong class="text-slate-800">Fecha:</strong> ${dateFormatted}</div>
+                                <div class="sm:col-span-2"><strong class="text-slate-800">Para:</strong> ${recipientEsc}</div>
+                            </div>
+                        </div>
+                    ` : `
+                        <div class="print-sheet-header border-b border-slate-200 pb-1 mb-2 shrink-0 flex justify-between items-center text-[10px] text-slate-400" style="${showHF ? '' : 'display: none;'}">
+                            <span class="truncate max-w-[70%] font-medium text-slate-500">${subjectEsc}</span>
+                            <span>Página ${p + 1}</span>
+                        </div>
+                    `}
+
+                    <!-- Contenedor recortado de contenido de la página -->
+                    <div class="print-page-viewport flex-1 relative overflow-hidden" style="height: ${sliceH}px; max-height: ${sliceH}px;">
+                        <div class="print-page-content-slice" style="position: absolute; top: -${offsetTop}px; left: 0; right: 0; width: 100%;">
+                            <div style="font-size: 13px; line-height: 1.45; word-break: break-word;">
+                                ${bodyContent}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Pie de página -->
+                    <div class="print-sheet-footer border-t border-slate-200 pt-2 mt-2 text-[10px] text-slate-400 flex items-center justify-between shrink-0" style="${showHF ? '' : 'display: none;'}">
+                        <span>Senda &bull; Correo Inteligente</span>
+                        <span>Página ${p + 1} de ${numPages}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        container.innerHTML = sheetsHtml;
+
+        // Proteger imágenes en todas las hojas generadas
+        container.querySelectorAll('img').forEach(img => {
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+            img.style.objectFit = 'contain';
+        });
+
+        // Aplicar el zoom actual al contenedor de hojas
+        this.applyPrintZoom(this.printPreviewState.zoomLevel || 100);
+    },
+
+    onPageSelectionChange(val) {
+        if (val === 'all') {
+            document.querySelectorAll('.print-page-sheet').forEach(sheet => {
+                sheet.style.display = 'flex';
+            });
+            const first = document.getElementById('print-sheet-page-1');
+            if (first) first.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+            const pageNum = parseInt(val, 10);
+            document.querySelectorAll('.print-page-sheet').forEach(sheet => {
+                const p = parseInt(sheet.getAttribute('data-page'), 10);
+                if (p === pageNum) {
+                    sheet.style.display = 'flex';
+                    sheet.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else {
+                    sheet.style.display = 'none';
+                }
+            });
+        }
+    },
+
+    closePrintPreview() {
+        const modal = document.getElementById('print-preview-modal');
+        if (modal) modal.remove();
+    },
+
+    updatePrintOption(key, val) {
+        this.printPreviewState[key] = val;
+        const btnLabel = document.getElementById('btn-modal-print-label');
+
+        if (key === 'destination' && btnLabel) {
+            btnLabel.textContent = (val === 'pdf') ? 'Guardar' : 'Imprimir';
+        }
+
+        if (key === 'scale') {
+            if (val === 'fit') {
+                this.resetPrintZoom();
+            } else {
+                const pct = parseInt(val, 10) || 100;
+                this.applyPrintZoom(pct);
+            }
+            return;
+        }
+
+        // Re-calcular la división y renderizado de hojas
+        this.renderPrintPreviewPages();
+    },
+
+    applyPrintZoom(pct) {
+        this.printPreviewState.zoomLevel = Math.max(50, Math.min(180, pct));
+        const container = document.getElementById('print-preview-sheets-container');
+        const label = document.getElementById('print-zoom-label');
+        if (label) label.textContent = `${this.printPreviewState.zoomLevel}%`;
+        if (container) {
+            container.style.transform = `scale(${this.printPreviewState.zoomLevel / 100})`;
+        }
+    },
+
+    changePrintZoom(delta) {
+        const next = (this.printPreviewState.zoomLevel || 100) + delta;
+        this.applyPrintZoom(next);
+    },
+
+    resetPrintZoom() {
+        const area = document.getElementById('print-preview-scroll-area');
+        if (!area) {
+            this.applyPrintZoom(100);
+            return;
+        }
+        const availW = area.clientWidth - 48;
+        const sheetW = (this.printPreviewState.layout === 'landscape') ? 880 : 680;
+        if (availW > 0 && availW < sheetW) {
+            const fitPct = Math.round((availW / sheetW) * 100);
+            this.applyPrintZoom(fitPct);
+        } else {
+            this.applyPrintZoom(100);
+        }
+    },
+
+    async executePrint() {
+        if (!this.currentOpenedEmail) return;
+        const email = this.currentOpenedEmail;
+        const isDesktop = (window.DesktopBridge && window.DesktopBridge.isDesktop);
+        const state = this.printPreviewState || {};
+        const subject = email.subject || 'correo';
+        const printDocHtml = this.getPrintDocHtml(state);
+        const printOpts = {
+            layout: state.layout || 'portrait',
+            paperSize: state.paperSize || 'letter',
+            margins: state.margins || 'default'
+        };
+
+        if (state.destination === 'pdf' && isDesktop) {
+            // Guardar directamente como PDF en la versión de escritorio cargando el buffer aislado y opciones
+            try {
+                await fetch('/api/desktop/print-buffer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ html: printDocHtml, title: subject, options: printOpts })
+                });
+            } catch (err) {
+                console.warn('Error al enviar buffer de impresión:', err);
+            }
+
+            console.log(`__PYQT_ACTION__:save_pdf:${subject}`);
+            if (window.DesktopBridge && typeof window.DesktopBridge.save_pdf === 'function') {
+                window.DesktopBridge.save_pdf(subject, printDocHtml);
+            }
+            if (window.UI) UI.showStickyToast('Guardar PDF', 'Elige la ubicación para guardar el documento', 'success', 3000);
+            this.closePrintPreview();
+            return;
+        }
+
+        if (state.destination === 'system' && isDesktop) {
+            // Enviar al diálogo de impresión nativo del sistema cargando el buffer aislado y opciones
+            try {
+                await fetch('/api/desktop/print-buffer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ html: printDocHtml, title: subject, options: printOpts })
+                });
+            } catch (err) {
+                console.warn('Error al enviar buffer de impresión:', err);
+            }
+
+            console.log('__PYQT_ACTION__:print_dialog');
+            if (window.DesktopBridge && typeof window.DesktopBridge.print_dialog === 'function') {
+                window.DesktopBridge.print_dialog();
+            }
+            if (window.UI) UI.showStickyToast('Imprimiendo', 'Abriendo diálogo de impresión del sistema...', 'info', 2500);
+            this.closePrintPreview();
+            return;
+        }
+
+        // En navegador estándar / fallback: generar impresión aislada con los ajustes elegidos
+        if (window.UI) UI.showStickyToast('Imprimiendo', 'Preparando documento para imprimir...', 'info', 2000);
+        this.printCurrentEmail(state);
+        this.closePrintPreview();
+    },
+
+    getPrintDocHtml(customOptions = {}) {
+        if (!this.currentOpenedEmail) return '';
         const email = this.currentOpenedEmail;
 
         const dateFormatted = new Date(email.date).toLocaleString('es-ES', { 
@@ -3738,24 +6323,30 @@ const EmailManager = {
             bodyContent = `<div style="white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 1.6; color: #1e293b;">${escaped}</div>`;
         }
 
-        // Crear documento HTML autónomo y profesional para la impresión
-        const printDoc = `
-<!DOCTYPE html>
+        const isLandscape = customOptions.layout === 'landscape';
+        const isMono = customOptions.color === 'monochrome';
+        const showHeaders = customOptions.headersFooters !== false;
+        const marginChoice = customOptions.margins || 'default';
+        const marginVal = marginChoice === 'minimum' ? '0.6cm' : (marginChoice === 'none' ? '0cm' : '1.4cm 1.6cm');
+        const bodyPad = marginChoice === 'minimum' ? '4px' : (marginChoice === 'none' ? '0px' : '12px');
+        const paperSize = customOptions.paperSize === 'a4' ? 'A4' : 'letter';
+
+        return `<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <title>${this.escapeHtml(email.subject || 'Correo')}</title>
     <style>
         @page {
-            margin: 0.6cm 0.8cm;
-            size: auto;
+            margin: ${marginVal};
+            size: ${paperSize} ${isLandscape ? 'landscape' : 'portrait'};
         }
         *, *:before, *:after {
             box-sizing: border-box;
         }
         body {
             margin: 0;
-            padding: 0;
+            padding: ${bodyPad};
             background: #ffffff !important;
             color: #111827 !important;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -3763,27 +6354,29 @@ const EmailManager = {
             print-color-adjust: exact !important;
             font-size: 12px;
             line-height: 1.4;
+            ${isMono ? 'filter: grayscale(100%);' : ''}
         }
         .print-header {
             border-bottom: 1px solid #cbd5e1;
-            padding-bottom: 4px;
-            margin-bottom: 8px;
+            padding-bottom: 6px;
+            margin-bottom: 10px;
+            ${showHeaders ? '' : 'display: none !important;'}
         }
         .print-subject {
-            font-size: 13.5px;
+            font-size: 14px;
             font-weight: 700;
             color: #0f172a;
-            margin: 0 0 3px 0;
-            line-height: 1.25;
+            margin: 0 0 4px 0;
+            line-height: 1.3;
             word-break: break-word;
         }
         .print-meta-grid {
             display: flex;
             flex-wrap: wrap;
-            gap: 2px 14px;
-            font-size: 10.5px;
+            gap: 2px 16px;
+            font-size: 11px;
             color: #475569;
-            line-height: 1.3;
+            line-height: 1.35;
         }
         .print-meta-item strong {
             color: #0f172a;
@@ -3800,38 +6393,20 @@ const EmailManager = {
             height: auto !important;
             max-height: 25cm !important;
             object-fit: contain;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
         }
         .print-body table {
             max-width: 100% !important;
-            break-inside: auto;
-            page-break-inside: auto;
         }
-        .print-body figure {
-            break-inside: auto;
-            page-break-inside: auto;
-        }
-        .print-body h1, .print-body h2, .print-body h3, .print-body h4 {
-            break-after: avoid;
-            page-break-after: avoid;
-        }
-        /* Permitir flujo continuo y evitar que contenedores responsivos (Klaviyo, MJML, etc.) bloqueen saltos de página */
-        .print-body .kl-row,
-        .print-body .kl-column,
-        .print-body .colstack,
-        .print-body [style*="display:table"],
-        .print-body [style*="display: table"],
-        .print-body [style*="display:table-cell"],
-        .print-body [style*="display: table-cell"],
-        .print-body [style*="inline-block"][style*="width: 100%"],
-        .print-body [style*="inline-block"][style*="width:100%"],
-        .print-body .mj-column-per-100 {
-            display: block !important;
-            width: 100% !important;
-            break-inside: auto !important;
-            page-break-inside: auto !important;
+        .print-body tr,
+        .print-body figure,
+        .print-body blockquote {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
         }
         .print-footer {
-            margin-top: 12px;
+            margin-top: 14px;
             padding-top: 6px;
             border-top: 1px solid #e2e8f0;
             font-size: 9.5px;
@@ -3840,6 +6415,7 @@ const EmailManager = {
             justify-content: space-between;
             break-inside: avoid;
             page-break-inside: avoid;
+            ${showHeaders ? '' : 'display: none !important;'}
         }
         @media print {
             body {
@@ -3870,12 +6446,16 @@ const EmailManager = {
     </div>
 
     <div class="print-footer">
-        <span>MerkeMail &bull; Correo Inteligente</span>
+        <span>Senda &bull; Correo Inteligente</span>
         <span>Impreso el ${new Date().toLocaleDateString('es-ES')}</span>
     </div>
 </body>
-</html>
-        `;
+</html>`;
+    },
+
+    printCurrentEmail(customOptions = {}) {
+        if (!this.currentOpenedEmail) return;
+        const printDoc = this.getPrintDocHtml(customOptions);
 
         // Crear un iframe invisible para aislar la impresión y no tocar el layout de la pantalla
         const iframe = document.createElement('iframe');
@@ -3892,7 +6472,6 @@ const EmailManager = {
         frameDoc.write(printDoc);
         frameDoc.close();
 
-        // Control de impresión asegurando que las imágenes remotas terminen de renderizar sus dimensiones
         let printed = false;
         const doPrint = () => {
             if (printed) return;
@@ -3923,7 +6502,6 @@ const EmailManager = {
                 img.addEventListener('load', onImgDone, { once: true });
                 img.addEventListener('error', onImgDone, { once: true });
             });
-            // Timeout de seguridad máximo de 800ms para no demorar al usuario si alguna imagen falla o tarda
             setTimeout(doPrint, 800);
         }
     },

@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional
 from google import genai
@@ -131,19 +132,20 @@ class GeminiService:
     @classmethod
     def _generate_with_fallback(cls, client: genai.Client, preferred_model: str, contents: Any, config: Any):
         """Ejecuta generate_content priorizando baja latencia y alternando de inmediato ante 503, 429 o 404."""
+        import concurrent.futures
+
         candidate_models = [
             "gemini-3.5-flash-lite",
+            "gemini-3.7-flash",
             preferred_model,
-            "gemini-3.1-flash-lite",
-            "gemini-3.6-flash",
-            "gemini-3.5-flash",
             "gemini-3.8-flash"
         ]
         seen = set()
         models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
 
         last_error = None
-        for m in models:
+        # Limitar a máximo 2 modelos con timeout estricto de 3.5 segundos por intento para evitar demoras
+        for m in models[:2]:
             try:
                 effective_config = config
                 if isinstance(config, types.GenerateContentConfig) and getattr(config, "thinking_config", None) is None and "gemini-3" in m:
@@ -151,11 +153,18 @@ class GeminiService:
                         effective_config = config.model_copy(update={"thinking_config": types.ThinkingConfig(thinking_level="MINIMAL")})
                     except Exception:
                         effective_config = config
-                return client.models.generate_content(
-                    model=m,
-                    contents=contents,
-                    config=effective_config
-                )
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(
+                        client.models.generate_content,
+                        model=m,
+                        contents=contents,
+                        config=effective_config
+                    )
+                    return fut.result(timeout=3.5)
+            except concurrent.futures.TimeoutError:
+                last_error = TimeoutError(f"Timeout (3.5s) excedido para modelo {m}")
+                continue
             except Exception as e:
                 err_str = str(e).upper()
                 last_error = e
@@ -330,6 +339,241 @@ class GeminiService:
             }
 
     @classmethod
+    def detect_commitments(cls, subject: str, sender: str, body: str) -> List[Dict[str, Any]]:
+        """Extrae compromisos, tareas accionables y acuerdos de un correo."""
+        try:
+            client = cls.get_client()
+            model_name = get_setting("gemini_model", "gemini-3.5-flash-lite")
+
+            system_instruction = (
+                "Analiza el correo electrónico y detecta compromisos, acuerdos, solicitudes o tareas pendientes. "
+                "Devuelve un JSON con una lista 'commitments', donde cada elemento contiene: "
+                "'title' (descripción concisa de la acción, máximo 12 palabras), "
+                "'due_hint' (fecha, día o momento sugerido si se menciona, ej: 'Martes', 'Fin de semana', o cadena vacía), "
+                "'urgency' ('alta', 'media' o 'baja'). "
+                "Si no hay compromisos concretos, devuelve 'commitments': []."
+            )
+            content = f"Remitente: {sender}\nAsunto: {subject}\nCuerpo:\n{body[:3500]}"
+            response = cls._generate_with_fallback(
+                client=client,
+                preferred_model=model_name,
+                contents=content,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    response_mime_type="application/json",
+                    temperature=0.2
+                )
+            )
+            data = json.loads(response.text)
+            return data.get("commitments", [])
+        except Exception as e:
+            logger.warning(f"Error detectando compromisos con IA: {e}")
+            # Heurística de respaldo ante fallo
+            items = []
+            text = f"{subject} {body}".lower()
+            if "favor de" in text or "por favor" in text or "revisar" in text:
+                items.append({"title": f"Revisar solicitud en: {subject[:40]}", "due_hint": "Pronto", "urgency": "media"})
+            if "pago" in text or "factura" in text:
+                items.append({"title": f"Gestionar pago/factura de: {subject[:40]}", "due_hint": "Inmediato", "urgency": "alta"})
+            return items
+
+    @classmethod
+    def translate_email(cls, subject: str, body: str, target_lang: str = "es") -> Dict[str, Any]:
+        """Traduce un correo electrónico (asunto y cuerpo) conservando 100% el diseño original (tablas, estilos, imágenes y fuentes)."""
+        client = cls.get_client()
+        model_name = get_setting("gemini_model", "gemini-3.5-flash-lite")
+
+        is_es = target_lang.lower().startswith("es")
+        target_name = "Español de Latinoamérica" if is_es else "English"
+
+        has_html = bool(re.search(r"<[a-z][\s\S]*>", body, re.IGNORECASE))
+        if has_html:
+            try:
+                from bs4 import BeautifulSoup, Comment
+                soup = BeautifulSoup(body, 'html.parser')
+                ignore_tags = {'style', 'script', 'head', 'meta', 'title', 'noscript'}
+                nodes = []
+                texts_dict = {}
+                idx = 0
+
+                for el in soup.find_all(string=True):
+                    if isinstance(el, Comment):
+                        continue
+                    if el.parent and el.parent.name in ignore_tags:
+                        continue
+                    stripped = el.strip()
+                    if not stripped or len(stripped) < 2 and not stripped.isalnum():
+                        continue
+                    # Ignorar si es solo dígitos, símbolos o formato de hora pura
+                    if stripped.replace(':', '').replace('/', '').replace('-', '').replace('.', '').replace(' ', '').isdigit():
+                        continue
+
+                    idx += 1
+                    key = str(idx)
+                    nodes.append((key, el))
+                    texts_dict[key] = stripped
+
+                if texts_dict:
+                    prompt = (
+                        f"You are a professional email translator. Translate the email subject and the numbered dictionary of text snippets to {target_name}.\n"
+                        f"{'Utiliza español de Latinoamérica natural, profesional y formal.' if is_es else 'Use natural, professional English.'}\n"
+                        "Do not alter brand names, company names, links, or numbers.\n"
+                        "Return a valid JSON object with exactly two keys:\n"
+                        "- 'subject': translated subject\n"
+                        "- 'translations': a dictionary mapping the exact same numeric keys to their translated text.\n\n"
+                        f"Subject: {subject}\n"
+                        f"Texts to translate:\n{json.dumps(texts_dict, ensure_ascii=False)}"
+                    )
+
+                    response = cls._generate_with_fallback(
+                        client=client,
+                        preferred_model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            temperature=0.2
+                        )
+                    )
+
+                    raw_text = (response.text or "").strip()
+                    if raw_text.startswith("```"):
+                        raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+                        raw_text = re.sub(r"\s*```$", "", raw_text).strip()
+
+                    data = json.loads(raw_text)
+                    trans_map = data.get("translations", {})
+                    translated_subject = data.get("subject", subject)
+
+                    # Reemplazar exactamente cada nodo preservando espacios iniciales y finales
+                    for key, node in nodes:
+                        t_val = trans_map.get(key) or trans_map.get(str(key))
+                        if t_val:
+                            orig_str = str(node)
+                            leading = orig_str[:len(orig_str) - len(orig_str.lstrip())]
+                            trailing = orig_str[len(orig_str.rstrip()):]
+                            node.replace_with(leading + t_val + trailing)
+
+                    return {
+                        "success": True,
+                        "target_lang": target_lang,
+                        "subject": translated_subject,
+                        "body": str(soup)
+                    }
+            except Exception as e:
+                logger.warning(f"Fallo traducción precisa de DOM con BeautifulSoup, aplicando método directo: {e}")
+
+        # Método de respaldo o para correos en texto plano
+        system_instruction = (
+            f"Eres un traductor profesional y preciso. Traduce el asunto y cuerpo del correo proporcionado al idioma {target_name}. "
+            f"{'Utiliza español de Latinoamérica natural y profesional.' if is_es else 'Use natural, professional English.'} "
+            "Conserva los saltos de línea y estructura de párrafos. "
+            "Devuelve un objeto JSON con dos campos obligatorios: 'subject' y 'body'."
+        )
+
+        content = f"Asunto a traducir:\n{subject}\n\nCuerpo a traducir:\n{body[:25000]}"
+
+        response = cls._generate_with_fallback(
+            client=client,
+            preferred_model=model_name,
+            contents=content,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                temperature=0.2
+            )
+        )
+
+        raw_text = (response.text or "").strip()
+        if raw_text.startswith("```"):
+            raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+            raw_text = re.sub(r"\s*```$", "", raw_text).strip()
+
+        try:
+            data = json.loads(raw_text)
+            return {
+                "success": True,
+                "target_lang": target_lang,
+                "subject": data.get("subject", subject),
+                "body": data.get("body", raw_text)
+            }
+        except Exception:
+            return {
+                "success": True,
+                "target_lang": target_lang,
+                "subject": subject,
+                "body": raw_text if raw_text else body
+            }
+
+    @classmethod
+    def classify_email(cls, subject: str, sender: str, snippet: str = "", body: str = "", use_llm_fallback: bool = False) -> str:
+        """Clasifica un correo en: 'finanzas', 'trabajo', 'personal' o 'boletines'."""
+        sub = (subject or "").lower()
+        snd = (sender or "").lower()
+        snip = (snippet or "")[:400].lower()
+
+        # 1. Trabajo (vacantes, ofertas laborales, tareas, reuniones, desarrollo)
+        if any(k in sub for k in [
+            "empleo", "vacante", "plaza", "reunión", "reunion", "meeting", "sprint", "jira", "github", "gitlab",
+            "ticket", "postulación", "postulacion", "candidat", "entrevista", "desarrollador", "programador",
+            "developer", "full stack", "frontend", "backend", "cv", "curriculum", "laboral", "hiring", "job alert",
+            "necesita personal", "busca personal", "posiciones", "ofertas de empleo", "trabajo", "salario"
+        ]) or any(k in snd for k in ["computrabajo", "tecoloco", "linkedin", "github", "gitlab", "jira", "slack"]):
+            return "trabajo"
+
+        # 2. Finanzas (pagos, transferencias, facturas, estados de cuenta, bancos)
+        if any(k in sub for k in [
+            "pago", "factura", "invoice", "payment", "recibo", "receipt", "transferencia", "estado de cuenta",
+            "tarjeta", "cuota", "banco", "billing", "saldo", "total a pagar", "comprobante", "interbanco"
+        ]) or any(k in snd for k in ["bank", "billing", "pagos", "factura", "invoice", "interbanco"]):
+            return "finanzas"
+
+        # 3. Boletines / Promociones
+        if any(k in sub for k in [
+            "boletín", "boletin", "newsletter", "digest", "promo", "oferta", "descuento", "rebaja",
+            "black friday", "cupón", "cupon", "sale", "novedades", "ahorro"
+        ]) or any(k in snd for k in ["newsletter", "marketing", "promo", "news@", "digest", "uber", "platzi", "pedidosya", "aliexpress", "amazon"]):
+            return "boletines"
+
+        # 4. Señales secundarias en snippet
+        if any(k in snip for k in ["factura", "total a pagar", "comprobante de pago", "transferencia realizada", "número de cuenta", "tarjeta de crédito"]):
+            return "finanzas"
+        if any(k in snip for k in ["vacante", "postulación", "entrevista de trabajo", "oferta de empleo", "puesto de trabajo", "requisitos del puesto"]):
+            return "trabajo"
+        if any(k in snip for k in ["cancelar suscripción", "unsubscribe", "código de descuento", "oferta válida"]):
+            return "boletines"
+        if any(k in sub or k in snip for k in ["invitación", "cumpleaños", "boda", "familia", "amigo"]):
+            return "personal"
+
+        # 5. Patrones genéricos rápidos
+        if any(k in snd or k in sub for k in ["noreply", "no-reply", "notificaciones", "notifications", "news", "update"]):
+            return "boletines"
+
+        if not use_llm_fallback:
+            return "trabajo"
+
+        try:
+            client = cls.get_client()
+            model_name = get_setting("gemini_model", "gemini-3.5-flash-lite")
+            prompt = (
+                f"Clasifica este correo en exactamente una palabra: 'trabajo', 'finanzas', 'personal' o 'boletines'. "
+                f"Responde únicamente con la palabra elegida.\n"
+                f"Asunto: {subject}\nRemitente: {sender}\nTexto: {snip[:200]}"
+            )
+            resp = cls._generate_with_fallback(
+                client=client,
+                preferred_model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=15)
+            )
+            cat = resp.text.strip().lower()
+            for valid in ["finanzas", "trabajo", "boletines", "personal"]:
+                if valid in cat:
+                    return valid
+        except Exception:
+            pass
+        return "trabajo"
+
+    @classmethod
     def analyze_cleanup_by_prompt(cls, prompt: str, emails_metadata: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Analiza exhaustivamente correos de todas las cuentas, carpetas y etiquetas,
@@ -465,3 +709,48 @@ class GeminiService:
             return None
         except Exception:
             return None
+
+    @classmethod
+    def generate_executive_briefing(cls, data: Dict[str, Any]) -> Optional[str]:
+        """Genera una síntesis ejecutiva 360° con IA para la pantalla inicial de Elio."""
+        try:
+            client = cls.get_client()
+            model_name = get_setting("gemini_model", "gemini-3.5-flash-lite")
+
+            unread = data.get("unread_count", 0)
+            inbox_tot = data.get("inbox_total", 0)
+            p_subjects = [em.get("subject", "") for em in data.get("priority_emails", []) if em.get("subject")]
+            w_events = data.get("week_events", [])
+            w_titles = [ev.get("title", "") for ev in w_events[:4] if ev.get("title")]
+            tasks_cnt = data.get("pending_tasks_count", 0)
+            notes_cnt = data.get("notes_count", 0)
+            contacts_cnt = data.get("contacts_count", 0)
+            pending_contacts = data.get("pending_contacts_count", 0)
+            upcoming = data.get("upcoming_event")
+            upcoming_str = f"'{upcoming.get('title')}' a las {upcoming.get('start_time', '')}" if upcoming else "Sin citas próximas"
+
+            prompt = (
+                "Eres Elio, el copiloto inteligente de Senda. Genera una bienvenida ejecutiva concisa, elegante y motivadora "
+                "(máximo 2 párrafos cortos con 1 o 2 emojis sobrios) que ofrezca un panorama 360° del estado de la aplicación:\n"
+                f"- Bandeja de entrada: {unread} sin leer de {inbox_tot} en total. Asuntos clave: {', '.join(p_subjects) if p_subjects else 'Sin alertas críticas'}.\n"
+                f"- Calendario semanal: {len(w_events)} eventos programados ({', '.join(w_titles) if w_titles else 'sin citas'}). Próxima cita: {upcoming_str}.\n"
+                f"- Tareas pendientes: {tasks_cnt} por completar.\n"
+                f"- Notas en pizarra: {notes_cnt} notas adhesivas registradas.\n"
+                f"- Contactos: {contacts_cnt} contactos ({pending_contacts} pendientes de validar).\n"
+                "Destaca las prioridades del día de forma directa y constructiva."
+            )
+
+            resp = cls._generate_with_fallback(
+                client=client,
+                preferred_model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=300
+                )
+            )
+            if resp and resp.text:
+                return resp.text.strip()
+        except Exception as e:
+            logger.warning(f"No se pudo generar briefing ejecutivo con IA: {e}")
+        return None

@@ -1,6 +1,6 @@
 // ========================================================
 // Gestor de Redacción y Editor Enriquecido HTML (WYSIWYG)
-// MerkeMail Composer
+// Senda Composer
 // ========================================================
 
 const Composer = {
@@ -1208,6 +1208,10 @@ const InlineReply = {
                 // Si estamos en la vista de enviados, recargar
                 if (EmailManager.currentFolder === 'SENT') {
                     EmailManager.loadEmails();
+                }
+
+                if (window.ContactsManager && typeof ContactsManager.loadContacts === 'function') {
+                    ContactsManager.loadContacts();
                 }
             } else {
                 if (window.UI) {

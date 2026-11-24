@@ -1,5 +1,5 @@
 // ========================================================
-// Gestor y Caché Inteligente de Avatares - MerkeMail
+// Gestor y Caché Inteligente de Avatares - Senda
 // ========================================================
 
 const AvatarService = {
@@ -73,11 +73,14 @@ const AvatarService = {
     },
 
     // Renderizar avatar en HTML con control de fallback seguro y borde según el color de la cuenta
-    render(email, name = '', sizeClass = 'w-8 h-8 text-xs', extraClass = '', borderColor = null) {
+    render(email, name = '', sizeClass = 'w-8 h-8 text-xs', extraClass = '', borderColor = null, explicitAvatarUrl = null) {
         const clean = this.cleanEmail(email);
         const displayName = name || clean || 'U';
-        const initial = displayName.replace(/^["'\s]+/, '')[0].toUpperCase();
-        const avatarUrl = this.getUrl(email);
+        const initial = (displayName.replace(/^["'\s]+/, '')[0] || 'U').toUpperCase();
+        if (explicitAvatarUrl && clean) {
+            this.register(clean, explicitAvatarUrl);
+        }
+        const avatarUrl = explicitAvatarUrl || this.getUrl(email);
 
         // Detectar si el correo pertenece a una de las cuentas configuradas para aplicar su color
         let accountColor = borderColor;
@@ -119,7 +122,13 @@ const AvatarService = {
             const color = defaultAcc.color || '#3b82f6';
 
             if (headerAvatar) {
-                headerAvatar.title = `Cuenta por defecto: ${defaultAcc.name} (${defaultAcc.email})`;
+                const isEn = window.I18n && window.I18n.currentLang === 'en';
+                const prefix = isEn ? 'Default account' : 'Cuenta por defecto';
+                const titleStr = `${prefix}: ${defaultAcc.name} (${defaultAcc.email})`;
+                headerAvatar.title = titleStr;
+                if (headerAvatar.dataset.appTooltip !== undefined) {
+                    headerAvatar.dataset.appTooltip = titleStr;
+                }
                 headerAvatar.style.border = 'none';
                 headerAvatar.style.background = 'transparent';
                 headerAvatar.style.boxShadow = `0 0 0 2px ${color}`;

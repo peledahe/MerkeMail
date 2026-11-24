@@ -15,6 +15,41 @@ venv_python = venv_dir / "bin" / "python3"
 if venv_python.exists() and sys.prefix != str(venv_dir):
     os.execv(str(venv_python), [str(venv_python)] + sys.argv)
 
+
+def check_dependencies() -> None:
+    """Verifica que las librerías de requirements.txt estén instaladas antes de arrancar,
+    para mostrar un mensaje claro en lugar de un ModuleNotFoundError a mitad del arranque."""
+    import re
+    from importlib import metadata
+
+    req_file = BASE_DIR / "requirements.txt"
+    if not req_file.exists():
+        return
+    missing = []
+    for line in req_file.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        name = re.split(r"[<>=!~;\[ ]", line, maxsplit=1)[0]
+        try:
+            metadata.distribution(name)
+        except metadata.PackageNotFoundError:
+            missing.append(name)
+    if missing:
+        print("ERROR: faltan librerías necesarias para ejecutar MerkeMail:")
+        print("   " + ", ".join(missing))
+        print(f"Python en uso: {sys.executable}")
+        if not venv_python.exists():
+            print("No existe el entorno virtual .venv. Instala las dependencias con:")
+        else:
+            print("El entorno virtual .venv está incompleto. Reinstala las dependencias con:")
+        print("   ./setup.sh install")
+        print("(o manualmente: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt)")
+        sys.exit(1)
+
+
+check_dependencies()
+
 import webbrowser
 import threading
 import time

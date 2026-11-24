@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title id="page-title">Información y Características - Senda</title>
+
+    <!-- Script de Inicialización de Tema e Idioma -->
+    <script>
+        (function() {
+            try {
+                var theme = localStorage.getItem('theme');
+                if (theme === 'light') {
+                    document.documentElement.classList.remove('dark');
+                } else {
+                    document.documentElement.classList.add('dark');
+                }
+                var lang = localStorage.getItem('senda_lang') || 'es';
+                document.documentElement.lang = lang;
+            } catch (e) {
+                document.documentElement.classList.add('dark');
+            }
+        })();
+    </script>
+
+    <!-- Favicon e Iconos -->
+    <link rel="icon" type="image/svg+xml" href="/img/merke.svg">
+    <link rel="apple-touch-icon" href="/img/icon-192.png">
+
+    <!-- Tailwind CSS local para operar sin conexión -->
+    <script src="/static/js/vendor/tailwindcss-3.4.17.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            750: '#243044',
+                            850: '#111827',
+                            950: '#020617',
+                        }
+                    }
+                }
+            }
+        };
+    </script>
+    <style>
+        @import url('/static/css/app.css');
+        html { scroll-behavior: smooth; }
+    </style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 min-h-screen flex flex-col font-sans transition-colors duration-200 selection:bg-indigo-500 selection:text-white">
+
+    <!-- BARRA SUPERIOR DE NAVEGACIÓN -->
+    <header class="sticky top-0 z-40 w-full backdrop-blur-md bg-white/80 dark:bg-slate-900/80 border-b border-slate-200/80 dark:border-slate-800 transition-colors">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+            <!-- Logo y Nombre -->
+            <a href="/" class="flex items-center gap-3 group cursor-pointer focus:outline-hidden">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-transform">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="font-extrabold text-lg sm:text-xl tracking-tight text-slate-900 dark:text-white">Senda</span>
+                        <span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">v2.0</span>
+                    </div>
+                    <span data-i18n="info.tagline" class="text-[11px] text-slate-400 block -mt-1 font-medium">Correo Inteligente &amp; Productividad</span>
+                </div>
+            </a>
+
+            <!-- Acciones de Navegación -->
+            <div class="flex items-center gap-2.5 sm:gap-3">
+                <!-- Selector Rápido de Idioma (ES / EN) -->
+                <button type="button" id="btn-lang-toggle" onclick="toggleLanguage()" class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-2xs cursor-pointer select-none" title="Cambiar idioma (Switch language)">
+                    <svg class="w-3.5 h-3.5 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg>
+                    <span id="lang-label" class="font-bold text-[11px]">ES</span>
+                </button>
+
+                <!-- Botón de Alternar Tema Claro / Oscuro -->
+                <button type="button" id="btn-theme-toggle" onclick="toggleTheme()" class="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer border border-slate-200 dark:border-slate-800" title="Cambiar tema">
+                    <svg id="theme-icon-dark" class="w-4 h-4 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                    <svg id="theme-icon-light" class="w-4 h-4 block dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+                </button>
+
+                <!-- Botón Abrir Aplicación -->
+                <a href="/" class="flex items-center gap-2 px-3.5 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-sm transition-all hover:shadow-indigo-500/25">
+                    <span data-i18n="info.open_app">Abrir Senda</span>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- CONTENIDO PRINCIPAL -->
+    <main class="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-16">
+
+        <!-- HERO SECTION -->
+        <section class="text-center space-y-6 max-w-3xl mx-auto pt-4 sm:pt-8">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-pink-500/10 border border-indigo-500/20 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
+                <span data-i18n="info.hero_badge">Plataforma Autónoma de Productividad Personal</span>
+            </div>
+
+            <h1 class="text-3xl sm:text-5xl font-black text-slate-900 dark:text-white tracking-tight leading-tight">
+                <span data-i18n="info.hero_title_part1">El centro de mando que unifica tu</span>
+                <span class="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 bg-clip-text text-transparent" data-i18n="info.hero_title_highlight">correo, agenda y notas</span>
+                <span data-i18n="info.hero_title_part2">con IA</span>
+            </h1>
+
+            <p data-i18n="info.hero_desc" class="text-base sm:text-lg text-slate-600 dark:text-slate-300 leading-relaxed font-normal">
+                <strong>Senda</strong> es una aplicación integral diseñada para profesionales que necesitan resolver su flujo de trabajo diario sin fricciones. Integra tus cuentas de correo, calendario bidireccional, tareas y notas adhesivas bajo la asistencia inteligente de <strong>Elio</strong>, tu copiloto con Gemini.
+            </p>
+
+            <div class="flex items-center justify-center gap-3 pt-2 flex-wrap">
+                <a href="/" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-500/20 transition-all flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                    <span data-i18n="info.btn_inbox">Ir a la Bandeja de Entrada</span>
+                </a>
+                <a href="#modulos" data-i18n="info.btn_modules" class="px-5 py-2.5 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-sm font-semibold rounded-xl border border-slate-200 dark:border-slate-800 transition-all">
+                    Conocer Módulos
+                </a>
+            </div>
+
+            <!-- Métricas Clave Rápidas -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-6 text-left">
+                <div class="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
+                    <span data-i18n="info.metric_accounts_label" class="text-xs text-slate-400 font-medium">Multi-cuenta</span>
+                    <p class="text-lg font-bold text-indigo-600 dark:text-indigo-400 mt-0.5">Google / IMAP</p>
+                    <span data-i18n="info.metric_accounts_sub" class="text-[11px] text-slate-500 block mt-0.5">Bandeja combinada</span>
+                </div>
+                <div class="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
+                    <span data-i18n="info.metric_ai_label" class="text-xs text-slate-400 font-medium">Copiloto IA</span>
+                    <p class="text-lg font-bold text-purple-600 dark:text-purple-400 mt-0.5">Elio (Gemini)</p>
+                    <span data-i18n="info.metric_ai_sub" class="text-[11px] text-slate-500 block mt-0.5">Bilingüe ES / EN</span>
+                </div>
+                <div class="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
+                    <span data-i18n="info.metric_privacy_label" class="text-xs text-slate-400 font-medium">Privacidad</span>
+                    <p class="text-lg font-bold text-emerald-500 mt-0.5">100% Local-First</p>
+                    <span data-i18n="info.metric_privacy_sub" class="text-[11px] text-slate-500 block mt-0.5">Base de datos SQLite</span>
+                </div>
+                <div class="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
+                    <span data-i18n="info.metric_install_label" class="text-xs text-slate-400 font-medium">Instalación</span>
+                    <p class="text-lg font-bold text-amber-500 mt-0.5">PWA / Desktop</p>
+                    <span data-i18n="info.metric_install_sub" class="text-[11px] text-slate-500 block mt-0.5">Modo sin conexión</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECCIÓN DE MÓDULOS Y CAPACIDADES -->
+        <section id="modulos" class="space-y-8">
+            <div class="border-b border-slate-200/80 dark:border-slate-800 pb-4">
+                <h2 class="text-2xl font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
+                    <svg class="w-6 h-6 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+                    <span data-i18n="info.modules_title">Módulos y Funcionalidades Principales</span>
+                </h2>
+                <p data-i18n="info.modules_desc" class="text-xs sm:text-sm text-slate-500 mt-1">Conoce todo lo que Senda pone a tu disposición para optimizar tu tiempo diario.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+                <!-- 1. Gestor de Correo Inteligente -->
+                <div class="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-4 hover:border-indigo-400 dark:hover:border-indigo-500/60 transition-all flex flex-col justify-between">
+                    <div class="space-y-3">
+                        <div class="w-12 h-12 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                        </div>
+                        <h3 data-i18n="info.mod_email_title" class="text-base font-bold text-slate-900 dark:text-white">Correo Electrónico Avanzado</h3>
+                        <p data-i18n="info.mod_email_desc" class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                            Cliente de correo completo compatible con Gmail (Google OAuth 2.0), Outlook y servidores IMAP/SMTP estándar.
+                        </p>
+                        <ul class="text-xs text-slate-500 dark:text-slate-400 space-y-1.5 pt-1">
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_email_b1">Bandeja combinada y navegación por carpetas.</span></li>
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_email_b2">Filtros inteligentes: Trabajo, Finanzas, Personal y Boletines.</span></li>
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_email_b3">Firmas personalizadas, etiquetas dinámicas y respuestas rápidas.</span></li>
+                        </ul>
+                    </div>
+                    <div data-i18n="info.mod_email_tag" class="pt-3 border-t border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
+                        Multi-cuenta unificada
+                    </div>
+                </div>
+
+                <!-- 2. Copiloto Autónomo Elio (IA) -->
+                <div class="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-4 hover:border-purple-400 dark:hover:border-purple-500/60 transition-all flex flex-col justify-between">
+                    <div class="space-y-3">
+                        <div class="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        </div>
+                        <h3 data-i18n="info.mod_elio_title" class="text-base font-bold text-slate-900 dark:text-white">Copiloto Elio &amp; Resumen 360°</h3>
+                        <p data-i18n="info.mod_elio_desc" class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                            Inteligencia artificial impulsada por Gemini para redactar, resumir y asistir en la toma de decisiones ejecutivas diarias.
+                        </p>
+                        <ul class="text-xs text-slate-500 dark:text-slate-400 space-y-1.5 pt-1">
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_elio_b1">Pantalla Inicial 360° con métricas de correos, agenda y notas.</span></li>
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_elio_b2">Redacción asistida con adaptación de tono profesional.</span></li>
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_elio_b3">Briefing de voz con síntesis en español de Latinoamérica o inglés.</span></li>
+                        </ul>
+                    </div>
+                    <div data-i18n="info.mod_elio_tag" class="pt-3 border-t border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-purple-600 dark:text-purple-400">
+                        Invocación directa con @elio
+                    </div>
+                </div>
+
+                <!-- 3. Calendario y Tareas Sincronizadas -->
+                <div class="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-4 hover:border-amber-400 dark:hover:border-amber-500/60 transition-all flex flex-col justify-between">
+                    <div class="space-y-3">
+                        <div class="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        </div>
+                        <h3 data-i18n="info.mod_cal_title" class="text-base font-bold text-slate-900 dark:text-white">Agenda, Calendario y Tareas</h3>
+                        <p data-i18n="info.mod_cal_desc" class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                            Organización completa del tiempo con vistas mensual, semanal y diaria, integrado con Google Calendar y Google Tasks.
+                        </p>
+                        <ul class="text-xs text-slate-500 dark:text-slate-400 space-y-1.5 pt-1">
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_cal_b1">Agendamiento con IA desde el cuerpo del correo.</span></li>
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_cal_b2">Detección de compromisos y conversión a tareas con 1 clic.</span></li>
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_cal_b3">Lista interactiva de tareas pendientes en el resumen.</span></li>
+                        </ul>
+                    </div>
+                    <div data-i18n="info.mod_cal_tag" class="pt-3 border-t border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                        Sincronización bidireccional
+                    </div>
+                </div>
+
+                <!-- 4. Pizarra de Notas Adhesivas -->
+                <div class="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-4 hover:border-emerald-400 dark:hover:border-emerald-500/60 transition-all flex flex-col justify-between">
+                    <div class="space-y-3">
+                        <div class="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                        </div>
+                        <h3 data-i18n="info.mod_notes_title" class="text-base font-bold text-slate-900 dark:text-white">Pizarra de Notas Adhesivas</h3>
+                        <p data-i18n="info.mod_notes_desc" class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                            Espacio visual e interactivo de notas tipo post-it para ideas rápidas, recordatorios y compromisos extraídos.
+                        </p>
+                        <ul class="text-xs text-slate-500 dark:text-slate-400 space-y-1.5 pt-1">
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_notes_b1">Paleta de colores temáticos para fácil organización.</span></li>
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_notes_b2">Autoguardado instantáneo sin bordes intrusivos.</span></li>
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_notes_b3">Vista de mini tarjetas integrada en el Resumen 360°.</span></li>
+                        </ul>
+                    </div>
+                    <div data-i18n="info.mod_notes_tag" class="pt-3 border-t border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                        Edición limpia y fluida
+                    </div>
+                </div>
+
+                <!-- 5. Libreta de Contactos Inteligente -->
+                <div class="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-4 hover:border-sky-400 dark:hover:border-sky-500/60 transition-all flex flex-col justify-between">
+                    <div class="space-y-3">
+                        <div class="w-12 h-12 rounded-xl bg-sky-500/10 text-sky-500 flex items-center justify-center">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                        </div>
+                        <h3 data-i18n="info.mod_contacts_title" class="text-base font-bold text-slate-900 dark:text-white">Libreta de Contactos</h3>
+                        <p data-i18n="info.mod_contacts_desc" class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                            Directorio inteligente que aprende de tus interacciones y detecta automáticamente interlocutores frecuentes.
+                        </p>
+                        <ul class="text-xs text-slate-500 dark:text-slate-400 space-y-1.5 pt-1">
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_contacts_b1">Avatares automáticos y vinculación con correos.</span></li>
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_contacts_b2">Confirmación inteligente de nuevos remitentes.</span></li>
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_contacts_b3">Análisis de perfil corporativo y estilo de comunicación.</span></li>
+                        </ul>
+                    </div>
+                    <div data-i18n="info.mod_contacts_tag" class="pt-3 border-t border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-sky-600 dark:text-sky-400">
+                        Historial y contexto directo
+                    </div>
+                </div>
+
+                <!-- 6. Seguridad y Arquitectura Local -->
+                <div class="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-4 hover:border-rose-400 dark:hover:border-rose-500/60 transition-all flex flex-col justify-between">
+                    <div class="space-y-3">
+                        <div class="w-12 h-12 rounded-xl bg-rose-500/10 text-rose-500 flex items-center justify-center">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                        </div>
+                        <h3 data-i18n="info.mod_security_title" class="text-base font-bold text-slate-900 dark:text-white">Privacidad y Rendimiento</h3>
+                        <p data-i18n="info.mod_security_desc" class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                            Tus datos, contraseñas e historial permanecen en tu equipo, bajo almacenamiento local y cifrado robusto.
+                        </p>
+                        <ul class="text-xs text-slate-500 dark:text-slate-400 space-y-1.5 pt-1">
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_security_b1">Cero telemetría externa o minería de datos personales.</span></li>
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_security_b2">Cifrado simétrico Fernet/AES para tokens y credenciales.</span></li>
+                            <li class="flex items-center gap-2"><svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> <span data-i18n="info.mod_security_b3">Recursos visuales y estilos completamente offline.</span></li>
+                        </ul>
+                    </div>
+                    <div data-i18n="info.mod_security_tag" class="pt-3 border-t border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+                        Control total en tu dispositivo
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- SECCIÓN DE CONSEJOS Y ATAJOS -->
+        <section class="p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-pink-500/5 border border-indigo-500/20 space-y-6">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                </div>
+                <div>
+                    <h3 data-i18n="info.tips_title" class="text-base sm:text-lg font-bold text-slate-900 dark:text-white">Consejos para Aprovechar Senda al Máximo</h3>
+                    <p data-i18n="info.tips_desc" class="text-xs text-slate-500">Atajos rápidos y buenas prácticas para tu flujo diario de trabajo.</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                <div class="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 space-y-1.5">
+                    <span data-i18n="info.tip1_tag" class="font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider text-[10px]">Volver al Inicio 360°</span>
+                    <p data-i18n="info.tip1_desc" class="text-slate-600 dark:text-slate-300 leading-relaxed">
+                        Haz clic en el logo o título <strong>Senda</strong> en la barra superior izquierda para regresar en cualquier momento a la pantalla inicial ejecutiva con el resumen de Elio.
+                    </p>
+                </div>
+
+                <div class="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 space-y-1.5">
+                    <span data-i18n="info.tip2_tag" class="font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider text-[10px]">Invocación en el Asistente</span>
+                    <p data-i18n="info.tip2_desc" class="text-slate-600 dark:text-slate-300 leading-relaxed">
+                        Escribe <strong>@elio</strong> en la barra de búsqueda o en el panel de copiloto para redactar borradores, solicitar síntesis de correos o agendar compromisos al instante.
+                    </p>
+                </div>
+
+                <div class="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 space-y-1.5">
+                    <span data-i18n="info.tip3_tag" class="font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider text-[10px]">Compromisos con 1 Clic</span>
+                    <p data-i18n="info.tip3_desc" class="text-slate-600 dark:text-slate-300 leading-relaxed">
+                        Al abrir cualquier correo con tareas o fechas límite, usa los botones directos <strong>[+ Tarea]</strong> o <strong>[+ Nota]</strong> para trasladar los acuerdos sin copiar y pegar.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- PIE DE PÁGINA (FOOTER) -->
+    <footer class="border-t border-slate-200/80 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 py-8 transition-colors">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+            <div class="flex items-center gap-2">
+                <div class="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs">S</div>
+                <span class="font-semibold text-slate-700 dark:text-slate-300">Senda v2.0</span>
+                <span data-i18n="info.footer_subtitle">• Gestor Inteligente de Correo &amp; Agenda</span>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <a href="/" data-i18n="info.footer_inbox" class="hover:text-indigo-600 dark:hover:text-indigo-400 font-semibold transition-colors">Bandeja de Entrada</a>
+                <a href="https://merke.net" target="_blank" rel="noopener noreferrer" data-i18n="info.footer_developed_by" class="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">Desarrollado por Merke</a>
+            </div>
+        </div>
+    </footer>
+
+    <!-- SCRIPT DE TRADUCCIÓN BILINGÜE Y CONTROL DE TEMA -->
+    <script>
+        const infoTranslations = {
+            es: {
+                'page.title': 'Información y Características - Senda',
+                'info.tagline': 'Correo Inteligente & Productividad',
+                'info.open_app': 'Abrir Senda',
+                'info.hero_badge': 'Plataforma Autónoma de Productividad Personal',
+                'info.hero_title_part1': 'El centro de mando que unifica tu',
+                'info.hero_title_highlight': 'correo, agenda y notas',
+                'info.hero_title_part2': 'con IA',
+                'info.hero_desc': '<strong>Senda</strong> es una aplicación integral diseñada para profesionales que necesitan resolver su flujo de trabajo diario sin fricciones. Integra tus cuentas de correo, calendario bidireccional, tareas y notas adhesivas bajo la asistencia inteligente de <strong>Elio</strong>, tu copiloto con Gemini.',
+                'info.btn_inbox': 'Ir a la Bandeja de Entrada',
+                'info.btn_modules': 'Conocer Módulos',
+                'info.metric_accounts_label': 'Multi-cuenta',
+                'info.metric_accounts_sub': 'Bandeja combinada',
+                'info.metric_ai_label': 'Copiloto IA',
+                'info.metric_ai_sub': 'Bilingüe ES / EN',
+                'info.metric_privacy_label': 'Privacidad',
+                'info.metric_privacy_sub': 'Base de datos SQLite',
+                'info.metric_install_label': 'Instalación',
+                'info.metric_install_sub': 'Modo sin conexión',
+                'info.modules_title': 'Módulos y Funcionalidades Principales',
+                'info.modules_desc': 'Conoce todo lo que Senda pone a tu disposición para optimizar tu tiempo diario.',
+                'info.mod_email_title': 'Correo Electrónico Avanzado',
+                'info.mod_email_desc': 'Cliente de correo completo compatible con Gmail (Google OAuth 2.0), Outlook y servidores IMAP/SMTP estándar.',
+                'info.mod_email_b1': 'Bandeja combinada y navegación por carpetas.',
+                'info.mod_email_b2': 'Filtros inteligentes: Trabajo, Finanzas, Personal y Boletines.',
+                'info.mod_email_b3': 'Firmas personalizadas, etiquetas dinámicas y respuestas rápidas.',
+                'info.mod_email_tag': 'Multi-cuenta unificada',
+                'info.mod_elio_title': 'Copiloto Elio & Resumen 360°',
+                'info.mod_elio_desc': 'Inteligencia artificial impulsada por Gemini para redactar, resumir y asistir en la toma de decisiones ejecutivas diarias.',
+                'info.mod_elio_b1': 'Pantalla Inicial 360° con métricas de correos, agenda y notas.',
+                'info.mod_elio_b2': 'Redacción asistida con adaptación de tono profesional.',
+                'info.mod_elio_b3': 'Briefing de voz con síntesis en español de Latinoamérica o inglés.',
+                'info.mod_elio_tag': 'Invocación directa con @elio',
+                'info.mod_cal_title': 'Agenda, Calendario y Tareas',
+                'info.mod_cal_desc': 'Organización completa del tiempo con vistas mensual, semanal y diaria, integrado con Google Calendar y Google Tasks.',
+                'info.mod_cal_b1': 'Agendamiento con IA desde el cuerpo del correo.',
+                'info.mod_cal_b2': 'Detección de compromisos y conversión a tareas con 1 clic.',
+                'info.mod_cal_b3': 'Lista interactiva de tareas pendientes en el resumen.',
+                'info.mod_cal_tag': 'Sincronización bidireccional',
+                'info.mod_notes_title': 'Pizarra de Notas Adhesivas',
+                'info.mod_notes_desc': 'Espacio visual e interactivo de notas tipo post-it para ideas rápidas, recordatorios y compromisos extraídos.',
+                'info.mod_notes_b1': 'Paleta de colores temáticos para fácil organización.',
+                'info.mod_notes_b2': 'Autoguardado instantáneo sin bordes intrusivos.',
+                'info.mod_notes_b3': 'Vista de mini tarjetas integrada en el Resumen 360°. ',
+                'info.mod_notes_tag': 'Edición limpia y fluida',
+                'info.mod_contacts_title': 'Libreta de Contactos',
+                'info.mod_contacts_desc': 'Directorio inteligente que aprende de tus interacciones y detecta automáticamente interlocutores frecuentes.',
+                'info.mod_contacts_b1': 'Avatares automáticos y vinculación con correos.',
+                'info.mod_contacts_b2': 'Confirmación inteligente de nuevos remitentes.',
+                'info.mod_contacts_b3': 'Análisis de perfil corporativo y estilo de comunicación.',
+                'info.mod_contacts_tag': 'Historial y contexto directo',
+                'info.mod_security_title': 'Privacidad y Rendimiento',
+                'info.mod_security_desc': 'Tus datos, contraseñas e historial permanecen en tu equipo, bajo almacenamiento local y cifrado robusto.',
+                'info.mod_security_b1': 'Cero telemetría externa o minería de datos personales.',
+                'info.mod_security_b2': 'Cifrado simétrico Fernet/AES para tokens y credenciales.',
+                'info.mod_security_b3': 'Recursos visuales y estilos completamente offline.',
+                'info.mod_security_tag': 'Control total en tu dispositivo',
+                'info.tips_title': 'Consejos para Aprovechar Senda al Máximo',
+                'info.tips_desc': 'Atajos rápidos y buenas prácticas para tu flujo diario de trabajo.',
+                'info.tip1_tag': 'Volver al Inicio 360°',
+                'info.tip1_desc': 'Haz clic en el logo o título <strong>Senda</strong> en la barra superior izquierda para regresar en cualquier momento a la pantalla inicial ejecutiva con el resumen de Elio.',
+                'info.tip2_tag': 'Invocación en el Asistente',
+                'info.tip2_desc': 'Escribe <strong>@elio</strong> en la barra de búsqueda o en el panel de copiloto para redactar borradores, solicitar síntesis de correos o agendar compromisos al instante.',
+                'info.tip3_tag': 'Compromisos con 1 Clic',
+                'info.tip3_desc': 'Al abrir cualquier correo con tareas o fechas límite, usa los botones directos <strong>[+ Tarea]</strong> o <strong>[+ Nota]</strong> para trasladar los acuerdos sin copiar y pegar.',
+                'info.footer_subtitle': '• Gestor Inteligente de Correo & Agenda',
+                'info.footer_inbox': 'Bandeja de Entrada',
+                'info.footer_developed_by': 'Desarrollado por Merke',
+                'theme.tooltip': 'Cambiar tema',
+                'lang.tooltip': 'Cambiar idioma a Inglés (Switch to English)'
+            },
+            en: {
+                'page.title': 'Information & Features - Senda',
+                'info.tagline': 'Smart Email & Productivity',
+                'info.open_app': 'Open Senda',
+                'info.hero_badge': 'Autonomous Personal Productivity Platform',
+                'info.hero_title_part1': 'The command center uniting your',
+                'info.hero_title_highlight': 'email, calendar, and notes',
+                'info.hero_title_part2': 'with AI',
+                'info.hero_desc': '<strong>Senda</strong> is a comprehensive application designed for professionals who need seamless daily workflows. It integrates your email accounts, two-way calendar, tasks, and sticky notes under the intelligent assistance of <strong>Elio</strong>, your Gemini-powered copilot.',
+                'info.btn_inbox': 'Go to Inbox',
+                'info.btn_modules': 'Explore Modules',
+                'info.metric_accounts_label': 'Multi-account',
+                'info.metric_accounts_sub': 'Combined inbox',
+                'info.metric_ai_label': 'AI Copilot',
+                'info.metric_ai_sub': 'Bilingual EN / ES',
+                'info.metric_privacy_label': 'Privacy',
+                'info.metric_privacy_sub': 'SQLite database',
+                'info.metric_install_label': 'Installation',
+                'info.metric_install_sub': 'Offline mode',
+                'info.modules_title': 'Core Modules & Features',
+                'info.modules_desc': 'Discover everything Senda puts at your disposal to optimize your daily schedule.',
+                'info.mod_email_title': 'Advanced Email Client',
+                'info.mod_email_desc': 'Full-featured email client supporting Gmail (Google OAuth 2.0), Outlook, and standard IMAP/SMTP servers.',
+                'info.mod_email_b1': 'Combined inbox and comprehensive folder navigation.',
+                'info.mod_email_b2': 'Smart filters: Work, Finance, Personal, and Newsletters.',
+                'info.mod_email_b3': 'Custom signatures, dynamic labels, and fast replies.',
+                'info.mod_email_tag': 'Unified multi-account',
+                'info.mod_elio_title': 'Elio Copilot & 360° Overview',
+                'info.mod_elio_desc': 'Artificial intelligence powered by Gemini to compose, summarize, and assist in daily executive decision-making.',
+                'info.mod_elio_b1': '360° Executive Dashboard with email, calendar, and note metrics.',
+                'info.mod_elio_b2': 'Assisted drafting with customizable professional tone.',
+                'info.mod_elio_b3': 'Voice briefing synthesized in English or Latin American Spanish.',
+                'info.mod_elio_tag': 'Direct invocation with @elio',
+                'info.mod_cal_title': 'Schedule, Calendar & Tasks',
+                'info.mod_cal_desc': 'Complete time organization with monthly, weekly, and daily views, integrated with Google Calendar and Google Tasks.',
+                'info.mod_cal_b1': 'AI event scheduling directly from email body content.',
+                'info.mod_cal_b2': 'Commitment detection and 1-click task conversion.',
+                'info.mod_cal_b3': 'Interactive pending tasks checklist in executive summary.',
+                'info.mod_cal_tag': 'Two-way synchronization',
+                'info.mod_notes_title': 'Sticky Notes Board',
+                'info.mod_notes_desc': 'Interactive visual board with post-it notes for quick ideas, reminders, and extracted commitments.',
+                'info.mod_notes_b1': 'Themed color palettes for effortless organization.',
+                'info.mod_notes_b2': 'Instant autosave without intrusive borders.',
+                'info.mod_notes_b3': 'Mini-cards widget integrated into the 360° Overview.',
+                'info.mod_notes_tag': 'Clean and fluid editing',
+                'info.mod_contacts_title': 'Contacts & Address Book',
+                'info.mod_contacts_desc': 'Smart address book that learns from your interactions and automatically highlights frequent contacts.',
+                'info.mod_contacts_b1': 'Automatic avatars and deep email linkage.',
+                'info.mod_contacts_b2': 'Smart confirmation for new email senders.',
+                'info.mod_contacts_b3': 'Corporate profile and communication style analysis.',
+                'info.mod_contacts_tag': 'Direct history and context',
+                'info.mod_security_title': 'Privacy & Performance',
+                'info.mod_security_desc': 'Your data, passwords, and history remain strictly on your machine under robust local storage and encryption.',
+                'info.mod_security_b1': 'Zero external telemetry or personal data harvesting.',
+                'info.mod_security_b2': 'Fernet/AES symmetric encryption for tokens and credentials.',
+                'info.mod_security_b3': 'Fully offline visual resources and stylesheet assets.',
+                'info.mod_security_tag': 'Full control on your device',
+                'info.tips_title': 'Tips to Get the Most Out of Senda',
+                'info.tips_desc': 'Quick shortcuts and best practices for your daily productivity workflow.',
+                'info.tip1_tag': 'Return to 360° Overview',
+                'info.tip1_desc': 'Click the <strong>Senda</strong> logo or brand title on the top left to return at any time to the executive home dashboard with Elio summary.',
+                'info.tip2_tag': 'Invoking the Assistant',
+                'info.tip2_desc': 'Type <strong>@elio</strong> into the search bar or copilot panel to draft replies, request email summaries, or schedule events instantly.',
+                'info.tip3_tag': '1-Click Commitments',
+                'info.tip3_desc': 'When viewing any email containing deadlines or tasks, use the direct <strong>[+ Task]</strong> or <strong>[+ Note]</strong> buttons to transfer agreements without copy-pasting.',
+                'info.footer_subtitle': '• Smart Email & Calendar Manager',
+                'info.footer_inbox': 'Inbox',
+                'info.footer_developed_by': 'Developed by Merke',
+                'theme.tooltip': 'Toggle theme',
+                'lang.tooltip': 'Switch language to Spanish (Cambiar a Español)'
+            }
+        };
+
+        let currentLang = localStorage.getItem('senda_lang') || 'es';
+
+        function applyLanguage(lang) {
+            currentLang = (lang === 'en') ? 'en' : 'es';
+            localStorage.setItem('senda_lang', currentLang);
+            document.documentElement.lang = currentLang;
+
+            const dict = infoTranslations[currentLang] || infoTranslations.es;
+
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (dict[key]) {
+                    el.innerHTML = dict[key];
+                }
+            });
+
+            const pageTitle = document.getElementById('page-title');
+            if (pageTitle && dict['page.title']) pageTitle.textContent = dict['page.title'];
+
+            const langLabel = document.getElementById('lang-label');
+            if (langLabel) langLabel.textContent = currentLang.toUpperCase();
+
+            const langBtn = document.getElementById('btn-lang-toggle');
+            if (langBtn && dict['lang.tooltip']) langBtn.title = dict['lang.tooltip'];
+
+            const themeBtn = document.getElementById('btn-theme-toggle');
+            if (themeBtn && dict['theme.tooltip']) themeBtn.title = dict['theme.tooltip'];
+        }
+
+        function toggleLanguage() {
+            const nextLang = currentLang === 'es' ? 'en' : 'es';
+            applyLanguage(nextLang);
+        }
+
+        function toggleTheme() {
+            var isDark = document.documentElement.classList.contains('dark');
+            if (isDark) {
+                document.documentElement.classList.remove('dark');
+                localStorage.setItem('theme', 'light');
+            } else {
+                document.documentElement.classList.add('dark');
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            applyLanguage(currentLang);
+        });
+    </script>
+</body>
+</html>

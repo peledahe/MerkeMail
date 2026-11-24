@@ -1,4 +1,4 @@
-// Módulo de Calendario Unificado (Google + Proton) - MerkeMail
+// Módulo de Calendario Unificado (Google + Proton) - Senda
 // Soporte para Vistas: Mes, Semana y Día (horas), Drawer lateral de detalle con links externos,
 // Gestión de Calendario Predeterminado, Sección de Tareas sin Fecha (Tasks),
 // Colores de Calendario y Cuenta en Eventos/Tareas, y Control de Desbordamiento con Contador (+N más).
@@ -94,9 +94,9 @@ const CalendarManager = {
         if (this.isSyncing) return;
         this.isSyncing = true;
 
-        const icon = btnEl ? btnEl.querySelector('svg') : document.querySelector('#btn-sync-calendars svg');
+        const syncIcons = document.querySelectorAll('#btn-sync-calendars svg, #btn-sync-calendars-drawer svg, #btn-global-sync svg, #btn-sync-other-apps svg');
+        syncIcons.forEach(ic => ic.classList.add('animate-spin'));
         if (btnEl) btnEl.disabled = true;
-        if (icon) icon.classList.add('animate-spin');
 
         try {
             const controller = new AbortController();
@@ -109,34 +109,52 @@ const CalendarManager = {
 
             clearTimeout(timeoutId);
 
+            // Siempre recargar estado local de calendarios y tareas
+            await this.loadCalendars();
+            await this.loadEvents();
+            await this.loadTasks();
+            this.updateActiveCountBadge();
+            this.renderCalendar();
+            this.renderCurrentView();
+            this.renderUpcomingList();
+            this.renderTasks();
+
+            const drawerCal = document.getElementById('drawer-calendars');
+            if (drawerCal && !drawerCal.classList.contains('hidden')) {
+                this.renderCalendarsDrawer();
+            }
+
             if (res.api_disabled) {
                 this.showApiDisabledWarning(res.enable_url);
                 if (window.UI && typeof UI.showStickyToast === 'function') {
                     UI.showStickyToast(
                         'Google Calendar API Deshabilitada',
                         'Debes habilitar la Google Calendar API en Google Cloud Console para sincronizar tus actividades.',
-                        'warning'
+                        'warning',
+                        5000
+                    );
+                }
+            } else if (res.needs_reauth) {
+                if (window.UI && typeof UI.showStickyToast === 'function') {
+                    UI.showStickyToast(
+                        'Reconexión Requerida',
+                        'La sesión con Google expiró. Reconecta tu cuenta en Cuentas para sincronizar con la nube.',
+                        'warning',
+                        5000
                     );
                 }
             } else if (res.success) {
                 this.hideApiDisabledWarning();
-                await this.loadCalendars();
-                await this.loadEvents();
-                await this.loadTasks();
-                this.renderCurrentView();
-                this.renderUpcomingList();
-                this.renderTasks();
                 if (window.UI && typeof UI.showStickyToast === 'function') {
                     UI.showStickyToast('Calendario Sincronizado', 'Todos tus calendarios y eventos han sido actualizados.', 'success', 3000);
                 }
             } else {
                 if (window.UI && typeof UI.showStickyToast === 'function') {
-                    UI.showStickyToast('Aviso de Sincronización', res.error || 'No se pudieron sincronizar los calendarios.', 'warning', 3000);
+                    UI.showStickyToast('Aviso de Sincronización', res.error || res.message || 'No se pudieron sincronizar los calendarios.', 'warning', 3000);
                 }
             }
         } catch (e) {
             console.warn('Aviso durante sincronización de calendario:', e);
-            // Si la llamada fue cancelada por timeout o se ejecuta en segundo plano, refrescar datos locales sin alarmar
             if (window.UI && typeof UI.showStickyToast === 'function') {
                 UI.showStickyToast('Sincronización en Proceso', 'La sincronización continúa ejecutándose en segundo plano.', 'info', 3000);
             }
@@ -144,6 +162,8 @@ const CalendarManager = {
                 await this.loadCalendars();
                 await this.loadEvents();
                 await this.loadTasks();
+                this.updateActiveCountBadge();
+                this.renderCalendar();
                 this.renderCurrentView();
                 this.renderUpcomingList();
                 this.renderTasks();
@@ -151,9 +171,9 @@ const CalendarManager = {
         } finally {
             this.isSyncing = false;
             if (btnEl) btnEl.disabled = false;
-            if (icon) {
-                setTimeout(() => icon.classList.remove('animate-spin'), 600);
-            }
+            setTimeout(() => {
+                syncIcons.forEach(ic => ic.classList.remove('animate-spin'));
+            }, 600);
         }
     },
 
@@ -436,6 +456,9 @@ const CalendarManager = {
             this.events = await res.json();
             this.renderCalendar();
             this.renderUpcomingList();
+            if (window.NotificationManager && typeof NotificationManager.checkUpcomingEvents === 'function') {
+                NotificationManager.checkUpcomingEvents();
+            }
         } catch (e) {
             console.error("Error cargando eventos:", e);
         }
@@ -507,6 +530,31 @@ const CalendarManager = {
         this.navigate(1);
     },
 
+    getMonthNames() {
+        return (window.I18n && I18n.currentLang === 'en')
+            ? ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+            : ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+    },
+
+    getDayNamesShort() {
+        return (window.I18n && I18n.currentLang === 'en')
+            ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            : ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+    },
+
+    getDayNamesFull() {
+        return (window.I18n && I18n.currentLang === 'en')
+            ? ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+            : ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+    },
+
+    formatDateTitle(dayName, date, monthName, year) {
+        if (window.I18n && I18n.currentLang === 'en') {
+            return `${dayName}, ${monthName} ${date}, ${year}`;
+        }
+        return `${dayName}, ${date} de ${monthName} de ${year}`;
+    },
+
     renderCalendar() {
         const container = document.getElementById('calendar-view-container');
         if (!container) return;
@@ -525,7 +573,7 @@ const CalendarManager = {
         const year = this.currentDate.getFullYear();
         const month = this.currentDate.getMonth();
 
-        const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+        const monthNames = this.getMonthNames();
         if (monthYearTitle) {
             monthYearTitle.textContent = `${monthNames[month]} ${year}`;
         }
@@ -611,8 +659,8 @@ const CalendarManager = {
 
     renderWeekView(container) {
         const monthYearTitle = document.getElementById('calendar-month-year');
-        const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-        const dayNamesShort = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+        const monthNames = this.getMonthNames();
+        const dayNamesShort = this.getDayNamesShort();
 
         // Calcular el Lunes de la semana
         const curr = new Date(this.currentDate);
@@ -631,10 +679,15 @@ const CalendarManager = {
         const sunday = weekDays[6];
 
         if (monthYearTitle) {
+            const isEn = window.I18n && I18n.currentLang === 'en';
             if (monday.getMonth() === sunday.getMonth()) {
-                monthYearTitle.textContent = `${monday.getDate()} - ${sunday.getDate()} de ${monthNames[monday.getMonth()]} ${monday.getFullYear()}`;
+                monthYearTitle.textContent = isEn
+                    ? `${monthNames[monday.getMonth()]} ${monday.getDate()} - ${sunday.getDate()}, ${monday.getFullYear()}`
+                    : `${monday.getDate()} - ${sunday.getDate()} de ${monthNames[monday.getMonth()]} ${monday.getFullYear()}`;
             } else {
-                monthYearTitle.textContent = `${monday.getDate()} ${monthNames[monday.getMonth()].slice(0,3)} - ${sunday.getDate()} ${monthNames[sunday.getMonth()].slice(0,3)} ${sunday.getFullYear()}`;
+                monthYearTitle.textContent = isEn
+                    ? `${monthNames[monday.getMonth()].slice(0,3)} ${monday.getDate()} - ${monthNames[sunday.getMonth()].slice(0,3)} ${sunday.getDate()}, ${sunday.getFullYear()}`
+                    : `${monday.getDate()} ${monthNames[monday.getMonth()].slice(0,3)} - ${sunday.getDate()} ${monthNames[sunday.getMonth()].slice(0,3)} ${sunday.getFullYear()}`;
             }
         }
 
@@ -735,8 +788,8 @@ const CalendarManager = {
 
     renderDayView(container) {
         const monthYearTitle = document.getElementById('calendar-month-year');
-        const monthNames = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
-        const dayNamesFull = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+        const monthNames = this.getMonthNames();
+        const dayNamesFull = this.getDayNamesFull();
 
         const curr = new Date(this.currentDate);
         const year = curr.getFullYear();
@@ -746,7 +799,7 @@ const CalendarManager = {
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(date).padStart(2, '0')}`;
 
         if (monthYearTitle) {
-            monthYearTitle.textContent = `${dayName}, ${date} de ${monthNames[month]} de ${year}`;
+            monthYearTitle.textContent = this.formatDateTitle(dayName, date, monthNames[month], year);
         }
 
         const today = new Date();
@@ -792,8 +845,8 @@ const CalendarManager = {
                                         <span class="text-xs px-2 py-0.5 rounded-lg bg-black/10 dark:bg-white/10 font-mono font-bold shrink-0">${timeStart}${timeEnd ? ' - ' + timeEnd : ''}</span>
                                     </div>
                                     <div class="flex items-center gap-3 text-xs opacity-90 flex-wrap">
-                                        <span class="flex items-center gap-1">📅 ${ev.account_name || ev.calendar_name || 'Calendario'}</span>
-                                        ${ev.location ? `<span class="truncate flex items-center gap-1">📍 ${ev.location}</span>` : ''}
+                                        <span class="flex items-center gap-1.5"><svg class="w-3.5 h-3.5 opacity-80 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg> <span>${ev.account_name || ev.calendar_name || 'Calendario'}</span></span>
+                                        ${ev.location ? `<span class="truncate flex items-center gap-1.5"><svg class="w-3.5 h-3.5 opacity-80 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg> <span>${ev.location}</span></span>` : ''}
                                     </div>
                                     ${ev.description ? `<p class="text-[11px] opacity-80 line-clamp-1 mt-1">${ev.description}</p>` : ''}
                                 </div>
@@ -813,15 +866,15 @@ const CalendarManager = {
                     </div>
                     <div>
                         <div class="flex items-center gap-2">
-                            <h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white capitalize">${dayName}, ${date} de ${monthNames[month]} de ${year}</h2>
-                            ${isToday ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">Hoy</span>' : ''}
+                            <h2 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white capitalize">${this.formatDateTitle(dayName, date, monthNames[month], year)}</h2>
+                            ${isToday ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">${window.I18n ? I18n.t('cal.today') : 'Hoy'}</span>` : ''}
                         </div>
-                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${dayEvents.length} ${dayEvents.length === 1 ? 'evento programado' : 'eventos programados'}</p>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${dayEvents.length} ${window.I18n && I18n.currentLang === 'en' ? (dayEvents.length === 1 ? 'scheduled event' : 'scheduled events') : (dayEvents.length === 1 ? 'evento programado' : 'eventos programados')}</p>
                     </div>
                 </div>
                 <button onclick="CalendarManager.openNewEventModal('${dateStr}')" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs hover:shadow-md transition-all flex items-center gap-1.5 cursor-pointer">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                    <span>Nuevo Evento en este día</span>
+                    <span>${window.I18n && I18n.currentLang === 'en' ? 'New Event on this day' : 'Nuevo Evento en este día'}</span>
                 </button>
             </div>
             <div class="flex-1 overflow-y-auto">
@@ -841,17 +894,17 @@ const CalendarManager = {
 
         const dateParts = dateStr.split('-');
         const dateObj = new Date(parseInt(dateParts[0], 10), parseInt(dateParts[1], 10) - 1, parseInt(dateParts[2], 10));
-        const dayNamesFull = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
-        const monthNames = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+        const dayNamesFull = this.getDayNamesFull();
+        const monthNames = this.getMonthNames();
 
-        const formattedDate = `${dayNamesFull[dateObj.getDay()]}, ${dateObj.getDate()} de ${monthNames[dateObj.getMonth()]} de ${dateObj.getFullYear()}`;
-        if (titleEl) titleEl.textContent = `Eventos y Tareas`;
+        const formattedDate = this.formatDateTitle(dayNamesFull[dateObj.getDay()], dateObj.getDate(), monthNames[dateObj.getMonth()], dateObj.getFullYear());
+        if (titleEl) titleEl.textContent = window.I18n && I18n.currentLang === 'en' ? `Events & Tasks` : `Eventos y Tareas`;
         if (subtitleEl) subtitleEl.textContent = formattedDate;
 
         const dayEvents = this.getFilteredEvents().filter(e => e.start_time && e.start_time.startsWith(dateStr));
 
         if (dayEvents.length === 0) {
-            listEl.innerHTML = `<p class="text-xs text-slate-400 text-center py-6">No hay eventos ni tareas registradas para este día.</p>`;
+            listEl.innerHTML = `<p class="text-xs text-slate-400 text-center py-6">${window.I18n && I18n.currentLang === 'en' ? 'No events or tasks recorded for this day.' : 'No hay eventos ni tareas registradas para este día.'}</p>`;
         } else {
             listEl.innerHTML = dayEvents.map(ev => {
                 const color = this.getEventColor(ev);
@@ -860,7 +913,7 @@ const CalendarManager = {
                 const timeText = startTime ? (endTime ? `${startTime} - ${endTime}` : startTime) : 'Todo el día';
 
                 return `
-                    <div onclick="CalendarManager.viewEventDetail(${ev.id}); document.getElementById('modal-day-events').classList.add('hidden');" class="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850/60 hover:border-indigo-400 dark:hover:border-indigo-600 cursor-pointer transition-all flex items-start justify-between gap-3 group">
+                    <div onclick="CalendarManager.viewEventDetail(${ev.id})" class="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850/60 hover:border-indigo-400 dark:hover:border-indigo-600 cursor-pointer transition-all flex items-start justify-between gap-3 group">
                         <div class="flex items-start gap-2.5 min-w-0">
                             <span class="w-3 h-3 rounded-full mt-1 shrink-0 shadow-2xs" style="background-color: ${color}"></span>
                             <div class="min-w-0">
@@ -871,10 +924,10 @@ const CalendarManager = {
                                     <span>${ev.calendar_name || 'Calendario'}</span>
                                     ${ev.account_name ? `<span class="inline-flex items-center gap-1 font-semibold text-[10px] text-slate-400"><span class="w-1.5 h-1.5 rounded-full" style="background-color: ${ev.account_color || color}"></span>${ev.account_name}</span>` : ''}
                                 </div>
-                                ${ev.location ? `<p class="text-[10px] text-slate-400 truncate mt-1">📍 ${ev.location}</p>` : ''}
+                                ${ev.location ? `<p class="text-[10px] text-slate-400 truncate mt-1 flex items-center gap-1"><svg class="w-3 h-3 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg><span>${ev.location}</span></p>` : ''}
                             </div>
                         </div>
-                        <button onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id}); document.getElementById('modal-day-events').classList.add('hidden');" class="text-xs text-indigo-600 dark:text-indigo-400 font-semibold hover:underline shrink-0 p-1 cursor-pointer">
+                        <button type="button" onclick="event.stopPropagation(); CalendarManager.viewEventDetail(${ev.id});" class="text-xs text-indigo-600 dark:text-indigo-400 font-semibold hover:underline shrink-0 p-1 cursor-pointer">
                             Ver detalle &rarr;
                         </button>
                     </div>
@@ -919,7 +972,7 @@ const CalendarManager = {
                         <div class="min-w-0">
                             <h5 class="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">${ev.title}</h5>
                             <p class="text-[11px] text-slate-500 dark:text-slate-400">${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} &bull; ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                            ${ev.location ? `<p class="text-[10px] text-slate-400 truncate mt-0.5">📍 ${ev.location}</p>` : ''}
+                            ${ev.location ? `<p class="text-[10px] text-slate-400 truncate mt-0.5 flex items-center gap-1"><svg class="w-3 h-3 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg><span>${ev.location}</span></p>` : ''}
                         </div>
                     </div>
                     <button onclick="event.stopPropagation(); CalendarManager.deleteEvent(${ev.id})" class="text-slate-400 hover:text-rose-500 p-1 transition-colors shrink-0 cursor-pointer" title="Eliminar evento">
@@ -1260,9 +1313,10 @@ const CalendarManager = {
 
         if (editEvent) {
             // Modo Edición
+            const isEn = window.I18n && window.I18n.currentLang === 'en';
             if (editIdInput) editIdInput.value = editEvent.id;
-            if (modalTitle) modalTitle.textContent = editEvent.is_task ? 'Editar Tarea' : 'Editar Evento / Cita';
-            if (submitBtn) submitBtn.textContent = 'Actualizar Cambios';
+            if (modalTitle) modalTitle.textContent = editEvent.is_task ? (isEn ? 'Edit Task' : 'Editar Tarea') : (isEn ? 'Edit Event / Appointment' : 'Editar Evento / Cita');
+            if (submitBtn) submitBtn.textContent = isEn ? 'Update Changes' : 'Actualizar Cambios';
             if (titleInput) titleInput.value = (editEvent.title || '').replace(/^\[Tarea\]\s*/i, '');
 
             const isAllDay = !!editEvent.all_day;
@@ -1386,12 +1440,14 @@ const CalendarManager = {
 
         if (inputType) inputType.value = type;
 
+        const isEn = window.I18n && window.I18n.currentLang === 'en';
+
         if (type === 'task') {
             if (btnTask) btnTask.className = 'py-1.5 px-3 rounded-lg bg-indigo-600 text-white font-semibold shadow-2xs transition-all text-center cursor-pointer';
             if (btnEvent) btnEvent.className = 'py-1.5 px-3 rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-all text-center cursor-pointer';
-            if (modalTitle) modalTitle.textContent = editId ? 'Editar Tarea' : 'Crear Tarea / Pendiente';
-            if (titleInput) titleInput.placeholder = 'Entregar reporte, revisar contrato...';
-            if (submitBtn) submitBtn.textContent = editId ? 'Actualizar Tarea' : 'Guardar Tarea';
+            if (modalTitle) modalTitle.textContent = editId ? (isEn ? 'Edit Task' : 'Editar Tarea') : (isEn ? 'Create Task / To-do' : 'Crear Tarea / Pendiente');
+            if (titleInput) titleInput.placeholder = isEn ? 'Submit report, review contract...' : 'Entregar reporte, revisar contrato...';
+            if (submitBtn) submitBtn.textContent = editId ? (isEn ? 'Update Task' : 'Actualizar Tarea') : (isEn ? 'Save Task' : 'Guardar Tarea');
 
             // Al crear una tarea nueva, iniciar sin fecha ni hora obligatoria
             if (!editId) {
@@ -1403,9 +1459,9 @@ const CalendarManager = {
         } else {
             if (btnEvent) btnEvent.className = 'py-1.5 px-3 rounded-lg bg-indigo-600 text-white font-semibold shadow-2xs transition-all text-center cursor-pointer';
             if (btnTask) btnTask.className = 'py-1.5 px-3 rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-all text-center cursor-pointer';
-            if (modalTitle) modalTitle.textContent = editId ? 'Editar Evento / Cita' : 'Programar Evento / Cita';
-            if (titleInput) titleInput.placeholder = 'Añade un título para la reunión o cita...';
-            if (submitBtn) submitBtn.textContent = editId ? 'Actualizar Cita' : 'Guardar Cita';
+            if (modalTitle) modalTitle.textContent = editId ? (isEn ? 'Edit Event / Appointment' : 'Editar Evento / Cita') : (isEn ? 'Schedule Event / Appointment' : 'Programar Evento / Cita');
+            if (titleInput) titleInput.placeholder = isEn ? 'Add a title for the meeting or appointment...' : 'Añade un título para la reunión o cita...';
+            if (submitBtn) submitBtn.textContent = editId ? (isEn ? 'Update Event' : 'Actualizar Cita') : (isEn ? 'Save Event' : 'Guardar Cita');
 
             // En Eventos / Citas: asegurar que tenga fecha y hora normal si estaban vacíos
             const fallbackDate = this.lastDefaultEventDate || new Date().toISOString().split('T')[0];
@@ -1597,7 +1653,10 @@ const CalendarManager = {
         const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(trimmed)}`;
         return `
             <div class="space-y-1.5">
-                <p class="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium">📍 ${trimmed}</p>
+                <p class="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <span>${trimmed}</span>
+                </p>
                 <button type="button" onclick="event.preventDefault(); event.stopPropagation(); CalendarManager.openExternal('${mapsUrl}');" class="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                     <span>Ver en Google Maps</span>
@@ -1607,24 +1666,24 @@ const CalendarManager = {
     },
 
     formatEventDateTime(startTimeStr, endTimeStr, allDay = 0) {
-        if (!startTimeStr) return { dateStr: 'Sin fecha asignada (Tarea pendiente)', timeStr: '', durationStr: '' };
+        if (!startTimeStr) return { dateStr: window.I18n && I18n.currentLang === 'en' ? 'No date assigned (Pending task)' : 'Sin fecha asignada (Tarea pendiente)', timeStr: '', durationStr: '' };
         const start = new Date(startTimeStr);
         const end = endTimeStr ? new Date(endTimeStr) : null;
 
-        const dayNames = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
-        const monthNames = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+        const dayNames = this.getDayNamesFull();
+        const monthNames = this.getMonthNames();
 
         const dayOfWeek = dayNames[start.getDay()];
         const dayOfMonth = start.getDate();
         const month = monthNames[start.getMonth()];
         const year = start.getFullYear();
 
-        const dateStr = `${dayOfWeek}, ${dayOfMonth} de ${month} de ${year}`;
+        const dateStr = this.formatDateTitle(dayOfWeek, dayOfMonth, month, year);
         let timeStr = '';
         let durationStr = '';
 
         if (allDay) {
-            timeStr = 'Todo el día';
+            timeStr = window.I18n ? I18n.t('cal.all_day') : 'Todo el día';
         } else {
             const startHour = start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             if (end && !isNaN(end.getTime()) && end.getTime() !== start.getTime()) {
@@ -1650,206 +1709,237 @@ const CalendarManager = {
         return { dateStr, timeStr, durationStr };
     },
 
-    viewEventDetail(eventId) {
-        const ev = this.events.find(e => e.id === eventId) || this.tasks.find(t => t.id === eventId);
-        if (!ev) return;
-
-        // Si la cita tiene fecha válida, enfocar la vista actual en esa fecha
-        if (ev.start_time) {
-            const evDate = new Date(ev.start_time);
-            if (!isNaN(evDate.getTime())) {
-                this.currentDate = new Date(evDate);
-                this.renderCalendar();
-            }
+    async viewEventDetail(eventId) {
+        // Cerrar modal de día si estuviese abierto
+        const dayModal = document.getElementById('modal-day-events');
+        if (dayModal) {
+            dayModal.classList.add('hidden');
         }
 
-        // Título
-        const titleEl = document.getElementById('event-detail-title');
-        if (titleEl) titleEl.textContent = ev.title || '(Sin título)';
-
-        // Calendario y color
-        const calNameEl = document.getElementById('event-detail-calendar-name');
-        const badgeColorEl = document.getElementById('event-detail-badge-color');
-        const color = this.getEventColor(ev);
-        if (calNameEl) {
-            let nameStr = `${ev.calendar_name || 'Calendario'}`;
-            if (ev.account_name) nameStr += ` (${ev.account_name})`;
-            calNameEl.textContent = nameStr;
-        }
-        if (badgeColorEl) badgeColorEl.style.backgroundColor = color;
-
-        // Fecha, Hora y Duración
-        const dateInfo = this.formatEventDateTime(ev.start_time, ev.end_time, ev.all_day);
-        const dateEl = document.getElementById('event-detail-date');
-        const timeEl = document.getElementById('event-detail-time');
-        const durEl = document.getElementById('event-detail-duration');
-
-        if (dateEl) dateEl.textContent = dateInfo.dateStr;
-        if (timeEl) {
-            timeEl.textContent = dateInfo.timeStr;
-            timeEl.style.display = dateInfo.timeStr ? 'block' : 'none';
-        }
-        if (durEl) {
-            durEl.textContent = dateInfo.durationStr ? `⏱ Duración: ${dateInfo.durationStr}` : '';
-            durEl.style.display = dateInfo.durationStr ? 'block' : 'none';
-        }
-
-        // Ubicación / Videollamada
-        const recBadge = document.getElementById('event-detail-recurrence-badge');
-        const recLabels = {
-            'daily': '🔁 Todos los días',
-            'weekly': '🔁 Cada semana',
-            'monthly': '🔁 Cada mes',
-            'yearly': '🔁 Anualmente',
-            'weekdays': '🔁 Días laborables'
-        };
-        if (recBadge) {
-            if (ev.recurrence && recLabels[ev.recurrence]) {
-                recBadge.textContent = recLabels[ev.recurrence];
-                recBadge.classList.remove('hidden');
-            } else {
-                recBadge.classList.add('hidden');
-            }
-        }
-
-        // Videoconferencia Google Meet
-        const meetContainer = document.getElementById('event-detail-meeting-container');
-        const joinMeetBtn = document.getElementById('btn-event-detail-join-meet');
-        const copyMeetBtn = document.getElementById('btn-event-detail-copy-meet');
-        const meetText = document.getElementById('event-detail-meeting-url-text');
-        if (meetContainer) {
-            if (ev.meeting_url && ev.meeting_url.trim().length > 0) {
-                const url = ev.meeting_url.trim();
-                meetContainer.classList.remove('hidden');
-                if (joinMeetBtn) {
-                    joinMeetBtn.onclick = (e) => {
-                        e.preventDefault();
-                        CalendarManager.openExternal(url);
-                    };
-                }
-                if (meetText) meetText.textContent = url;
-                if (copyMeetBtn) {
-                    copyMeetBtn.onclick = () => {
-                        navigator.clipboard.writeText(url);
-                        UI.showStickyToast('Enlace Copiado', 'Se copió el enlace al portapapeles', 'info', 2000);
-                    };
-                }
-            } else {
-                meetContainer.classList.add('hidden');
-            }
-        }
-
-        // Ubicación / Direcciones (con URLs clickeables que abren en el navegador predeterminado)
-        const locContainer = document.getElementById('event-detail-location-container');
-        const locContent = document.getElementById('event-detail-location-content');
-        if (locContainer && locContent) {
-            if (ev.location && ev.location.trim().length > 0) {
-                locContent.innerHTML = this.formatLocationHtml(ev.location);
-                locContainer.classList.remove('hidden');
-            } else {
-                locContainer.classList.add('hidden');
-                locContent.innerHTML = '';
-            }
-        }
-
-        // Asistentes / Invitados
-        const attContainer = document.getElementById('event-detail-attendees-container');
-        const attList = document.getElementById('event-detail-attendees-list');
-        const attCount = document.getElementById('event-detail-attendees-count');
-        if (attContainer && attList) {
-            const attendees = ev.attendees ? ev.attendees.split(',').map(s => s.trim()).filter(Boolean) : [];
-            if (attendees.length > 0) {
-                attContainer.classList.remove('hidden');
-                if (attCount) attCount.textContent = `Invitados (${attendees.length})`;
-                attList.innerHTML = attendees.map(a => `
-                    <div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200">
-                        <div class="w-6 h-6 rounded-full bg-indigo-500 text-white flex items-center justify-center font-bold text-[10px] shrink-0 uppercase">
-                            ${a.charAt(0)}
-                        </div>
-                        <span class="truncate font-medium">${a}</span>
-                    </div>
-                `).join('');
-            } else {
-                attContainer.classList.add('hidden');
-                attList.innerHTML = '';
-            }
-        }
-
-        // Recordatorio, Disponibilidad y Visibilidad
-        const notifText = document.getElementById('event-detail-notification-text');
-        const notifMap = {
-            '0': 'Sin recordatorio',
-            '10': '10 min antes',
-            '15': '15 min antes',
-            '30': '30 min antes',
-            '60': '1 hora antes',
-            '1440': '1 día antes'
-        };
-        if (notifText) {
-            const mins = ev.notification_minutes !== undefined ? String(ev.notification_minutes) : '10';
-            notifText.textContent = notifMap[mins] || `${mins} min antes`;
-        }
-
-        const availBadge = document.getElementById('event-detail-availability-badge');
-        if (availBadge) {
-            availBadge.textContent = ev.availability === 'free' ? 'Disponible' : 'Ocupado';
-        }
-
-        const visBadge = document.getElementById('event-detail-visibility-badge');
-        const visMap = {
-            'default': 'Predeterminada',
-            'public': 'Pública',
-            'private': 'Privada'
-        };
-        if (visBadge) {
-            visBadge.textContent = visMap[ev.visibility] || 'Predeterminada';
-        }
-
-        // Descripción con URLs convertidas en enlaces seguros
-        const descEl = document.getElementById('event-detail-description');
-        if (descEl) {
-            if (ev.description && ev.description.trim().length > 0) {
-                descEl.innerHTML = this.linkifyText(ev.description);
-            } else {
-                descEl.innerHTML = '<span class="text-slate-400 dark:text-slate-500 italic">Sin notas ni descripción adicional</span>';
-            }
-        }
-
-        // Correo de origen
-        const originContainer = document.getElementById('event-detail-origin-container');
-        const btnOrigin = document.getElementById('btn-event-detail-origin');
-        if (originContainer && btnOrigin) {
-            if (ev.origin_email_id) {
-                originContainer.classList.remove('hidden');
-                btnOrigin.onclick = () => {
-                    UI.closeDrawer('drawer-event-detail');
-                    if (window.EmailManager && typeof EmailManager.openEmailDetail === 'function') {
-                        if (typeof UI.switchMainTab === 'function') {
-                            UI.switchMainTab('emails');
-                        }
-                        EmailManager.openEmailDetail(ev.origin_email_id);
+        let ev = (this.events || []).find(e => e.id == eventId) || (this.tasks || []).find(t => t.id == eventId);
+        if (!ev) {
+            try {
+                const res = await fetch(`/api/events/${eventId}`);
+                if (res.ok) {
+                    ev = await res.json();
+                } else {
+                    const taskRes = await fetch(`/api/tasks`);
+                    if (taskRes.ok) {
+                        const tasks = await taskRes.json();
+                        ev = (tasks || []).find(t => t.id == eventId);
                     }
-                };
-            } else {
-                originContainer.classList.add('hidden');
-                btnOrigin.onclick = null;
+                }
+            } catch (err) {
+                console.error("Error al obtener detalle del evento:", err);
             }
         }
 
-        // Botón editar dentro del detalle
-        const btnEdit = document.getElementById('btn-edit-event-from-detail');
-        if (btnEdit) {
-            btnEdit.onclick = () => {
-                this.openEditEventModal(ev.id);
-            };
+        if (!ev) {
+            if (window.UI && typeof UI.showStickyToast === 'function') {
+                UI.showStickyToast('Evento no encontrado', 'No se pudo cargar la información de la cita.', 'warning');
+            }
+            return;
         }
 
-        // Botón eliminar dentro del detalle
-        const btnDelete = document.getElementById('btn-delete-event-from-detail');
-        if (btnDelete) {
-            btnDelete.onclick = async () => {
-                await this.deleteEvent(ev.id);
+        try {
+            // Actualizar fecha actual sin causar un re-render destructivo
+            if (ev.start_time) {
+                const evDate = new Date(ev.start_time);
+                if (!isNaN(evDate.getTime())) {
+                    this.currentDate = new Date(evDate);
+                }
+            }
+
+            // Título
+            const titleEl = document.getElementById('event-detail-title');
+            if (titleEl) titleEl.textContent = ev.title || '(Sin título)';
+
+            // Calendario y color
+            const calNameEl = document.getElementById('event-detail-calendar-name');
+            const badgeColorEl = document.getElementById('event-detail-badge-color');
+            const color = this.getEventColor(ev);
+            if (calNameEl) {
+                let nameStr = `${ev.calendar_name || 'Calendario'}`;
+                if (ev.account_name) nameStr += ` (${ev.account_name})`;
+                calNameEl.textContent = nameStr;
+            }
+            if (badgeColorEl) badgeColorEl.style.backgroundColor = color;
+
+            // Fecha, Hora y Duración
+            const dateInfo = this.formatEventDateTime(ev.start_time, ev.end_time, ev.all_day);
+            const dateEl = document.getElementById('event-detail-date');
+            const timeEl = document.getElementById('event-detail-time');
+            const durEl = document.getElementById('event-detail-duration');
+
+            if (dateEl) dateEl.textContent = dateInfo.dateStr;
+            if (timeEl) {
+                timeEl.textContent = dateInfo.timeStr;
+                timeEl.style.display = dateInfo.timeStr ? 'block' : 'none';
+            }
+            if (durEl) {
+                durEl.textContent = dateInfo.durationStr ? `⏱ Duración: ${dateInfo.durationStr}` : '';
+                durEl.style.display = dateInfo.durationStr ? 'block' : 'none';
+            }
+
+            // Ubicación / Videollamada
+            const recBadge = document.getElementById('event-detail-recurrence-badge');
+            const recLabels = {
+                'daily': 'Todos los días',
+                'weekly': 'Cada semana',
+                'monthly': 'Cada mes',
+                'yearly': 'Anualmente',
+                'weekdays': 'Días laborables'
             };
+            if (recBadge) {
+                if (ev.recurrence && recLabels[ev.recurrence]) {
+                    recBadge.textContent = recLabels[ev.recurrence];
+                    recBadge.classList.remove('hidden');
+                } else {
+                    recBadge.classList.add('hidden');
+                }
+            }
+
+            // Videoconferencia Google Meet
+            const meetContainer = document.getElementById('event-detail-meeting-container');
+            const joinMeetBtn = document.getElementById('btn-event-detail-join-meet');
+            const copyMeetBtn = document.getElementById('btn-event-detail-copy-meet');
+            const meetText = document.getElementById('event-detail-meeting-url-text');
+            if (meetContainer) {
+                if (ev.meeting_url && ev.meeting_url.trim().length > 0) {
+                    const url = ev.meeting_url.trim();
+                    meetContainer.classList.remove('hidden');
+                    if (joinMeetBtn) {
+                        joinMeetBtn.onclick = (e) => {
+                            e.preventDefault();
+                            CalendarManager.openExternal(url);
+                        };
+                    }
+                    if (meetText) meetText.textContent = url;
+                    if (copyMeetBtn) {
+                        copyMeetBtn.onclick = () => {
+                            navigator.clipboard.writeText(url);
+                            UI.showStickyToast('Enlace Copiado', 'Se copió el enlace al portapapeles', 'info', 2000);
+                        };
+                    }
+                } else {
+                    meetContainer.classList.add('hidden');
+                }
+            }
+
+            // Ubicación / Direcciones (con URLs clickeables que abren en el navegador predeterminado)
+            const locContainer = document.getElementById('event-detail-location-container');
+            const locContent = document.getElementById('event-detail-location-content');
+            if (locContainer && locContent) {
+                if (ev.location && ev.location.trim().length > 0) {
+                    locContent.innerHTML = this.formatLocationHtml(ev.location);
+                    locContainer.classList.remove('hidden');
+                } else {
+                    locContainer.classList.add('hidden');
+                    locContent.innerHTML = '';
+                }
+            }
+
+            // Asistentes / Invitados
+            const attContainer = document.getElementById('event-detail-attendees-container');
+            const attList = document.getElementById('event-detail-attendees-list');
+            const attCount = document.getElementById('event-detail-attendees-count');
+            if (attContainer && attList) {
+                const attendees = ev.attendees ? ev.attendees.split(',').map(s => s.trim()).filter(Boolean) : [];
+                if (attendees.length > 0) {
+                    attContainer.classList.remove('hidden');
+                    if (attCount) attCount.textContent = `Invitados (${attendees.length})`;
+                    attList.innerHTML = attendees.map(a => `
+                        <div class="flex items-center gap-2 p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200">
+                            <div class="w-6 h-6 rounded-full bg-indigo-500 text-white flex items-center justify-center font-bold text-[10px] shrink-0 uppercase">
+                                ${a.charAt(0)}
+                            </div>
+                            <span class="truncate font-medium">${a}</span>
+                        </div>
+                    `).join('');
+                } else {
+                    attContainer.classList.add('hidden');
+                    attList.innerHTML = '';
+                }
+            }
+
+            // Recordatorio, Disponibilidad y Visibilidad
+            const notifText = document.getElementById('event-detail-notification-text');
+            const notifMap = {
+                '0': 'Sin recordatorio',
+                '10': '10 min antes',
+                '15': '15 min antes',
+                '30': '30 min antes',
+                '60': '1 hora antes',
+                '1440': '1 día antes'
+            };
+            if (notifText) {
+                const mins = ev.notification_minutes !== undefined ? String(ev.notification_minutes) : '10';
+                notifText.textContent = notifMap[mins] || `${mins} min antes`;
+            }
+
+            const availBadge = document.getElementById('event-detail-availability-badge');
+            if (availBadge) {
+                availBadge.textContent = ev.availability === 'free' ? 'Disponible' : 'Ocupado';
+            }
+
+            const visBadge = document.getElementById('event-detail-visibility-badge');
+            const visMap = {
+                'default': 'Predeterminada',
+                'public': 'Pública',
+                'private': 'Privada'
+            };
+            if (visBadge) {
+                visBadge.textContent = visMap[ev.visibility] || 'Predeterminada';
+            }
+
+            // Descripción con URLs convertidas en enlaces seguros
+            const descEl = document.getElementById('event-detail-description');
+            if (descEl) {
+                if (ev.description && ev.description.trim().length > 0) {
+                    descEl.innerHTML = this.linkifyText(ev.description);
+                } else {
+                    descEl.innerHTML = '<span class="text-slate-400 dark:text-slate-500 italic">Sin notas ni descripción adicional</span>';
+                }
+            }
+
+            // Correo de origen
+            const originContainer = document.getElementById('event-detail-origin-container');
+            const btnOrigin = document.getElementById('btn-event-detail-origin');
+            if (originContainer && btnOrigin) {
+                if (ev.origin_email_id) {
+                    originContainer.classList.remove('hidden');
+                    btnOrigin.onclick = () => {
+                        UI.closeDrawer('drawer-event-detail');
+                        if (window.EmailManager && typeof EmailManager.openEmailDetail === 'function') {
+                            if (typeof UI.switchMainTab === 'function') {
+                                UI.switchMainTab('emails');
+                            }
+                            EmailManager.openEmailDetail(ev.origin_email_id);
+                        }
+                    };
+                } else {
+                    originContainer.classList.add('hidden');
+                    btnOrigin.onclick = null;
+                }
+            }
+
+            // Botón editar dentro del detalle
+            const btnEdit = document.getElementById('btn-edit-event-from-detail');
+            if (btnEdit) {
+                btnEdit.onclick = () => {
+                    this.openEditEventModal(ev.id);
+                };
+            }
+
+            // Botón eliminar dentro del detalle
+            const btnDelete = document.getElementById('btn-delete-event-from-detail');
+            if (btnDelete) {
+                btnDelete.onclick = async () => {
+                    await this.deleteEvent(ev.id);
+                };
+            }
+        } catch (err) {
+            console.error("Error al renderizar drawer de detalle de evento:", err);
         }
 
         // Abrir drawer lateral

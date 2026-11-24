@@ -1,4 +1,6 @@
 import os
+import datetime
+import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, Query, Body, BackgroundTasks, Request
@@ -6,9 +8,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
+from google.genai import types
 
-from backend.database import get_db, init_db, set_setting, get_setting
-from backend.email_service import EmailService
+logger = logging.getLogger(__name__)
+
+from backend.database import get_db, init_db, set_setting, get_setting, AVATARS_DIR
+from backend.email_service import EmailService, deleted_email_key
 from backend.calendar_service import CalendarService
 from backend.gemini_service import GeminiService
 from backend.config_service import ConfigService
@@ -42,6 +47,19 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "frontend"
 IMG_DIR = BASE_DIR / "img"
+
+# Sin cabecera Cache-Control, el navegador (y el perfil persistente de la app de escritorio)
+# puede reutilizar por caché heurística un index.html/JS antiguo durante horas tras actualizar
+# la aplicación. "no-cache" obliga a revalidar con ETag en cada carga (respuesta 304 si no cambió).
+_NO_CACHE_PATHS = ("/", "/sw.js", "/manifest.json")
+
+@app.middleware("http")
+async def _frontend_no_cache(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if (path in _NO_CACHE_PATHS or path.startswith("/static/")) and "cache-control" not in response.headers:
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 # Montar archivos estáticos
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -132,6 +150,16 @@ class AICleanupRequest(BaseModel):
     account_id: Optional[int] = None
     all_accounts: bool = True
 
+class CommitmentConvertRequest(BaseModel):
+    email_id: int
+    title: str
+    target_type: str = "task"  # "task" | "note"
+    due_hint: Optional[str] = ""
+
+class AIClassifyBatchRequest(BaseModel):
+    email_ids: Optional[List[int]] = None
+    limit: Optional[int] = 50
+
 class BatchDeleteRequest(BaseModel):
     email_ids: List[int]
     permanent: bool = False
@@ -206,6 +234,31 @@ import time
 _last_calendar_sync = 0
 _last_email_sync = {}
 
+def auto_classify_unclassified_emails(limit: int = 500) -> int:
+    """Clasifica en segundo plano los correos que aún no tengan ai_tags asignado."""
+    try:
+        import json
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT id, subject, sender, snippet, body_text FROM emails WHERE (ai_tags IS NULL OR ai_tags = '' OR ai_tags = '[]') AND UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'SPAM') ORDER BY date DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        if not rows:
+            conn.close()
+            return 0
+        
+        updated_count = 0
+        for r in rows:
+            cat = GeminiService.classify_email(r["subject"], r["sender"], r["snippet"] or "", r["body_text"] or "")
+            conn.execute("UPDATE emails SET ai_tags = ? WHERE id = ?", (json.dumps([cat]), r["id"]))
+            updated_count += 1
+        conn.commit()
+        conn.close()
+        return updated_count
+    except Exception as e:
+        print(f"Aviso en auto_classify_unclassified_emails: {e}")
+        return 0
+
 async def _periodic_contacts_sync():
     """Sincroniza periódicamente la libreta de contactos cada 15 minutos."""
     while True:
@@ -272,6 +325,7 @@ async def _periodic_background_sync_loop():
                         try:
                             # Sincroniza INBOX con hasta 30 correos recientes
                             await asyncio.to_thread(EmailService.sync_mailbox, acc_id, "INBOX", None, 30)
+                            await asyncio.to_thread(auto_classify_unclassified_emails, 50)
                         except Exception as ee:
                             print(f"[Email Background Sync] Error sincronizando {acc['email']}: {ee}")
             except Exception as dbe:
@@ -291,10 +345,16 @@ async def on_startup():
     asyncio.create_task(asyncio.to_thread(ContactsService.sync_contacts))
     asyncio.create_task(_periodic_contacts_sync())
     asyncio.create_task(_periodic_background_sync_loop())
+    asyncio.create_task(asyncio.to_thread(auto_classify_unclassified_emails, 1000))
 
 @app.get("/")
 def serve_index():
     return FileResponse(STATIC_DIR / "index.html")
+
+@app.get("/info")
+@app.get("/info.html")
+def serve_info():
+    return FileResponse(STATIC_DIR / "info.html")
 
 @app.get("/manifest.json")
 def serve_manifest():
@@ -474,6 +534,26 @@ def desktop_open_url(data: dict = Body(...)):
             return {"success": False, "error": str(e)}
     return {"success": False, "error": "URL no válida"}
 
+class DesktopPrintPayload(BaseModel):
+    html: str
+    title: Optional[str] = "correo"
+    options: Optional[Dict[str, Any]] = None
+
+@app.post("/api/desktop/print-buffer")
+def set_desktop_print_buffer(payload: DesktopPrintPayload):
+    buffer_path = "/tmp/merkemail_print_doc.html"
+    options_path = "/tmp/merkemail_print_options.json"
+    try:
+        with open(buffer_path, "w", encoding="utf-8") as f:
+            f.write(payload.html)
+        if payload.options:
+            import json
+            with open(options_path, "w", encoding="utf-8") as f:
+                json.dump(payload.options, f)
+        return {"success": True, "path": buffer_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al escribir buffer de impresión: {e}")
+
 @app.get("/api/desktop/window/state")
 def window_state():
     is_max = False
@@ -560,32 +640,83 @@ def set_default_account(account_id: int):
 
 @app.get("/api/avatar/{email:path}")
 def get_avatar_for_email(email: str):
-    """Devuelve o redirige al avatar oficial en caché para la cuenta o remitente."""
+    """Devuelve o descarga y almacena en caché en disco el avatar oficial para la cuenta o contacto."""
     clean_email = email.lower().strip()
-    # Si viene con nombre tipo "Google <families-noreply@google.com>", extraer el email
     if "<" in clean_email and ">" in clean_email:
         clean_email = clean_email.split("<")[1].split(">")[0].strip()
 
-    conn = get_db()
-    row = conn.execute("SELECT avatar_url FROM accounts WHERE LOWER(email) = ?", (clean_email,)).fetchone()
-    conn.close()
+    import hashlib
+    email_hash = hashlib.sha256(clean_email.encode("utf-8")).hexdigest()
+    cache_path = AVATARS_DIR / f"{email_hash}.png"
 
-    if row and row["avatar_url"]:
-        return RedirectResponse(
-            url=row["avatar_url"],
-            status_code=307,
-            headers={"Cache-Control": "public, max-age=604800, immutable"}
+    # 1. Comprobar si ya existe en la caché local en disco y no está vacío
+    if cache_path.exists() and cache_path.stat().st_size > 0:
+        return FileResponse(
+            cache_path,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=2592000, immutable"}
         )
 
-    # Extraer dominio para remitentes generales
-    domain = clean_email.split("@")[-1] if "@" in clean_email else clean_email
-    domain = domain.strip("<>[](), ")
-    if domain and "." in domain:
-        favicon_url = f"https://www.google.com/s2/favicons?domain={domain}&sz=128"
+    # 2. Buscar si coincide con alguna cuenta registrada con avatar_url
+    target_url = None
+    conn = get_db()
+    row = conn.execute("SELECT avatar_url FROM accounts WHERE LOWER(email) = ?", (clean_email,)).fetchone()
+    if row and row["avatar_url"]:
+        target_url = row["avatar_url"]
+    else:
+        # 3. Buscar si en la libreta de contactos tiene avatar_url explícito (no autorreferente)
+        crow = conn.execute("""
+            SELECT avatar_url FROM contacts 
+            WHERE LOWER(email) = ? AND avatar_url IS NOT NULL 
+              AND avatar_url != '' AND avatar_url NOT LIKE '/api/avatar%'
+        """, (clean_email,)).fetchone()
+        if crow and crow["avatar_url"]:
+            target_url = crow["avatar_url"]
+    conn.close()
+
+    # 4. Si no hay URL directa, usar favicon en alta resolución del dominio del remitente
+    if not target_url:
+        domain = clean_email.split("@")[-1] if "@" in clean_email else clean_email
+        domain = domain.strip("<>[](), ")
+        if domain and "." in domain:
+            target_url = f"https://www.google.com/s2/favicons?domain={domain}&sz=128"
+
+    if not target_url:
+        raise HTTPException(status_code=404, detail="Avatar no disponible")
+
+    # 5. Descargar imagen y persistirla en caché local en disco
+    try:
+        import urllib.request
+        import urllib.error
+        req = urllib.request.Request(
+            target_url,
+            headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) MerkeMail/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            content_type = response.headers.get("content-type", "image/png")
+            data = response.read()
+            if data and len(data) > 0:
+                with open(cache_path, "wb") as f:
+                    f.write(data)
+                return FileResponse(
+                    cache_path,
+                    media_type=content_type,
+                    headers={"Cache-Control": "public, max-age=2592000, immutable"}
+                )
+    except urllib.error.HTTPError as he:
+        if he.code == 404:
+            raise HTTPException(status_code=404, detail="Avatar no disponible")
         return RedirectResponse(
-            url=favicon_url,
+            url=target_url,
             status_code=307,
-            headers={"Cache-Control": "public, max-age=604800, immutable"}
+            headers={"Cache-Control": "public, max-age=86400"}
+        )
+    except Exception:
+        # Fallback de redirección si no hay conexión o falla la descarga temporalmente
+        return RedirectResponse(
+            url=target_url,
+            status_code=307,
+            headers={"Cache-Control": "public, max-age=86400"}
         )
 
     raise HTTPException(status_code=404, detail="Avatar no disponible")
@@ -678,6 +809,12 @@ def _run_account_full_sync(account_id: int):
             _full_sync_state["status"] = "completed"
             _full_sync_state["percent"] = 100
             _full_sync_state["message"] = f"Sincronización total completada ({total_synced} correos procesados)"
+
+        # Clasificación automática post-sincronización total
+        try:
+            auto_classify_unclassified_emails(1000)
+        except Exception as class_err:
+            print(f"Aviso en clasificación automática post-full-sync: {class_err}")
 
     except Exception as exc:
         print(f"Error crítico en sincronización en background: {exc}")
@@ -853,7 +990,7 @@ def download_attachment(attachment_id: int):
     conn = get_db()
     row = conn.execute('''
         SELECT a.id, a.email_id, a.filename, a.content_type, a.size, a.remote_id, a.file_path,
-               e.account_id, e.uid, e.folder, acc.provider, acc.auth_type
+               e.account_id, e.uid, e.folder, e.source_folder, acc.provider, acc.auth_type
         FROM attachments a
         JOIN emails e ON a.email_id = e.id
         JOIN accounts acc ON e.account_id = acc.id
@@ -936,11 +1073,19 @@ def download_attachment(attachment_id: int):
                     mail = imaplib.IMAP4(account["imap_host"], int(account["imap_port"]))
                 raw_pass = CryptoService.decrypt(account.get("imap_password", "")) or ""
                 mail.login(account["imap_user"].strip(), raw_pass.replace(" ", "").strip())
-                mail.select(row["folder"] or "INBOX", readonly=True)
-                res, msg_data = mail.fetch(str(row["uid"]).encode(), "(RFC822)")
+                if row["source_folder"]:
+                    # Buzón real del servidor + UID estable (la carpeta local puede ser ARCHIVE, SPAM...)
+                    from backend.email_service import _quote_mailbox
+                    mail.select(_quote_mailbox(row["source_folder"]), readonly=True)
+                    res, msg_data = mail.uid("fetch", str(row["uid"]).encode(), "(RFC822)")
+                else:
+                    # Correos sincronizados por versiones anteriores (número de secuencia)
+                    mail.select(row["folder"] or "INBOX", readonly=True)
+                    res, msg_data = mail.fetch(str(row["uid"]).encode(), "(RFC822)")
                 mail.logout()
-                if res == "OK" and msg_data and msg_data[0]:
-                    msg = email_pkg.message_from_bytes(msg_data[0][1])
+                raw_part = next((p for p in (msg_data or []) if isinstance(p, tuple) and len(p) > 1), None)
+                if res == "OK" and raw_part:
+                    msg = email_pkg.message_from_bytes(raw_part[1])
                     for part in msg.walk():
                         part_fn = part.get_filename()
                         if part_fn:
@@ -965,42 +1110,67 @@ def get_unread_counts(account_id: Optional[int] = None):
 
     # Consulta única agrupada por carpeta y destacado para máxima velocidad
     grouped_rows = conn.execute(
-        f"SELECT folder, is_starred, COUNT(*) as cnt FROM emails WHERE is_read = 0{acc_filter} GROUP BY folder, is_starred",
+        f"SELECT UPPER(COALESCE(folder, '')) as folder, is_starred, COUNT(*) as cnt FROM emails WHERE is_read = 0{acc_filter} GROUP BY UPPER(COALESCE(folder, '')), is_starred",
         acc_param
     ).fetchall()
 
     inbox_folders = {"INBOX", "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS"}
+    excluded_from_all = {"TRASH", "SPAM", "DRAFT", "DRAFTS"}
     inbox_cnt = 0
     starred_cnt = 0
     all_cnt = 0
     folder_totals: Dict[str, int] = {}
 
     for r in grouped_rows:
-        f = r["folder"] or "INBOX"
+        f = (r["folder"] or "INBOX").upper()
         c = r["cnt"] or 0
-        all_cnt += c
-        if r["is_starred"]:
-            starred_cnt += c
+        if f not in excluded_from_all:
+            all_cnt += c
+            if r["is_starred"]:
+                starred_cnt += c
         if f in inbox_folders:
             inbox_cnt += c
         folder_totals[f] = folder_totals.get(f, 0) + c
 
+    # Conteo para IMPORTANT (de inbox, categorías y archivo, excluyendo TRASH, SPAM, DRAFT, DRAFTS)
+    acc_e_filter = " AND emails.account_id = ?" if account_id else ""
+    imp_row = conn.execute(
+        f"""SELECT COUNT(DISTINCT emails.id) as cnt FROM emails 
+            WHERE emails.is_read = 0{acc_e_filter}
+            AND (
+                UPPER(COALESCE(emails.folder, '')) = 'IMPORTANT'
+                OR emails.ai_urgency = 'alta'
+                OR emails.id IN (
+                    SELECT email_id FROM email_labels el
+                    JOIN labels l ON el.label_id = l.id
+                    WHERE UPPER(l.name) IN ('IMPORTANT', 'IMPORTANTE') OR UPPER(l.remote_id) = 'IMPORTANT'
+                )
+            )
+            AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')""",
+        acc_param
+    ).fetchone()
+    important_cnt = imp_row["cnt"] if imp_row else 0
+
     folders_dict = {
         "INBOX": inbox_cnt,
         "STARRED": starred_cnt,
+        "UNREAD": all_cnt,
+        "NO_LEIDOS": all_cnt,
         "ALL": all_cnt,
-        "SENT": 0,
-        "DRAFT": 0,
-        "SPAM": 0,
-        "TRASH": 0,
-        "IMPORTANT": 0,
-        "CATEGORY_PROMOTIONS": 0,
-        "CATEGORY_SOCIAL": 0,
-        "CATEGORY_UPDATES": 0,
-        "CATEGORY_FORUMS": 0
+        "SENT": folder_totals.get("SENT", 0),
+        "DRAFT": folder_totals.get("DRAFT", 0) + folder_totals.get("DRAFTS", 0),
+        "SPAM": folder_totals.get("SPAM", 0),
+        "TRASH": folder_totals.get("TRASH", 0),
+        "IMPORTANT": important_cnt,
+        "CATEGORY_PROMOTIONS": folder_totals.get("CATEGORY_PROMOTIONS", 0),
+        "CATEGORY_SOCIAL": folder_totals.get("CATEGORY_SOCIAL", 0),
+        "CATEGORY_UPDATES": folder_totals.get("CATEGORY_UPDATES", 0),
+        "CATEGORY_FORUMS": folder_totals.get("CATEGORY_FORUMS", 0),
+        "ACTUALIZACIONES": folder_totals.get("CATEGORY_UPDATES", 0),
+        "NOTIFICACIONES": folder_totals.get("CATEGORY_UPDATES", 0)
     }
     for f_name, f_cnt in folder_totals.items():
-        if f_name != "INBOX":
+        if f_name not in folders_dict:
             folders_dict[f_name] = f_cnt
 
     # Conteos por etiquetas (labels)
@@ -1038,6 +1208,7 @@ def get_emails(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     ai_urgency: Optional[str] = None,
+    ai_category: Optional[str] = None,
     page: int = 1,
     page_size: int = 15,
     auto_sync: bool = True
@@ -1055,7 +1226,8 @@ def get_emails(
         SELECT emails.id, emails.account_id, emails.uid, emails.folder, emails.sender,
                emails.sender_name, emails.recipient, emails.subject, emails.snippet,
                emails.date, emails.is_read, emails.is_starred, emails.has_attachments,
-               emails.ai_urgency, accounts.name as account_name, accounts.color as account_color
+               emails.ai_urgency, emails.ai_tags, accounts.name as account_name, accounts.color as account_color,
+               accounts.email as account_email, accounts.avatar_url as account_avatar_url
         FROM emails
         LEFT JOIN accounts ON emails.account_id = accounts.id
         WHERE 1=1
@@ -1077,18 +1249,80 @@ def get_emails(
         params.append(label_id)
 
     # 2. Filtro de Carpeta
-    if folder == "STARRED":
-        query += " AND emails.is_starred = 1"
-        count_query += " AND emails.is_starred = 1"
-    elif not folder or folder in ["ALL", "TODOS"]:
-        pass
-    elif folder == "INBOX":
-        query += " AND emails.folder IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS')"
-        count_query += " AND emails.folder IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS')"
+    folder_upper = folder.upper() if folder else ""
+    if folder_upper in ["ACTUALIZACIONES", "NOTIFICACIONES", "UPDATES"]:
+        folder_upper = "CATEGORY_UPDATES"
+    elif folder_upper in ["PROMOCIONES", "PROMOTIONS"]:
+        folder_upper = "CATEGORY_PROMOTIONS"
+    elif folder_upper in ["FOROS", "FORUMS"]:
+        folder_upper = "CATEGORY_FORUMS"
+    elif folder_upper in ["DESTACADOS", "STARRED"]:
+        folder_upper = "STARRED"
+    elif folder_upper in ["IMPORTANTES", "IMPORTANTE", "IMPORTANT"]:
+        folder_upper = "IMPORTANT"
+    elif folder_upper in ["ENVIADOS", "SENT"]:
+        folder_upper = "SENT"
+    elif folder_upper in ["BORRADORES", "DRAFT", "DRAFTS"]:
+        folder_upper = "DRAFT"
+    elif folder_upper in ["PAPELERA", "TRASH"]:
+        folder_upper = "TRASH"
+    elif folder_upper in ["RECIBIDOS", "INBOX"]:
+        folder_upper = "INBOX"
+    if folder_upper == "STARRED":
+        query += " AND emails.is_starred = 1 AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+        count_query += " AND emails.is_starred = 1 AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+    elif folder_upper in ["NO_LEIDOS", "NO_LEÍDOS", "UNREAD", "SIN_LEER", "SINLEER"]:
+        query += " AND emails.is_read = 0 AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'PAPELERA', 'SPAM', 'DRAFT', 'DRAFTS')"
+        count_query += " AND emails.is_read = 0 AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'PAPELERA', 'SPAM', 'DRAFT', 'DRAFTS')"
+    elif not folder or folder_upper in ["ALL", "TODOS"]:
+        query += " AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+        count_query += " AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+    elif folder_upper == "IMPORTANT":
+        imp_filter = """ AND (
+            UPPER(COALESCE(emails.folder, '')) = 'IMPORTANT'
+            OR emails.ai_urgency = 'alta'
+            OR emails.id IN (
+                SELECT email_id FROM email_labels el
+                JOIN labels l ON el.label_id = l.id
+                WHERE UPPER(l.name) IN ('IMPORTANT', 'IMPORTANTE') OR UPPER(l.remote_id) = 'IMPORTANT'
+            )
+        ) AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"""
+        query += imp_filter
+        count_query += imp_filter
+    elif folder_upper in ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS"]:
+        cat_filter = """ AND (
+            UPPER(emails.folder) = ?
+            OR emails.id IN (
+                SELECT email_id FROM email_labels el
+                JOIN labels l ON el.label_id = l.id
+                WHERE UPPER(l.name) = ? OR UPPER(l.remote_id) = ?
+            )
+        ) AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"""
+        query += cat_filter
+        count_query += cat_filter
+        params.extend([folder_upper, folder_upper, folder_upper])
+    elif folder_upper == "SENT":
+        query += " AND UPPER(emails.folder) = 'SENT'"
+        count_query += " AND UPPER(emails.folder) = 'SENT'"
+    elif folder_upper in ["DRAFT", "DRAFTS"]:
+        query += " AND UPPER(emails.folder) IN ('DRAFT', 'DRAFTS')"
+        count_query += " AND UPPER(emails.folder) IN ('DRAFT', 'DRAFTS')"
+    elif folder_upper == "SPAM":
+        query += " AND UPPER(emails.folder) = 'SPAM'"
+        count_query += " AND UPPER(emails.folder) = 'SPAM'"
+    elif folder_upper == "TRASH":
+        query += " AND UPPER(emails.folder) = 'TRASH'"
+        count_query += " AND UPPER(emails.folder) = 'TRASH'"
+    elif folder_upper == "INBOX":
+        query += " AND UPPER(emails.folder) IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS') AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+        count_query += " AND UPPER(emails.folder) IN ('INBOX', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS') AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+    elif folder_upper in ["ARCHIVE", "ARCHIVED"]:
+        query += " AND UPPER(emails.folder) IN ('ARCHIVE', 'ARCHIVED') AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
+        count_query += " AND UPPER(emails.folder) IN ('ARCHIVE', 'ARCHIVED') AND UPPER(COALESCE(emails.folder, '')) NOT IN ('TRASH', 'SPAM', 'DRAFT', 'DRAFTS')"
     elif folder:
-        query += " AND emails.folder = ?"
-        count_query += " AND emails.folder = ?"
-        params.append(folder)
+        query += " AND UPPER(emails.folder) = ?"
+        count_query += " AND UPPER(emails.folder) = ?"
+        params.append(folder_upper)
     
     # 3. Cuenta
     if account_id:
@@ -1171,11 +1405,18 @@ def get_emails(
         count_query += " AND (emails.subject LIKE ? OR emails.sender LIKE ? OR emails.snippet LIKE ? OR emails.body_text LIKE ?)"
         params.extend([search_param, search_param, search_param, search_param])
 
+    # 13. Categoría IA Inteligente (trabajo, finanzas, personal, boletines)
+    if ai_category and ai_category.strip():
+        cat_param = f'%"{ai_category.strip().lower()}"%'
+        query += " AND LOWER(COALESCE(emails.ai_tags, '')) LIKE ?"
+        count_query += " AND LOWER(COALESCE(emails.ai_tags, '')) LIKE ?"
+        params.append(cat_param)
+
     # Total de registros
     total_records = conn.execute(count_query, params).fetchone()["total"]
 
     # Si no hay registros y auto_sync está habilitado (y no es una búsqueda manual), lanzar sincronización en segundo plano sin bloquear la lista
-    has_advanced = bool(search or sender or recipient or subject or date_from or date_to or label_ids or has_attachments is not None or is_starred is not None or read_status or ai_urgency)
+    has_advanced = bool(search or sender or recipient or subject or date_from or date_to or label_ids or has_attachments is not None or is_starred is not None or read_status or ai_urgency or ai_category)
     bg_sync_triggered = False
     if total_records == 0 and auto_sync and not has_advanced:
         try:
@@ -1253,7 +1494,7 @@ def get_email_detail(email_id: int):
         SELECT l.id, l.name, l.color
         FROM labels l
         JOIN email_labels el ON l.id = el.label_id
-        WHERE el.email_id = ?
+        WHERE el.email_id = ? AND COALESCE(l.type, 'user') != 'system'
         ORDER BY l.name ASC
     ''', (email_id,)).fetchall()
     email_data["labels"] = [dict(lr) for lr in label_rows]
@@ -1375,13 +1616,17 @@ def sync_emails(account_id: Optional[int] = None, folder: Optional[str] = "INBOX
 
     acc_ids = [acc["id"] for acc in accounts]
 
+    sync_folder = folder
+    if folder and folder.upper() in ["UNREAD", "NO_LEIDOS", "NO_LEÍDOS", "SIN_LEER", "SINLEER", "STARRED", "ALL", "TODOS"]:
+        sync_folder = "INBOX"
+
     def _run_sync_batch():
         total_synced = 0
         errors = []
 
         def sync_one(acc_id):
             try:
-                return acc_id, EmailService.sync_mailbox(acc_id, folder=folder, label_id=label_id)
+                return acc_id, EmailService.sync_mailbox(acc_id, folder=sync_folder, label_id=label_id)
             except Exception as e:
                 return acc_id, {"success": False, "error": str(e)}
 
@@ -1406,14 +1651,25 @@ def sync_emails(account_id: Optional[int] = None, folder: Optional[str] = "INBOX
         return total_synced, errors
 
     if background:
-        threading.Thread(target=_run_sync_batch, daemon=True).start()
+        def _bg_wrapper():
+            t_synced, _ = _run_sync_batch()
+            if t_synced > 0:
+                auto_classify_unclassified_emails(200)
+        threading.Thread(target=_bg_wrapper, daemon=True).start()
         return {"success": True, "synced_count": 0, "background": True}
 
     total_synced, errors = _run_sync_batch()
+    if total_synced > 0:
+        threading.Thread(target=auto_classify_unclassified_emails, args=(200,), daemon=True).start()
+    
+    is_all_failed = len(errors) > 0 and total_synced == 0
+    has_reauth = any("invalid_grant" in e.lower() or "expir" in e.lower() or "revok" in e.lower() or "reconectar" in e.lower() for e in (errors or []))
+    
     return {
-        "success": True,
+        "success": not is_all_failed,
         "synced_count": total_synced,
-        "errors": errors if errors else None
+        "errors": errors if errors else None,
+        "needs_reauth": has_reauth
     }
 
 @app.post("/api/emails/send")
@@ -1482,28 +1738,48 @@ def mark_email_not_spam(email_id: int):
             args=(account_id, uid, ["INBOX"], ["SPAM"]),
             daemon=True
         ).start()
+    # Cuentas IMAP: mover también en el servidor (Spam -> Recibidos)
+    EmailService.schedule_imap_push(email_ids=[email_id])
 
     return {"success": True, "message": "Correo marcado como legítimo y movido a Recibidos"}
 
 @app.delete("/api/emails/{email_id}")
 def delete_email(email_id: int):
+    """Mueve el correo a la Papelera; si ya estaba en la Papelera, lo elimina definitivamente de MerkeMail."""
+    from datetime import datetime
     conn = get_db()
-    row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
-    if row and row["uid"]:
-        conn.execute(
-            "INSERT OR REPLACE INTO deleted_emails (account_id, uid, deleted_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-            (row["account_id"], row["uid"])
-        )
-    conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
+    row = conn.execute("SELECT id, account_id, uid, folder, source_folder FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+    permanent = (row["folder"] or "").upper() == "TRASH"
+    if permanent:
+        if row["uid"]:
+            conn.execute(
+                "INSERT OR REPLACE INTO deleted_emails (account_id, uid, deleted_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                (row["account_id"], deleted_email_key(row["source_folder"], row["uid"]))
+            )
+        conn.execute("DELETE FROM email_labels WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM attachments WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
+    else:
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute("UPDATE emails SET folder = 'TRASH', updated_at = ?, local_modified = 1 WHERE id = ?", (now_iso, email_id))
     conn.commit()
     conn.close()
-    if row and row["account_id"] and row["uid"]:
+    if row["account_id"] and row["uid"]:
         threading.Thread(
             target=GoogleOAuthService.modify_message_labels,
             args=(row["account_id"], row["uid"], ["TRASH"], ["INBOX"]),
             daemon=True
         ).start()
-    return {"success": True, "message": "Correo eliminado"}
+    # Cuentas IMAP: reflejar en el servidor (mover a su Papelera)
+    if permanent:
+        EmailService.schedule_imap_push(removed_rows=[dict(row)])
+    else:
+        EmailService.schedule_imap_push(email_ids=[email_id])
+    return {"success": True, "permanent": permanent,
+            "message": "Correo eliminado definitivamente" if permanent else "Correo movido a la papelera"}
 
 @app.post("/api/emails/batch-delete")
 def batch_delete_emails(req: BatchDeleteRequest):
@@ -1512,7 +1788,7 @@ def batch_delete_emails(req: BatchDeleteRequest):
         return {"success": True, "deleted_count": 0}
     conn = get_db()
     placeholders = ",".join("?" for _ in req.email_ids)
-    rows = conn.execute(f"SELECT id, account_id, uid FROM emails WHERE id IN ({placeholders})", req.email_ids).fetchall()
+    rows = conn.execute(f"SELECT id, account_id, uid, folder, source_folder FROM emails WHERE id IN ({placeholders})", req.email_ids).fetchall()
     targets = [dict(r) for r in rows]
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -1521,8 +1797,10 @@ def batch_delete_emails(req: BatchDeleteRequest):
             if t.get("uid"):
                 conn.execute(
                     "INSERT OR REPLACE INTO deleted_emails (account_id, uid, deleted_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-                    (t["account_id"], t["uid"])
+                    (t["account_id"], deleted_email_key(t.get("source_folder"), t["uid"]))
                 )
+        conn.execute(f"DELETE FROM email_labels WHERE email_id IN ({placeholders})", req.email_ids)
+        conn.execute(f"DELETE FROM attachments WHERE email_id IN ({placeholders})", req.email_ids)
         conn.execute(f"DELETE FROM emails WHERE id IN ({placeholders})", req.email_ids)
     else:
         conn.execute(
@@ -1540,6 +1818,11 @@ def batch_delete_emails(req: BatchDeleteRequest):
                 except Exception:
                     pass
     threading.Thread(target=_bg_batch_del, daemon=True).start()
+    # Cuentas IMAP: reflejar en el servidor (mover a su Papelera)
+    if req.permanent:
+        EmailService.schedule_imap_push(removed_rows=targets)
+    else:
+        EmailService.schedule_imap_push(email_ids=req.email_ids)
 
     return {"success": True, "deleted_count": len(req.email_ids), "message": f"{len(req.email_ids)} correos procesados exitosamente"}
 
@@ -1562,6 +1845,7 @@ def batch_action_emails(req: BatchActionRequest):
             f"""
             UPDATE emails 
             SET folder = CASE WHEN folder = 'ARCHIVE' THEN 'INBOX' ELSE 'ARCHIVE' END,
+                source_folder = COALESCE(source_folder, folder, 'INBOX'),
                 updated_at = ?, local_modified = 1
             WHERE id IN ({placeholders}) AND UPPER(COALESCE(folder, '')) NOT IN ('SPAM', 'TRASH', 'DRAFT', 'DRAFTS')
             """,
@@ -1576,7 +1860,7 @@ def batch_action_emails(req: BatchActionRequest):
         msg = f"{cursor.rowcount} correos procesados (Archivado / Restaurar a Recibidos)"
     elif req.action == "spam":
         conn.execute(
-            f"UPDATE emails SET folder = CASE WHEN folder = 'SPAM' THEN 'INBOX' ELSE 'SPAM' END, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
+            f"UPDATE emails SET folder = CASE WHEN folder = 'SPAM' THEN 'INBOX' ELSE 'SPAM' END, source_folder = COALESCE(source_folder, folder, 'INBOX'), updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
             [now_iso] + req.email_ids
         )
         for t in targets:
@@ -1588,7 +1872,7 @@ def batch_action_emails(req: BatchActionRequest):
         msg = f"{len(req.email_ids)} correos procesados (Spam / Restaurar a Recibidos)"
     elif req.action == "trash":
         conn.execute(
-            f"UPDATE emails SET folder = CASE WHEN folder = 'TRASH' THEN 'INBOX' ELSE 'TRASH' END, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
+            f"UPDATE emails SET folder = CASE WHEN folder = 'TRASH' THEN 'INBOX' ELSE 'TRASH' END, source_folder = COALESCE(source_folder, folder, 'INBOX'), updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
             [now_iso] + req.email_ids
         )
         for t in targets:
@@ -1625,18 +1909,21 @@ def batch_action_emails(req: BatchActionRequest):
     elif (req.action in ("add_label", "toggle_label")) and req.label_id:
         added = 0
         removed = 0
-        lbl_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (req.label_id,)).fetchone()
-        rem_lbl_id = lbl_row["remote_id"] if lbl_row else None
         for t in targets:
             eid = t["id"]
+            # Etiqueta efectiva según la cuenta de cada correo (ver _resolve_label_for_email)
+            lbl = _resolve_label_for_email(conn, req.label_id, eid, t["account_id"])
+            if not lbl:
+                continue
+            rem_lbl_id = lbl["remote_id"]
             exists = conn.execute(
                 "SELECT 1 FROM email_labels WHERE email_id = ? AND label_id = ?",
-                (eid, req.label_id)
+                (eid, lbl["id"])
             ).fetchone()
             if exists:
                 conn.execute(
                     "DELETE FROM email_labels WHERE email_id = ? AND label_id = ?",
-                    (eid, req.label_id)
+                    (eid, lbl["id"])
                 )
                 removed += 1
                 if rem_lbl_id and t.get("uid"):
@@ -1644,7 +1931,7 @@ def batch_action_emails(req: BatchActionRequest):
             else:
                 conn.execute(
                     "INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)",
-                    (eid, req.label_id)
+                    (eid, lbl["id"])
                 )
                 added += 1
                 if rem_lbl_id and t.get("uid"):
@@ -1652,24 +1939,90 @@ def batch_action_emails(req: BatchActionRequest):
         conn.execute(f"UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + req.email_ids)
         msg = f"Etiqueta actualizada (+{added} asignadas, -{removed} removidas)"
     elif req.action == "remove_label" and req.label_id:
-        lbl_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (req.label_id,)).fetchone()
-        rem_lbl_id = lbl_row["remote_id"] if lbl_row else None
-        conn.execute(f"DELETE FROM email_labels WHERE label_id = ? AND email_id IN ({placeholders})", [req.label_id] + req.email_ids)
+        for t in targets:
+            lbl = _resolve_label_for_email(conn, req.label_id, t["id"], t["account_id"], for_removal=True)
+            if not lbl:
+                continue
+            conn.execute("DELETE FROM email_labels WHERE email_id = ? AND label_id = ?", (t["id"], lbl["id"]))
+            if lbl["remote_id"] and t.get("uid"):
+                bg_label_ops.append((t["account_id"], t["uid"], None, [lbl["remote_id"]]))
         conn.execute(f"UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [now_iso] + req.email_ids)
-        if rem_lbl_id:
-            for t in targets:
-                if t.get("uid"):
-                    bg_label_ops.append((t["account_id"], t["uid"], None, [rem_lbl_id]))
         msg = f"Etiqueta removida de {len(req.email_ids)} correos"
     elif req.action == "move_folder" and req.folder:
-        conn.execute(f"UPDATE emails SET folder = ?, updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})", [req.folder, now_iso] + req.email_ids)
-        msg = f"{len(req.email_ids)} correos movidos a {req.folder}"
+        dest_folder = req.folder.upper()
+        conn.execute(
+            f"UPDATE emails SET folder = ?, source_folder = COALESCE(source_folder, folder, 'INBOX'), updated_at = ?, local_modified = 1 WHERE id IN ({placeholders})",
+            [dest_folder, now_iso] + req.email_ids
+        )
+        all_cats = ("CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS")
+        for t in targets:
+            if not t.get("uid"):
+                continue
+            old_f = (t.get("folder") or "INBOX").upper()
+            add_l = []
+            rem_l = []
+
+            if dest_folder == "INBOX":
+                add_l.append("INBOX")
+                if old_f in ("SPAM", "TRASH"):
+                    rem_l.append(old_f)
+                for c in all_cats:
+                    if old_f == c:
+                        rem_l.append(c)
+            elif dest_folder == "ARCHIVE":
+                rem_l.append("INBOX")
+                if old_f in ("SPAM", "TRASH"):
+                    rem_l.append(old_f)
+            elif dest_folder == "SPAM":
+                add_l.append("SPAM")
+                rem_l.append("INBOX")
+                if old_f == "TRASH":
+                    rem_l.append("TRASH")
+                for c in all_cats:
+                    if old_f == c:
+                        rem_l.append(c)
+            elif dest_folder == "TRASH":
+                add_l.append("TRASH")
+                rem_l.append("INBOX")
+                if old_f == "SPAM":
+                    rem_l.append("SPAM")
+                for c in all_cats:
+                    if old_f == c:
+                        rem_l.append(c)
+            elif dest_folder.startswith("CATEGORY_"):
+                add_l.append(dest_folder)
+                add_l.append("INBOX")
+                for c in all_cats:
+                    if c != dest_folder and (old_f == c or old_f.startswith("CATEGORY_")):
+                        rem_l.append(c)
+                if old_f in ("SPAM", "TRASH"):
+                    rem_l.append(old_f)
+
+            if add_l or rem_l:
+                bg_label_ops.append((t["account_id"], t["uid"], add_l or None, rem_l or None))
+
+        folder_names = {
+            "INBOX": "Recibidos",
+            "ARCHIVE": "Archivo",
+            "TRASH": "Papelera",
+            "SPAM": "Spam",
+            "CATEGORY_PROMOTIONS": "Promociones",
+            "CATEGORY_SOCIAL": "Social",
+            "CATEGORY_UPDATES": "Notificaciones",
+            "CATEGORY_FORUMS": "Foros"
+        }
+        dest_display = folder_names.get(dest_folder, dest_folder)
+        msg = f"{len(req.email_ids)} correo(s) movido(s) a {dest_display}"
     else:
         conn.close()
         raise HTTPException(status_code=400, detail="Acción no soportada")
 
     conn.commit()
     conn.close()
+
+    # Cuentas IMAP: reflejar en el servidor los cambios de carpeta (Archivar, Spam, Papelera, restaurar)
+    if req.action in ("archive", "spam", "trash", "move_folder"):
+        EmailService.schedule_imap_push(email_ids=req.email_ids)
 
     if bg_label_ops:
         def _bg_apply_ops():
@@ -1825,15 +2178,50 @@ def reset_agent_context():
     """Reinicia la conversación del agente Elio sin persistir el contexto anterior."""
     return {"success": True, "message": "Contexto de conversación reiniciado exitosamente."}
 
+_summary_cache = {}
+
 @app.get("/api/agent/summary")
-def get_agent_summary():
-    """Genera un resumen inteligente en tiempo real de correos sin leer, asuntos urgentes y citas próximas con recomendaciones de atención."""
+def get_agent_summary(lang: Optional[str] = "es", force: bool = False):
+    """Genera un resumen inteligente en tiempo real de correos sin leer, asuntos urgentes, citas de la semana, tareas, notas y recomendaciones con IA en español o inglés."""
+    cache_key = (lang or "es").lower()
+    now_ts = time.time()
+    if not force and cache_key in _summary_cache:
+        cached_entry = _summary_cache[cache_key]
+        if now_ts - cached_entry.get("time", 0) < 60:
+            return dict(cached_entry["data"])
+
     conn = get_db()
     
     # Total de correos sin leer excluyendo Papelera, Borradores y Spam
     unread_count = conn.execute(
         "SELECT COUNT(*) as c FROM emails WHERE is_read = 0 AND UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'DRAFT', 'DRAFTS', 'BORRADORES', 'SPAM', 'JUNK')"
     ).fetchone()["c"]
+
+    # Total de correos en bandeja de entrada
+    inbox_total = conn.execute(
+        "SELECT COUNT(*) as c FROM emails WHERE UPPER(COALESCE(folder, '')) IN ('INBOX', 'RECIBIDOS', '')"
+    ).fetchone()["c"]
+
+    # Conteo por categorías inteligentes IA (trabajo, finanzas, personal, boletines)
+    category_counts = {"trabajo": 0, "finanzas": 0, "personal": 0, "boletines": 0}
+    cat_rows = conn.execute("""
+        SELECT ai_tags FROM emails
+        WHERE UPPER(COALESCE(folder, '')) IN ('INBOX', 'RECIBIDOS', '')
+          AND is_read = 0 AND ai_tags IS NOT NULL AND ai_tags != ''
+    """).fetchall()
+    for crow in cat_rows:
+        try:
+            tags = json.loads(crow["ai_tags"]) if isinstance(crow["ai_tags"], str) else crow["ai_tags"]
+            if isinstance(tags, list):
+                for t in tags:
+                    t_lower = str(t).lower()
+                    if t_lower in category_counts:
+                        category_counts[t_lower] += 1
+        except Exception:
+            pass
+
+    acc_row = conn.execute("SELECT name, email, color FROM accounts LIMIT 1").fetchone()
+    account_info = dict(acc_row) if acc_row else None
 
     # Correos que requieren atención prioritaria (pagos, facturas, alertas de cuenta o seguridad)
     priority_rows = conn.execute("""
@@ -1860,42 +2248,240 @@ def get_agent_summary():
             ORDER BY date DESC LIMIT {3 - len(priority_rows)}
         """, p_ids if p_ids else []).fetchall()
 
+    # Notas adhesivas
+    notes_rows = conn.execute("SELECT id, content, color, z_index, created_at, updated_at FROM notes ORDER BY z_index DESC, id DESC").fetchall()
+    notes = [dict(r) for r in notes_rows]
+    notes_count = len(notes)
+
+    # Contactos de la libreta
+    contacts_count = conn.execute("SELECT COUNT(*) as c FROM contacts WHERE (is_pending = 0 OR is_pending IS NULL)").fetchone()["c"]
+    pending_contacts_count = conn.execute("SELECT COUNT(*) as c FROM contacts WHERE is_pending = 1").fetchone()["c"]
+
     conn.close()
 
-    # Próxima cita de la agenda
+    now = datetime.datetime.now()
+    today_prefix = now.strftime("%Y-%m-%d")
+
+    # Próxima cita de la agenda (la más próxima a partir de hoy)
     upcoming_event = None
     try:
-        events = CalendarService.get_events()
-        if events:
-            upcoming_event = events[0]
-    except Exception:
-        pass
+        all_events = CalendarService.get_events()
+        future_events = [e for e in all_events if e.get("start_time") and e["start_time"] >= today_prefix]
+        if future_events:
+            upcoming_event = future_events[0]
+    except Exception as e:
+        logger.error(f"Error obteniendo próxima cita: {e}")
 
-    # Generar texto de recomendaciones contextuales
-    recommendations = []
-    has_disney_or_payment = any("pago" in (r["subject"] or "").lower() or "suspensi" in (r["subject"] or "").lower() for r in priority_rows)
-    has_invoice = any("factura" in (r["subject"] or "").lower() for r in priority_rows)
+    # Eventos de la semana actual (lunes a domingo, o próximos 7 días)
+    week_events = []
+    try:
+        start_of_week = (now - datetime.timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_week = (start_of_week + datetime.timedelta(days=6)).replace(hour=23, minute=59, second=59)
+        evs = CalendarService.get_events(start_of_week.isoformat(), end_of_week.isoformat())
+        if now.weekday() >= 5 or len([e for e in evs if e.get("start_time") and e["start_time"] >= today_prefix]) == 0:
+            next_7 = CalendarService.get_events(now.strftime("%Y-%m-%d 00:00:00"), (now + datetime.timedelta(days=7)).strftime("%Y-%m-%d 23:59:59"))
+            seen_ids = set(e["id"] for e in evs)
+            for ue in next_7:
+                if ue["id"] not in seen_ids:
+                    evs.append(ue)
+        week_events = evs
+    except Exception as e:
+        logger.error(f"Error obteniendo eventos de la semana: {e}")
 
-    if has_disney_or_payment:
-        recommendations.append("Revisar prioritariamente los avisos de pagos y alertas de cuenta para prevenir cortes en tus suscripciones.")
-    if has_invoice:
-        recommendations.append("Comprobar los importes y fechas de vencimiento de las facturas recientes.")
-    if upcoming_event:
-        start_fmt = upcoming_event['start_time'].replace('T', ' ')
-        recommendations.append(f"Considerar tu próxima cita: '{upcoming_event['title']}' ({start_fmt}).")
-    if unread_count > 0 and not recommendations:
-        recommendations.append(f"Tienes {unread_count} correos sin leer esperando tu lectura.")
+    # Tareas pendientes
+    pending_tasks = []
+    try:
+        pending_tasks = CalendarService.get_tasks(include_completed=False)
+    except Exception as e:
+        logger.error(f"Error obteniendo tareas pendientes: {e}")
 
-    rec_text = " ".join(recommendations) if recommendations else "Todo está en orden. No tienes asuntos pendientes de alta prioridad."
+    # Generación de síntesis ejecutiva con IA (Gemini) o heurística
+    ai_generated = False
+    rec_text = ""
+    is_en = (lang or "").lower().startswith("en")
+    p_subjects = [r["subject"] for r in priority_rows if r["subject"]]
+    task_titles = [t["title"].replace("[Tarea]", "").strip() for t in pending_tasks[:4] if t.get("title")]
+    notes_snippets = [n["content"][:60].replace("\n", " ").strip() for n in notes[:4] if n.get("content")]
+    week_events_summary = [f"'{e['title']}' ({e.get('start_time', '').replace('T', ' ')})" for e in week_events[:4] if e.get("title")]
+    next_ev_str = f"'{upcoming_event['title']}' ({upcoming_event['start_time'].replace('T', ' ')})" if upcoming_event else ("No scheduled events" if is_en else "Sin citas agendadas")
 
-    return {
+    api_key = get_setting("gemini_api_key")
+    if api_key:
+        try:
+            client = GeminiService.get_client()
+            model = get_setting("gemini_model") or "gemini-3.5-flash-lite"
+            
+            if is_en:
+                prompt_context = f"""Generate a concise, professional executive briefing (2 to 4 fluid sentences in English) synthesizing the user's current workday across all modules:
+1. Inbox: {unread_count} unread emails ({inbox_total} total). Categories: {category_counts['trabajo']} work, {category_counts['finanzas']} finance, {category_counts['personal']} personal, {category_counts['boletines']} newsletters. Urgent alerts/invoices: {', '.join(p_subjects) if p_subjects else 'None'}.
+2. Schedule: Next appointment: {next_ev_str}. Weekly events ({len(week_events)} total): {', '.join(week_events_summary) if week_events_summary else 'No events this week'}.
+3. Pending Tasks ({len(pending_tasks)}): {', '.join(task_titles) if task_titles else 'None'}.
+4. Sticky Notes on Board ({notes_count}): {'; '.join(notes_snippets) if notes_snippets else 'No notes'}.
+
+MANDATORY: Synthesize all 4 areas (emails and category distribution, weekly schedule, pending tasks, and active sticky notes) into a cohesive summary. Do not omit any area. Return only the summary text without headings, greetings, or bullet points."""
+            else:
+                prompt_context = f"""Genera una síntesis ejecutiva concisa y profesional (de 2 a 4 oraciones fluidas en español de Latinoamérica) que consolide el estado de trabajo del usuario integrando todas las áreas:
+1. Bandeja de correos: {unread_count} correos sin leer de {inbox_total}. Distribución: {category_counts['trabajo']} de trabajo, {category_counts['finanzas']} de finanzas, {category_counts['personal']} personales, {category_counts['boletines']} boletines. Alertas o facturas urgentes: {', '.join(p_subjects) if p_subjects else 'Ninguna urgente'}.
+2. Agenda y Citas: Próxima cita: {next_ev_str}. Citas de la semana ({len(week_events)} en total): {', '.join(week_events_summary) if week_events_summary else 'Sin citas programadas esta semana'}.
+3. Tareas pendientes ({len(pending_tasks)}): {', '.join(task_titles) if task_titles else 'Al día sin tareas pendientes'}.
+4. Pizarra de notas adhesivas ({notes_count} notas): {'; '.join(notes_snippets) if notes_snippets else 'Pizarra vacía'}.
+
+REGLA OBLIGATORIA: Debes sintetizar e incluir expresamente las 4 áreas (correos y categorías, agenda de la semana, tareas pendientes y notas de la pizarra). No omitas ninguna de estas áreas marcadas. Devuelve únicamente el párrafo de texto en español de Latinoamérica, sin encabezados, saludos ni viñetas."""
+
+            resp = GeminiService._generate_with_fallback(
+                client=client,
+                preferred_model=model,
+                contents=prompt_context,
+                config=types.GenerateContentConfig(temperature=0.3)
+            )
+            if resp and resp.text and resp.text.strip():
+                rec_text = resp.text.strip()
+                ai_generated = True
+        except Exception as e:
+            logger.warning(f"No se pudo generar síntesis con Gemini: {e}")
+
+    if not rec_text:
+        recommendations = []
+        has_disney_or_payment = any("pago" in (r["subject"] or "").lower() or "suspensi" in (r["subject"] or "").lower() for r in priority_rows)
+        has_invoice = any("factura" in (r["subject"] or "").lower() for r in priority_rows)
+
+        if is_en:
+            # 1. Correos y categorías
+            if has_disney_or_payment:
+                recommendations.append("Review payment alerts and account notifications promptly to avoid subscription interruptions.")
+            elif has_invoice:
+                recommendations.append("Check amounts and due dates of recent invoices.")
+            elif unread_count > 0:
+                cat_parts = [f"{v} {k}" for k, v in category_counts.items() if v > 0]
+                cat_info = f" ({', '.join(cat_parts)})" if cat_parts else ""
+                recommendations.append(f"You have {unread_count} unread emails{cat_info} in your inbox.")
+
+            # 2. Agenda y citas
+            if upcoming_event:
+                start_fmt = upcoming_event['start_time'].replace('T', ' ')
+                recommendations.append(f"Keep in mind your next appointment: '{upcoming_event['title']}' ({start_fmt}).")
+            elif len(week_events) > 0:
+                recommendations.append(f"You have {len(week_events)} event(s) scheduled for this week.")
+
+            # 3. Tareas pendientes
+            if pending_tasks:
+                first_task = f": '{task_titles[0]}'" if task_titles else ""
+                recommendations.append(f"You have {len(pending_tasks)} pending task(s){first_task}.")
+
+            # 4. Notas adhesivas
+            if notes_count > 0:
+                first_note = f" ('{notes_snippets[0]}')" if notes_snippets else ""
+                recommendations.append(f"You have {notes_count} active sticky note(s) on your board{first_note}.")
+
+            rec_text = " ".join(recommendations) if recommendations else "Everything is in order across your workspace. No high priority items pending."
+        else:
+            # 1. Correos y categorías
+            if has_disney_or_payment:
+                recommendations.append("Revisar prioritariamente los avisos de pagos y alertas de cuenta para prevenir cortes en tus suscripciones.")
+            elif has_invoice:
+                recommendations.append("Comprobar los importes y fechas de vencimiento de las facturas recientes.")
+            elif unread_count > 0:
+                cat_parts = [f"{v} de {k}" for k, v in category_counts.items() if v > 0]
+                cat_info = f" ({', '.join(cat_parts)})" if cat_parts else ""
+                recommendations.append(f"Tienes {unread_count} correos sin leer{cat_info} en tu bandeja.")
+
+            # 2. Agenda y citas
+            if upcoming_event:
+                start_fmt = upcoming_event['start_time'].replace('T', ' ')
+                recommendations.append(f"Considerar tu próxima cita: '{upcoming_event['title']}' ({start_fmt}).")
+            elif len(week_events) > 0:
+                recommendations.append(f"Tienes {len(week_events)} evento(s) programado(s) para esta semana.")
+
+            # 3. Tareas pendientes
+            if pending_tasks:
+                first_task = f": '{task_titles[0]}'" if task_titles else ""
+                recommendations.append(f"Tienes {len(pending_tasks)} tarea(s) pendiente(s){first_task}.")
+
+            # 4. Notas adhesivas
+            if notes_count > 0:
+                first_note = f" ('{notes_snippets[0]}')" if notes_snippets else ""
+                recommendations.append(f"Tienes {notes_count} nota(s) activa(s) en tu pizarra{first_note}.")
+
+            rec_text = " ".join(recommendations) if recommendations else "Todo está en orden en tu espacio de trabajo. No tienes asuntos pendientes de alta prioridad."
+
+    result = {
         "success": True,
         "unread_count": unread_count,
+        "inbox_total": inbox_total,
+        "category_counts": category_counts,
+        "account": account_info,
         "priority_emails": [dict(r) for r in priority_rows],
         "recent_unreads": [dict(r) for r in unread_rows],
         "upcoming_event": upcoming_event,
-        "recommendation": rec_text
+        "week_events": week_events,
+        "pending_tasks": pending_tasks,
+        "notes": notes,
+        "notes_count": notes_count,
+        "contacts_count": contacts_count,
+        "pending_contacts_count": pending_contacts_count,
+        "recommendation": rec_text,
+        "ai_generated": ai_generated
     }
+    _summary_cache[cache_key] = {"time": now_ts, "data": result}
+    return result
+
+@app.get("/api/voice/tts")
+def get_voice_tts(text: str, lang: str = "es"):
+    """Sintetiza audio MP3 nativo de alta fidelidad para narración de resúmenes ejecutivos y respuestas."""
+    if not text or not text.strip():
+        raise HTTPException(status_code=400, detail="Texto vacío para TTS")
+
+    clean_text = text.strip()[:1500]
+    cache_key = f"{lang}:{clean_text}"
+    if hasattr(get_voice_tts, "_cache") and cache_key in get_voice_tts._cache:
+        return Response(content=get_voice_tts._cache[cache_key], media_type="audio/mpeg")
+
+    import urllib.request
+    import urllib.parse
+    import re
+
+    sentences = [s.strip() for s in re.split(r'[\.\n\?!;]+', clean_text) if s.strip()]
+    if not sentences:
+        sentences = [clean_text]
+
+    audio_chunks = []
+    target_lang = "en" if lang.lower().startswith("en") else "es"
+    for s in sentences:
+        words = s.split(' ')
+        chunk = ''
+        for w in words:
+            if len(chunk) + len(w) + 1 > 140:
+                if chunk:
+                    url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={urllib.parse.quote(chunk)}&tl={target_lang}&client=tw-ob"
+                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                    try:
+                        with urllib.request.urlopen(req, timeout=4.0) as r:
+                            audio_chunks.append(r.read())
+                    except Exception as err:
+                        logger.warning(f"Error descargando fragmento TTS: {err}")
+                chunk = w
+            else:
+                chunk = (chunk + ' ' + w).strip()
+        if chunk:
+            url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={urllib.parse.quote(chunk)}&tl={target_lang}&client=tw-ob"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            try:
+                with urllib.request.urlopen(req, timeout=4.0) as r:
+                    audio_chunks.append(r.read())
+            except Exception as err:
+                logger.warning(f"Error descargando fragmento TTS: {err}")
+
+    if not audio_chunks:
+        raise HTTPException(status_code=502, detail="No se pudo sintetizar el audio")
+
+    audio_bytes = b"".join(audio_chunks)
+    if not hasattr(get_voice_tts, "_cache"):
+        get_voice_tts._cache = {}
+    if len(get_voice_tts._cache) > 200:
+        get_voice_tts._cache.clear()
+    get_voice_tts._cache[cache_key] = audio_bytes
+
+    return Response(content=audio_bytes, media_type="audio/mpeg")
 
 # --- ENDPOINTS DE LIBRETA DE CONTACTOS / AGENDA DE DIRECCIONES ---
 class ContactCreateRequest(BaseModel):
@@ -1917,9 +2503,29 @@ class ContactUpdateRequest(BaseModel):
     address: Optional[str] = None
     notes: Optional[str] = None
 
+class ContactBatchActionRequest(BaseModel):
+    ids: List[int]
+
 @app.get("/api/contacts")
-def list_contacts(q: str = "", limit: int = 300):
-    return ContactsService.get_contacts(q=q, limit=limit)
+def list_contacts(q: str = "", limit: int = 300, include_pending: bool = False):
+    return ContactsService.get_contacts(q=q, limit=limit, include_pending=include_pending)
+
+@app.get("/api/contacts/pending")
+def list_pending_contacts():
+    return ContactsService.get_pending_contacts()
+
+@app.post("/api/contacts/confirm")
+def confirm_contacts(req: ContactBatchActionRequest):
+    return ContactsService.confirm_contacts(req.ids)
+
+@app.post("/api/contacts/reject")
+def reject_contacts(req: ContactBatchActionRequest):
+    return ContactsService.reject_contacts(req.ids)
+
+@app.post("/api/contacts/delete-batch")
+def delete_contacts_batch(req: ContactBatchActionRequest):
+    count = ContactsService.delete_contacts_batch(req.ids)
+    return {"success": True, "deleted_count": count}
 
 @app.get("/api/contacts/{contact_id}")
 def get_contact_detail(contact_id: int):
@@ -2029,6 +2635,145 @@ def summarize_email(email_id: int):
     finally:
         conn.close()
 
+@app.get("/api/ai/commitments/{email_id}")
+def get_email_commitments(email_id: int):
+    """Detecta compromisos, tareas y acuerdos de un correo mediante IA."""
+    conn = get_db()
+    row = conn.execute("SELECT subject, sender, snippet, body_text FROM emails WHERE id = ?", (email_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+
+    body = row["body_text"] or row["snippet"] or ""
+    try:
+        commitments = GeminiService.detect_commitments(row["subject"], row["sender"], body)
+        return {"success": True, "commitments": commitments}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/ai/commitments/convert")
+def convert_commitment(req: CommitmentConvertRequest):
+    """Convierte un compromiso detectado en una Tarea de Calendario o Nota Adhesiva."""
+    clean_title = (req.title or "Compromiso de correo").strip()
+    conn = get_db()
+    try:
+        if req.target_type == "task":
+            cal_id = CalendarService.get_default_calendar_id()
+            task_event = CalendarService.create_event(
+                calendar_id=cal_id,
+                title=f"[Tarea] {clean_title}",
+                description=f"Compromiso detectado por Elio en correo #{req.email_id}" + (f" (Plazo: {req.due_hint})" if req.due_hint else ""),
+                is_task=1,
+                origin_email_id=req.email_id
+            )
+            return {"success": True, "type": "task", "message": "Tarea agregada a la agenda", "id": task_event["id"]}
+        else:
+            from datetime import datetime
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cur = conn.cursor()
+            note_content = f"📌 {clean_title}" + (f"\n⏳ Plazo: {req.due_hint}" if req.due_hint else "") + f"\n(Ref: Correo #{req.email_id})"
+            cur.execute("""
+                INSERT INTO notes (content, color, x, y, width, height, z_index, created_at, updated_at)
+                VALUES (?, 'yellow', 150, 150, 220, 170, 10, ?, ?)
+            """, (note_content, now_str, now_str))
+            conn.commit()
+            note_id = cur.lastrowid
+            return {"success": True, "type": "note", "message": "Nota añadida a la pizarra", "id": note_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+class TranslateEmailRequest(BaseModel):
+    email_id: Optional[int] = None
+    subject: str = ""
+    body: Optional[str] = None
+    text: Optional[str] = None
+    target_lang: str = "es"
+
+@app.post("/api/ai/translate")
+def translate_email_endpoint(req: TranslateEmailRequest):
+    """Traduce un correo electrónico (asunto y cuerpo) al idioma destino usando Gemini."""
+    subject = req.subject or ""
+    body = req.body or req.text or ""
+    if req.email_id and not body:
+        conn = get_db()
+        row = conn.execute("SELECT subject, body_html, body_text, snippet FROM emails WHERE id = ?", (req.email_id,)).fetchone()
+        conn.close()
+        if row:
+            subject = subject or row["subject"] or ""
+            body = row["body_html"] or row["body_text"] or row["snippet"] or ""
+
+    if not body and not subject:
+        raise HTTPException(status_code=400, detail="No se proporcionó contenido para traducir.")
+
+    api_key = get_setting("gemini_api_key")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Gemini API Key no configurada para traducción.")
+
+    try:
+        res = GeminiService.translate_email(subject, body, req.target_lang)
+        res["translated_subject"] = res.get("subject", subject)
+        res["translated_text"] = res.get("body", body)
+        return res
+    except Exception as e:
+        logger.error(f"Error en traducción de correo: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ai/classify/{email_id}")
+def classify_single_email(email_id: int):
+    """Clasifica un correo en categoría ejecutiva inteligente con IA y actualiza ai_tags."""
+    import json
+    conn = get_db()
+    row = conn.execute("SELECT id, subject, sender, snippet, body_text, ai_tags FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+
+    category = GeminiService.classify_email(row["subject"], row["sender"], row["snippet"] or "", row["body_text"] or "")
+    tags = [category]
+    conn.execute("UPDATE emails SET ai_tags = ? WHERE id = ?", (json.dumps(tags), email_id))
+    conn.commit()
+    conn.close()
+    return {"success": True, "email_id": email_id, "category": category, "tags": tags}
+
+@app.post("/api/ai/classify-batch")
+def classify_batch_emails(req: AIClassifyBatchRequest):
+    """Clasifica en lote los correos que no tengan categoría asignada."""
+    import json
+    conn = get_db()
+    if req.email_ids:
+        placeholders = ",".join("?" for _ in req.email_ids)
+        rows = conn.execute(f"SELECT id, subject, sender, snippet, body_text FROM emails WHERE id IN ({placeholders})", req.email_ids).fetchall()
+    else:
+        limit = max(10, min(1000, req.limit or 50))
+        rows = conn.execute(
+            "SELECT id, subject, sender, snippet, body_text FROM emails WHERE (ai_tags IS NULL OR ai_tags = '' OR ai_tags = '[]') AND UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'SPAM') ORDER BY date DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+
+    classified = []
+    for r in rows:
+        cat = GeminiService.classify_email(r["subject"], r["sender"], r["snippet"] or "", r["body_text"] or "")
+        tags = [cat]
+        conn.execute("UPDATE emails SET ai_tags = ? WHERE id = ?", (json.dumps(tags), r["id"]))
+        classified.append({"id": r["id"], "category": cat})
+    
+    conn.commit()
+    conn.close()
+    return {
+        "success": True,
+        "count": len(classified),
+        "classified": classified,
+        "results": [{"id": c["id"], "tags": [c["category"]], "category": c["category"]} for c in classified]
+    }
+
+@app.post("/api/ai/classify-all")
+def classify_all_emails():
+    """Clasifica todos los correos no clasificados en la base de datos."""
+    count = auto_classify_unclassified_emails(limit=2000)
+    return {"success": True, "classified_count": count}
+
 @app.post("/api/ai/cleanup-preview")
 def cleanup_preview(req: AICleanupRequest):
     """Evalúa todos los correos de todas las cuentas, carpetas y etiquetas según el prompt,
@@ -2126,28 +2871,47 @@ def sync_calendars():
         
         google_results = []
         any_api_disabled = False
+        any_reauth_needed = False
+        reauth_accounts = []
         enable_url = None
 
         for g_acc in google_accounts:
+            acc_id = g_acc["id"]
             try:
-                res_cal = GoogleOAuthService.sync_google_calendar(g_acc["id"])
-                res_tasks = GoogleOAuthService.sync_google_tasks(g_acc["id"])
-                google_results.append({"account_id": g_acc["id"], "calendar": res_cal, "tasks": res_tasks})
-                if isinstance(res_cal, dict) and res_cal.get("api_disabled"):
-                    any_api_disabled = True
-                    enable_url = res_cal.get("enable_url")
+                res_cal = GoogleOAuthService.sync_google_calendar(acc_id)
+                res_tasks = GoogleOAuthService.sync_google_tasks(acc_id)
+                google_results.append({"account_id": acc_id, "calendar": res_cal, "tasks": res_tasks})
+                if isinstance(res_cal, dict):
+                    if res_cal.get("api_disabled"):
+                        any_api_disabled = True
+                        enable_url = res_cal.get("enable_url")
+                    if res_cal.get("needs_reauth") or "invalid_grant" in str(res_cal.get("error", "")):
+                        any_reauth_needed = True
+                        if acc_id not in reauth_accounts:
+                            reauth_accounts.append(acc_id)
+                if isinstance(res_tasks, dict):
+                    if res_tasks.get("needs_reauth") or "invalid_grant" in str(res_tasks.get("error", "")):
+                        any_reauth_needed = True
+                        if acc_id not in reauth_accounts:
+                            reauth_accounts.append(acc_id)
             except Exception as ge:
-                print(f"[Calendar Sync] Aviso en cuenta Google {g_acc['id']}: {ge}")
+                print(f"[Calendar Sync] Aviso en cuenta Google {acc_id}: {ge}")
 
         if any_api_disabled:
             return {
                 "success": False,
                 "api_disabled": True,
-                "enable_url": enable_url or "https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=627907237091",
+                "needs_reauth": any_reauth_needed,
+                "reauth_accounts": reauth_accounts,
+                "enable_url": enable_url or GoogleOAuthService.build_api_enable_url("calendar-json.googleapis.com"),
                 "message": "La API de Google Calendar está deshabilitada en la consola de Google Cloud para este proyecto."
             }
 
-        return {"success": True, "message": "Calendarios sincronizados", "details": google_results}
+        return {
+            "success": True,
+            "message": "Calendarios sincronizados",
+            "details": google_results
+        }
     except Exception as e:
         print(f"[Calendar Sync] Error general: {e}")
         return {"success": False, "error": str(e)}
@@ -2272,49 +3036,138 @@ def create_event_from_email(email_id: int, calendar_id: Optional[int] = Query(No
         raise HTTPException(status_code=400, detail=str(e))
 
 # --- ENDPOINTS DE ETIQUETAS (LABELS) ---
+def _resolve_label_for_email(conn, label_id: int, email_id: int, email_account_id: Optional[int], for_removal: bool = False) -> Optional[Dict[str, Any]]:
+    """Etiqueta efectiva al asignar/quitar `label_id` en un correo de `email_account_id`.
+
+    Las etiquetas pertenecen a una cuenta. Si se elige una etiqueta de OTRA cuenta (p. ej. con
+    "Todas las cuentas" seleccionado):
+      - Se usa la etiqueta homónima (mismo nombre) de la cuenta del correo.
+      - Si la cuenta del correo no la tiene, se CREA en esa cuenta (mismo nombre y color) y se usa.
+    Las etiquetas compartidas (sin cuenta) y las de la misma cuenta del correo se usan tal cual.
+    Al quitar (`for_removal`) nunca se crea nada: se quita la asignada exacta o su homónima.
+    """
+    row = conn.execute("SELECT id, name, color, account_id, remote_id FROM labels WHERE id = ?", (label_id,)).fetchone()
+    if not row:
+        return None
+    lbl = dict(row)
+    if lbl["account_id"] is None or lbl["account_id"] == email_account_id or email_account_id is None:
+        return lbl
+    if for_removal and conn.execute(
+        "SELECT 1 FROM email_labels WHERE email_id = ? AND label_id = ?", (email_id, label_id)
+    ).fetchone():
+        lbl["remote_id"] = None
+        return lbl
+    same = _find_label_in_account(conn, email_account_id, lbl["name"])
+    if same:
+        return same
+    if for_removal:
+        lbl["remote_id"] = None
+        return lbl
+    # Crear la etiqueta en la cuenta del correo (y en Gmail si la cuenta es Gmail)
+    from datetime import datetime
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    _, remote_id, _ = _create_remote_label_if_gmail(email_account_id, lbl["name"], lbl["color"])
+    cur = conn.execute(
+        "INSERT INTO labels (name, color, account_id, remote_id, type, updated_at, local_modified) VALUES (?, ?, ?, ?, 'user', ?, 1)",
+        (lbl["name"], lbl["color"] or "#3b82f6", email_account_id, remote_id, now_iso)
+    )
+    return {"id": cur.lastrowid, "name": lbl["name"], "color": lbl["color"], "account_id": email_account_id, "remote_id": remote_id}
+
+def _create_remote_label_if_gmail(account_id: Optional[int], name: str, color: Optional[str]):
+    """Si la cuenta es Gmail (OAuth), crea la etiqueta también en Gmail.
+    Devuelve (es_gmail, remote_id, error). Si falla, la etiqueta queda local y se reintenta
+    en la próxima sincronización de etiquetas (push_pending_local_labels)."""
+    if not GoogleOAuthService.is_gmail_api_account(account_id):
+        return False, None, None
+    try:
+        return True, GoogleOAuthService.create_gmail_label(account_id, name, color), None
+    except Exception as e:
+        print(f"Aviso: no se pudo crear la etiqueta '{name}' en Gmail: {e}")
+        return True, None, str(e)
+
+def _find_label_in_account(conn, account_id: int, name: str) -> Optional[Dict[str, Any]]:
+    """Etiqueta de `account_id` con ese nombre (sin distinguir mayúsculas), o None."""
+    key = (name or "").strip().casefold()
+    for row in conn.execute(
+        "SELECT id, name, color, account_id, remote_id FROM labels WHERE account_id = ? ORDER BY id", (account_id,)
+    ).fetchall():
+        if (row["name"] or "").strip().casefold() == key:
+            return dict(row)
+    return None
+
 @app.get("/api/labels")
 def list_labels(account_id: Optional[int] = None):
+    """Lista de etiquetas.
+
+    - Sin account_id ("Todas las cuentas"): todas las etiquetas de todas las cuentas.
+    - Con account_id: solo las etiquetas de esa cuenta, es decir, las propias de la cuenta
+      (labels.account_id = cuenta) más cualquier otra etiqueta que esté en uso en algún
+      correo de esa cuenta.
+
+    Cada etiqueta incluye `account_ids`: cuentas cuyos correos tienen asignada la etiqueta.
+    """
     conn = get_db()
 
-    effective_acc_id = account_id
-    if not effective_acc_id:
-        acc = conn.execute("SELECT id, auth_type FROM accounts WHERE is_active = 1 ORDER BY id ASC LIMIT 1").fetchone()
-        if acc:
-            effective_acc_id = acc["id"]
-
-    if effective_acc_id:
-        existing_acc_labels = conn.execute("SELECT COUNT(*) as total FROM labels WHERE account_id = ?", (effective_acc_id,)).fetchone()["total"]
-        if existing_acc_labels == 0:
-            acc_info = conn.execute("SELECT auth_type FROM accounts WHERE id = ?", (effective_acc_id,)).fetchone()
-            if acc_info and acc_info["auth_type"] == "oauth2":
-                threading.Thread(
-                    target=GoogleOAuthService.sync_gmail_labels,
-                    args=(effective_acc_id, True),
-                    daemon=True
-                ).start()
-
+    # Auto-sincronizar etiquetas de Gmail (OAuth) en cuentas que aún no tienen ninguna.
+    # En "Todas las cuentas" se revisan todas las cuentas activas, no solo la primera.
     if account_id:
-        rows = conn.execute("SELECT * FROM labels WHERE account_id = ? OR account_id IS NULL ORDER BY name ASC", (account_id,)).fetchall()
+        candidate_accs = conn.execute("SELECT id, auth_type FROM accounts WHERE id = ?", (account_id,)).fetchall()
     else:
-        rows = conn.execute("SELECT * FROM labels ORDER BY name ASC").fetchall()
+        candidate_accs = conn.execute("SELECT id, auth_type FROM accounts WHERE is_active = 1 ORDER BY id ASC").fetchall()
+    for acc in candidate_accs:
+        if acc["auth_type"] != "oauth2":
+            continue
+        existing_acc_labels = conn.execute("SELECT COUNT(*) as total FROM labels WHERE account_id = ?", (acc["id"],)).fetchone()["total"]
+        if existing_acc_labels == 0:
+            threading.Thread(
+                target=GoogleOAuthService.sync_gmail_labels,
+                args=(acc["id"], True),
+                daemon=True
+            ).start()
 
+    rows = conn.execute("SELECT * FROM labels WHERE COALESCE(type, 'user') != 'system' ORDER BY name COLLATE NOCASE ASC, account_id ASC").fetchall()
+    usage_rows = conn.execute(
+        """SELECT DISTINCT el.label_id, e.account_id
+           FROM email_labels el
+           JOIN emails e ON e.id = el.email_id
+           WHERE e.account_id IS NOT NULL"""
+    ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+
+    usage_by_label: Dict[int, List[int]] = {}
+    for u in usage_rows:
+        usage_by_label.setdefault(u["label_id"], []).append(u["account_id"])
+
+    labels = []
+    for r in rows:
+        lbl = dict(r)
+        lbl["account_ids"] = sorted(usage_by_label.get(lbl["id"], []))
+        if account_id:
+            owned = lbl["account_id"] == account_id
+            in_use = account_id in lbl["account_ids"]
+            if not (owned or in_use):
+                continue
+        labels.append(lbl)
+    return labels
 
 @app.post("/api/labels/sync")
 def sync_labels(account_id: Optional[int] = None):
     conn = get_db()
-    if not account_id:
-        acc = conn.execute("SELECT id FROM accounts WHERE is_active = 1 ORDER BY id ASC LIMIT 1").fetchone()
-        if acc:
-            account_id = acc["id"]
-        else:
+    if account_id:
+        target_ids = [account_id]
+    else:
+        # "Todas las cuentas": sincronizar las etiquetas de todas las cuentas Gmail (OAuth) activas
+        all_accs = conn.execute("SELECT id, auth_type FROM accounts WHERE is_active = 1 ORDER BY id ASC").fetchall()
+        if not all_accs:
             conn.close()
             return {"success": False, "error": "No hay cuentas configuradas"}
+        target_ids = [a["id"] for a in all_accs if a["auth_type"] == "oauth2"]
     conn.close()
 
     from backend.google_oauth import GoogleOAuthService
-    labels = GoogleOAuthService.sync_gmail_labels(account_id, force=True)
+    labels = []
+    for acc_id in target_ids:
+        labels.extend(GoogleOAuthService.sync_gmail_labels(acc_id, force=True))
     return {"success": True, "count": len(labels), "labels": labels}
 
 @app.post("/api/labels")
@@ -2322,27 +3175,78 @@ def create_label(req: LabelCreateRequest):
     from datetime import datetime
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="El nombre de la etiqueta es obligatorio")
+    name = req.name.strip()
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO labels (name, color, account_id, updated_at, local_modified) VALUES (?, ?, ?, ?, 1)", (req.name.strip(), req.color or "#3b82f6", req.account_id, now_iso))
-    conn.commit()
-    label_id = cursor.lastrowid
+    # Si la cuenta ya tiene una etiqueta con ese nombre se reutiliza en lugar de duplicarla
+    existing = _find_label_in_account(conn, req.account_id, name) if req.account_id else None
     conn.close()
-    return {"success": True, "label_id": label_id, "name": req.name.strip(), "color": req.color, "account_id": req.account_id}
+
+    # En cuentas Gmail (OAuth) la etiqueta se crea también en Gmail (o se vincula si ya existe allí)
+    is_gmail, remote_id, gmail_error = (False, None, None)
+    if not existing or not existing.get("remote_id"):
+        is_gmail, remote_id, gmail_error = _create_remote_label_if_gmail(
+            req.account_id, existing["name"] if existing else name, existing["color"] if existing else req.color
+        )
+    else:
+        is_gmail, remote_id = True, existing["remote_id"]
+
+    conn = get_db()
+    if existing:
+        label_id = existing["id"]
+        if remote_id and not existing.get("remote_id"):
+            conn.execute("UPDATE labels SET remote_id = ?, type = 'user' WHERE id = ?", (remote_id, label_id))
+        result_name, result_color = existing["name"], existing["color"]
+    else:
+        cursor = conn.execute(
+            "INSERT INTO labels (name, color, account_id, remote_id, type, updated_at, local_modified) VALUES (?, ?, ?, ?, 'user', ?, 1)",
+            (name, req.color or "#3b82f6", req.account_id, remote_id, now_iso)
+        )
+        label_id = cursor.lastrowid
+        result_name, result_color = name, req.color
+    conn.commit()
+    conn.close()
+    return {
+        "success": True, "existing": bool(existing), "label_id": label_id,
+        "name": result_name, "color": result_color, "account_id": req.account_id,
+        "gmail": {"is_gmail": is_gmail, "synced": bool(remote_id), "remote_id": remote_id, "error": gmail_error},
+    }
 
 @app.put("/api/labels/{label_id}")
 def update_label(label_id: int, req: LabelCreateRequest):
     from datetime import datetime
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
+    row = conn.execute("SELECT account_id, remote_id FROM labels WHERE id = ?", (label_id,)).fetchone()
     conn.execute("UPDATE labels SET name = ?, color = ?, updated_at = ?, local_modified = 1 WHERE id = ?", (req.name.strip(), req.color, now_iso, label_id))
     conn.commit()
     conn.close()
-    return {"success": True, "message": "Etiqueta actualizada"}
+
+    # Reflejar el cambio en Gmail si la etiqueta existe allí
+    gmail_error = None
+    if row and row["remote_id"] and GoogleOAuthService.is_gmail_api_account(row["account_id"]):
+        try:
+            GoogleOAuthService.update_gmail_label(row["account_id"], row["remote_id"], req.name.strip(), req.color)
+        except Exception as e:
+            gmail_error = str(e)
+            print(f"Aviso: no se pudo actualizar la etiqueta en Gmail: {e}")
+    return {"success": True, "message": "Etiqueta actualizada", "gmail_error": gmail_error}
 
 @app.delete("/api/labels/{label_id}")
 def delete_label(label_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT account_id, remote_id FROM labels WHERE id = ?", (label_id,)).fetchone()
+    conn.close()
+
+    # Eliminarla también en Gmail; si no, la próxima sincronización la volvería a importar
+    if row and row["remote_id"] and GoogleOAuthService.is_gmail_api_account(row["account_id"]):
+        try:
+            GoogleOAuthService.delete_gmail_label(row["account_id"], row["remote_id"])
+        except Exception as e:
+            msg = str(e)
+            if "404" not in msg and "not found" not in msg.lower():
+                raise HTTPException(status_code=502, detail=f"No se pudo eliminar la etiqueta en Gmail: {msg}")
+
     conn = get_db()
     conn.execute("DELETE FROM email_labels WHERE label_id = ?", (label_id,))
     conn.execute("DELETE FROM labels WHERE id = ?", (label_id,))
@@ -2355,22 +3259,27 @@ def add_label_to_email(email_id: int, req: EmailLabelRequest):
     from datetime import datetime
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
-    conn.execute("INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)", (email_id, req.label_id))
+    email_row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not email_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+    lbl = _resolve_label_for_email(conn, req.label_id, email_id, email_row["account_id"])
+    if not lbl:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Etiqueta no encontrada")
+    conn.execute("INSERT OR IGNORE INTO email_labels (email_id, label_id) VALUES (?, ?)", (email_id, lbl["id"]))
     conn.execute("UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id = ?", (now_iso, email_id))
     conn.commit()
-
-    email_row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
-    label_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (req.label_id,)).fetchone()
     conn.close()
 
-    if email_row and label_row and label_row["remote_id"] and email_row["uid"]:
+    if lbl["remote_id"] and email_row["uid"]:
         threading.Thread(
             target=GoogleOAuthService.modify_message_labels,
-            args=(email_row["account_id"], email_row["uid"], [label_row["remote_id"]], None),
+            args=(email_row["account_id"], email_row["uid"], [lbl["remote_id"]], None),
             daemon=True
         ).start()
 
-    return {"success": True, "message": "Etiqueta agregada al correo"}
+    return {"success": True, "message": "Etiqueta agregada al correo", "label_id": lbl["id"]}
 
 @app.delete("/api/emails/{email_id}/labels/{label_id}")
 def remove_label_from_email(email_id: int, label_id: int):
@@ -2378,17 +3287,146 @@ def remove_label_from_email(email_id: int, label_id: int):
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
     email_row = conn.execute("SELECT account_id, uid FROM emails WHERE id = ?", (email_id,)).fetchone()
-    label_row = conn.execute("SELECT remote_id FROM labels WHERE id = ?", (label_id,)).fetchone()
-    conn.execute("DELETE FROM email_labels WHERE email_id = ? AND label_id = ?", (email_id, label_id))
+    lbl = _resolve_label_for_email(conn, label_id, email_id, email_row["account_id"], for_removal=True) if email_row else None
+    target_label_id = lbl["id"] if lbl else label_id
+    conn.execute("DELETE FROM email_labels WHERE email_id = ? AND label_id = ?", (email_id, target_label_id))
     conn.execute("UPDATE emails SET updated_at = ?, local_modified = 1 WHERE id = ?", (now_iso, email_id))
     conn.commit()
     conn.close()
 
-    if email_row and label_row and label_row["remote_id"] and email_row["uid"]:
+    if email_row and lbl and lbl["remote_id"] and email_row["uid"]:
         threading.Thread(
             target=GoogleOAuthService.modify_message_labels,
-            args=(email_row["account_id"], email_row["uid"], None, [label_row["remote_id"]]),
+            args=(email_row["account_id"], email_row["uid"], None, [lbl["remote_id"]]),
             daemon=True
         ).start()
 
     return {"success": True, "message": "Etiqueta removida del correo"}
+
+# --- ENDPOINTS DE PIZARRA DE NOTAS ADHESIVAS (ORGANIZER) ---
+class NoteCreateRequest(BaseModel):
+    content: Optional[str] = ""
+    color: Optional[str] = "yellow"
+    x: Optional[int] = 20
+    y: Optional[int] = 20
+    width: Optional[int] = 220
+    height: Optional[int] = 170
+    z_index: Optional[int] = 1
+
+class NoteUpdateRequest(BaseModel):
+    content: Optional[str] = None
+    color: Optional[str] = None
+    x: Optional[int] = None
+    y: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    z_index: Optional[int] = None
+
+class NotePosBatchItem(BaseModel):
+    id: int
+    x: int
+    y: int
+
+class NoteBatchPositionsRequest(BaseModel):
+    positions: List[NotePosBatchItem]
+
+@app.get("/api/notes")
+def get_all_notes():
+    """Retorna todas las notas ordenadas por apilamiento z_index ascendente."""
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM notes ORDER BY z_index ASC, id ASC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@app.post("/api/notes")
+def create_note(req: NoteCreateRequest):
+    """Crea una nueva nota adhesiva en la pizarra."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO notes (content, color, x, y, width, height, z_index)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        req.content or "",
+        req.color or "yellow",
+        req.x if req.x is not None else 20,
+        req.y if req.y is not None else 20,
+        max(220, req.width or 220),
+        max(170, req.height or 170),
+        req.z_index if req.z_index is not None else 1
+    ))
+    new_id = cursor.lastrowid
+    conn.commit()
+    row = conn.execute("SELECT * FROM notes WHERE id = ?", (new_id,)).fetchone()
+    conn.close()
+    return dict(row)
+
+@app.put("/api/notes/{note_id}")
+def update_note(note_id: int, req: NoteUpdateRequest):
+    """Actualiza parcialmente una nota adhesiva."""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Nota no encontrada")
+
+    updates = []
+    params = []
+
+    if req.content is not None:
+        updates.append("content = ?")
+        params.append(req.content)
+    if req.color is not None:
+        updates.append("color = ?")
+        params.append(req.color)
+    if req.x is not None:
+        updates.append("x = ?")
+        params.append(req.x)
+    if req.y is not None:
+        updates.append("y = ?")
+        params.append(req.y)
+    if req.width is not None:
+        updates.append("width = ?")
+        params.append(max(220, req.width))
+    if req.height is not None:
+        updates.append("height = ?")
+        params.append(max(170, req.height))
+    if req.z_index is not None:
+        updates.append("z_index = ?")
+        params.append(req.z_index)
+
+    if updates:
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        query = f"UPDATE notes SET {', '.join(updates)} WHERE id = ?"
+        params.append(note_id)
+        conn.execute(query, params)
+        conn.commit()
+
+    updated_row = conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+    conn.close()
+    return dict(updated_row)
+
+@app.delete("/api/notes/{note_id}")
+def delete_note(note_id: int):
+    """Elimina una nota adhesiva de la pizarra."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Nota no encontrada")
+    return {"success": True, "message": "Nota eliminada exitosamente"}
+
+@app.post("/api/notes/batch-position")
+def batch_update_note_positions(req: NoteBatchPositionsRequest):
+    """Actualiza en lote las posiciones (x, y) de las notas al auto-organizar."""
+    conn = get_db()
+    cursor = conn.cursor()
+    for item in req.positions:
+        cursor.execute("UPDATE notes SET x = ?, y = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (item.x, item.y, item.id))
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": f"{len(req.positions)} notas actualizadas"}
+

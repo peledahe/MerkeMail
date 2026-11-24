@@ -7,19 +7,61 @@ from datetime import datetime
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "merkemail.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+DATA_DIR = DB_PATH.parent
+AVATARS_DIR = DATA_DIR / "avatars"
+AVATARS_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_db():
     conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA temp_store=MEMORY")
-    conn.execute("PRAGMA cache_size=-32000")
-    conn.execute("PRAGMA mmap_size=268435456")
     conn.row_factory = sqlite3.Row
     return conn
 
+def _migrate_emails_unique_constraint(conn):
+    """
+    La restricción original UNIQUE(account_id, folder, uid) impedía guardar un correo del buzón 'Spam' del
+    servidor con UID 5 si el usuario ya había movido a Spam el correo con UID 5 de 'INBOX' (los UID son
+    por buzón). Se reemplaza por un índice único que incluye el buzón de origen (source_folder).
+    Para correos sin buzón de origen (Gmail API, datos demo) la regla es exactamente la misma que antes.
+    SQLite no permite quitar una restricción de tabla: se reconstruye la tabla conservando columnas e ids.
+    """
+    import re
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'emails'").fetchone()
+    if not row or not row[0]:
+        return
+    old_unique = re.compile(r",\s*UNIQUE\s*\(\s*account_id\s*,\s*folder\s*,\s*uid\s*\)", re.IGNORECASE)
+    if old_unique.search(row[0]):
+        new_sql = old_unique.sub("", row[0], count=1)
+        new_sql = re.sub(r"^\s*CREATE TABLE\s+(IF NOT EXISTS\s+)?[\"`\[]?emails[\"`\]]?", "CREATE TABLE emails__rebuild",
+                         new_sql, count=1, flags=re.IGNORECASE)
+        conn.commit()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("DROP TABLE IF EXISTS emails__rebuild")
+            conn.execute(new_sql)
+            cols = ", ".join(f'"{r[1]}"' for r in conn.execute("PRAGMA table_info(emails)").fetchall())
+            conn.execute(f"INSERT INTO emails__rebuild ({cols}) SELECT {cols} FROM emails")
+            conn.execute("DROP TABLE emails")
+            conn.execute("ALTER TABLE emails__rebuild RENAME TO emails")
+            conn.commit()
+            print("[DB] Migración: restricción única de emails actualizada (incluye buzón de origen).")
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB] Aviso: no se pudo migrar la restricción única de emails: {e}")
+            return
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_emails_account_folder_uid_source "
+        "ON emails(account_id, folder, uid, COALESCE(source_folder, ''))"
+    )
+    conn.commit()
+
+
 def init_db():
     conn = get_db()
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA cache_size=-32000")
+    conn.execute("PRAGMA mmap_size=268435456")
     cursor = conn.cursor()
     
     # Tabla de cuentas de correo
@@ -67,6 +109,7 @@ def init_db():
         "ALTER TABLE contacts ADD COLUMN job_title TEXT",
         "ALTER TABLE contacts ADD COLUMN address TEXT",
         "ALTER TABLE contacts ADD COLUMN is_customized INTEGER DEFAULT 0",
+        "ALTER TABLE contacts ADD COLUMN is_pending INTEGER DEFAULT 0",
         "ALTER TABLE contacts ADD COLUMN updated_at TIMESTAMP",
         "ALTER TABLE emails ADD COLUMN updated_at TIMESTAMP",
         "ALTER TABLE emails ADD COLUMN local_modified INTEGER DEFAULT 0",
@@ -74,7 +117,8 @@ def init_db():
         "ALTER TABLE events ADD COLUMN local_modified INTEGER DEFAULT 0",
         "ALTER TABLE calendars ADD COLUMN updated_at TIMESTAMP",
         "ALTER TABLE labels ADD COLUMN updated_at TIMESTAMP",
-        "ALTER TABLE labels ADD COLUMN local_modified INTEGER DEFAULT 0"
+        "ALTER TABLE labels ADD COLUMN local_modified INTEGER DEFAULT 0",
+        "ALTER TABLE emails ADD COLUMN source_folder TEXT"
     ]
     for m in migrations:
         try:
@@ -104,6 +148,7 @@ def init_db():
             account_id INTEGER NOT NULL,
             uid TEXT NOT NULL,
             folder TEXT NOT NULL DEFAULT 'INBOX',
+            source_folder TEXT, -- buzón IMAP del servidor del que se descargó (la carpeta local puede cambiar al archivar/mover)
             sender TEXT NOT NULL,
             sender_name TEXT,
             recipient TEXT NOT NULL,
@@ -119,11 +164,17 @@ def init_db():
             ai_urgency TEXT, -- 'alta', 'media', 'baja'
             ai_tags TEXT, -- JSON array
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(account_id, folder, uid),
             FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE
         )
     ''')
-    
+
+    # Asegurar columnas añadidas después de crear la tabla emails (en una BD nueva el ALTER anterior aún no tenía tabla)
+    email_columns = [r["name"] for r in cursor.execute("PRAGMA table_info(emails)").fetchall()]
+    if "source_folder" not in email_columns:
+        cursor.execute("ALTER TABLE emails ADD COLUMN source_folder TEXT")
+    # Unicidad por buzón de origen (migra la restricción antigua UNIQUE(account_id, folder, uid))
+    _migrate_emails_unique_constraint(conn)
+
     # Tabla de calendarios (Google, Proton, etc.)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS calendars (
@@ -228,11 +279,13 @@ def init_db():
             source TEXT DEFAULT 'emails',
             notes TEXT,
             is_customized INTEGER DEFAULT 0,
+            is_pending INTEGER DEFAULT 0,
             interaction_count INTEGER DEFAULT 1,
             last_interacted_at DATETIME,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_contacts_pending ON contacts(is_pending)')
 
     # Registro de Contactos Eliminados deliberadamente para respetar exclusión en sincronizaciones
     cursor.execute('''
@@ -282,6 +335,23 @@ def init_db():
         )
     ''')
 
+    # Tabla de Pizarra de Notas Adhesivas Flotantes (Notas Post-it)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT DEFAULT '',
+            color TEXT DEFAULT 'yellow',
+            x INTEGER DEFAULT 20,
+            y INTEGER DEFAULT 20,
+            width INTEGER DEFAULT 220,
+            height INTEGER DEFAULT 170,
+            z_index INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_notes_zindex ON notes(z_index)')
+
     # Índices de alto rendimiento para acelerar listados, búsquedas, filtros y contadores
     indexes = [
         "CREATE INDEX IF NOT EXISTS idx_emails_acc_folder ON emails(account_id, folder)",
@@ -293,6 +363,7 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_emails_read_folder ON emails(is_read, folder, account_id)",
         "CREATE INDEX IF NOT EXISTS idx_emails_starred ON emails(is_starred)",
         "CREATE INDEX IF NOT EXISTS idx_emails_uid ON emails(account_id, uid)",
+        "CREATE INDEX IF NOT EXISTS idx_emails_acc_source_uid ON emails(account_id, source_folder, uid)",
         "CREATE INDEX IF NOT EXISTS idx_email_labels_eid ON email_labels(email_id, label_id)",
         "CREATE INDEX IF NOT EXISTS idx_email_labels_lid ON email_labels(label_id, email_id)",
         "CREATE INDEX IF NOT EXISTS idx_attachments_eid ON attachments(email_id)",

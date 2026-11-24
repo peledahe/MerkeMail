@@ -83,5 +83,5 @@ La aplicación estará disponible en: **http://127.0.0.1:8000**
 
 ## 📄 Licencia
 
-Este proyecto está licenciado bajo la **Business Source License 1.1 (BSL 1.1)**. Consulta el archivo [LICENSE](file:///home/perry/Desarrollo/MerkeMail/LICENSE) para conocer los términos completos y las concesiones de uso. En la fecha de cambio (Change Date), el código transiciona automáticamente a **GNU General Public License v2.0 or later (GPL-2.0-or-later)**.
+Este proyecto está licenciado bajo la **Licencia MIT**. Consulta el archivo [LICENSE](LICENSE) para conocer los términos completos.
 

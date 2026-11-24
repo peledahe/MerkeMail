@@ -4,6 +4,7 @@ set -e
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export MERKEMAIL_PORT="${MERKEMAIL_PORT:-6524}"
+export DISPLAY="${DISPLAY:-:0}"
 export PYTHONPATH="$DIR:$PYTHONPATH"
 
 PYTHON_BIN="$DIR/.venv/bin/python3"

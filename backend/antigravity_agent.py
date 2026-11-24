@@ -26,7 +26,7 @@ def _get_active_account(cuenta_hint: str = "") -> Dict[str, Any]:
     rows = conn.execute("SELECT id, name, email, provider, is_active FROM accounts WHERE is_active = 1").fetchall()
     conn.close()
     if not rows:
-        raise ValueError("No hay cuentas de correo activas configuradas en MerkeMail.")
+        raise ValueError("No hay cuentas de correo activas configuradas en Senda.")
     
     if cuenta_hint:
         hint_clean = str(cuenta_hint).lower().strip()
@@ -53,7 +53,7 @@ def buscar_correos(
     solo_no_leidos: bool = False,
     limite: int = 20
 ) -> str:
-    """Busca correos en TODAS las cuentas, TODAS las carpetas y TODAS las etiquetas de MerkeMail.
+    """Busca correos en TODAS las cuentas, TODAS las carpetas y TODAS las etiquetas de Senda.
     Por regla general NO incluye Papelera (TRASH), Borradores (DRAFT) ni Spam (SPAM) a menos que se indique explícitamente.
     Busca TANTO correos leídos como no leídos por defecto.
     
@@ -233,7 +233,7 @@ def leer_correo(id_correo: int) -> str:
     )
 
 def buscar_contactos(consulta: str) -> str:
-    """Busca contactos en la libreta de direcciones de MerkeMail por nombre o correo.
+    """Busca contactos en la libreta de direcciones de Senda por nombre o correo.
     
     Args:
         consulta: Nombre, apellido o dirección de correo a buscar.
@@ -293,7 +293,7 @@ def preparar_borrador_correo(destinatario: str, asunto: str, cuerpo: str, cuenta
     )
 
 def enviar_correo(destinatario: str, asunto: str, cuerpo: str, cuenta_remitente: str = "") -> str:
-    """Envía inmediatamente un correo electrónico a través del servidor de MerkeMail.
+    """Envía inmediatamente un correo electrónico a través del servidor de Senda.
     
     Args:
         destinatario: Dirección de correo del destinatario.
@@ -362,16 +362,19 @@ def eliminar_correos(ids_correos: str, permanente: bool = False) -> str:
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = get_db()
     placeholders = ",".join("?" for _ in ids)
-    target_rows = conn.execute(f"SELECT id, account_id, uid FROM emails WHERE id IN ({placeholders})", ids).fetchall()
+    target_rows = conn.execute(f"SELECT id, account_id, uid, folder, source_folder FROM emails WHERE id IN ({placeholders})", ids).fetchall()
     targets = [dict(r) for r in target_rows]
+    from backend.email_service import EmailService, deleted_email_key
 
     if permanente:
         for t in targets:
             if t.get("uid"):
                 conn.execute(
                     "INSERT OR REPLACE INTO deleted_emails (account_id, uid, deleted_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-                    (t["account_id"], t["uid"])
+                    (t["account_id"], deleted_email_key(t.get("source_folder"), t["uid"]))
                 )
+        conn.execute(f"DELETE FROM email_labels WHERE email_id IN ({placeholders})", ids)
+        conn.execute(f"DELETE FROM attachments WHERE email_id IN ({placeholders})", ids)
         conn.execute(f"DELETE FROM emails WHERE id IN ({placeholders})", ids)
         action_desc = "eliminado permanentemente"
     else:
@@ -395,6 +398,11 @@ def eliminar_correos(ids_correos: str, permanente: bool = False) -> str:
         except Exception:
             pass
     threading.Thread(target=_bg_sync_del, daemon=True).start()
+    # Cuentas IMAP: reflejar en el servidor (mover a su Papelera)
+    if permanente:
+        EmailService.schedule_imap_push(removed_rows=targets)
+    else:
+        EmailService.schedule_imap_push(email_ids=ids)
 
     del_data = {
         "ids": ids,
@@ -497,6 +505,11 @@ def gestionar_correos(ids_correos: str, accion: str, destino: str = "") -> str:
     conn.commit()
     conn.close()
 
+    # Cuentas IMAP: reflejar en el servidor los cambios de carpeta
+    if act in ("archivar", "archive", "spam", "no_spam", "not_spam", "mover_carpeta", "move_folder"):
+        from backend.email_service import EmailService
+        EmailService.schedule_imap_push(email_ids=ids)
+
     if add_remote_lbls or rem_remote_lbls:
         def _bg_mod():
             try:
@@ -514,7 +527,7 @@ def gestionar_correos(ids_correos: str, accion: str, destino: str = "") -> str:
     return f"[ACCION_ELIMINACION:{del_b64}]\n✔ {len(ids)} correo(s) han sido {desc} exitosamente."
 
 def agendar_evento_calendario(titulo: str, fecha_inicio: str, fecha_fin: str, lugar: str = "", notas: str = "", calendario_id: int = 0, videollamada: str = "", invitados: str = "", todo_el_dia: int = 0) -> str:
-    """Crea una cita, evento o tarea en el Calendario de MerkeMail con soporte para videollamadas, invitados y recurrencia. Se programa por defecto en el calendario configurado por el usuario, salvo que se especifique otro.
+    """Crea una cita, evento o tarea en el Calendario de Senda con soporte para videollamadas, invitados y recurrencia. Se programa por defecto en el calendario configurado por el usuario, salvo que se especifique otro.
     
     Args:
         titulo: Nombre o asunto de la reunión, evento o tarea.
@@ -575,6 +588,68 @@ def listar_proximos_eventos() -> str:
         res.append(f"- [📅 Ver cita #{ev['id']}: {ev['title']}](event:{ev['id']}) ({ev['calendar_name']}): {ev['start_time']} en {ev['location'] or 'Sin lugar'}")
     return "\n".join(res)
 
+def sincronizar_servicios(modulo: str = "todos") -> str:
+    """Sincroniza en tiempo real los servicios de la aplicación: 'calendario', 'contactos', 'correos' o 'todos'.
+    Útil cuando el usuario pide sincronizar, actualizar o refrescar sus calendarios, eventos, contactos o correos.
+    
+    Args:
+        modulo: 'calendario', 'contactos', 'correos' o 'todos'.
+    """
+    mod = (modulo or "todos").strip().lower()
+    results = []
+
+    # 1. Correos
+    if mod in ("todos", "correos", "emails", "inbox", "correo"):
+        try:
+            from backend.email_service import EmailService
+            EmailService.sync_emails_background()
+            results.append("✉️ Correos: Sincronización en segundo plano iniciada correctamente.")
+        except Exception as e:
+            results.append(f"✉️ Correos: Error al iniciar sincronización ({e})")
+
+    # 2. Contactos
+    if mod in ("todos", "contactos", "contacts"):
+        try:
+            from backend.contacts_service import ContactsService
+            c_res = ContactsService.sync_contacts()
+            synced_count = c_res.get("contacts_count", 0)
+            results.append(f"👥 Contactos: Sincronizados exitosamente ({synced_count} contactos actualizados).")
+        except Exception as e:
+            results.append(f"👥 Contactos: Error al sincronizar ({e})")
+
+    # 3. Calendarios y Tareas
+    if mod in ("todos", "calendario", "calendarios", "calendar", "eventos", "tareas"):
+        try:
+            from backend.calendar_service import CalendarService
+            from backend.google_oauth import GoogleOAuthService
+            CalendarService.ensure_google_calendars()
+            conn = get_db()
+            google_accounts = conn.execute("SELECT id FROM accounts WHERE is_active = 1 AND provider IN ('google', 'gmail')").fetchall()
+            conn.close()
+
+            cal_count = 0
+            task_count = 0
+            warnings = []
+            for g_acc in google_accounts:
+                res_cal = GoogleOAuthService.sync_google_calendar(g_acc["id"])
+                res_tasks = GoogleOAuthService.sync_google_tasks(g_acc["id"])
+                if isinstance(res_cal, dict):
+                    if res_cal.get("success"):
+                        cal_count += res_cal.get("synced", 0)
+                    elif res_cal.get("needs_reauth"):
+                        warnings.append(f"Cuenta #{g_acc['id']}: Sesión Google requiere reautenticación")
+                if isinstance(res_tasks, dict) and res_tasks.get("success"):
+                    task_count += res_tasks.get("synced", 0)
+
+            msg = f"📅 Calendario: Sincronizados {cal_count} eventos y {task_count} tareas."
+            if warnings:
+                msg += f" (Nota: {', '.join(warnings)})"
+            results.append(msg)
+        except Exception as e:
+            results.append(f"📅 Calendario: Error al sincronizar ({e})")
+
+    return "\n".join(results) if results else "No se seleccionó ningún módulo válido para sincronizar."
+
 # --- CLASE PRINCIPAL DEL ASISTENTE ANTIGRAVITY ---
 
 class AntigravityMailAgent:
@@ -625,7 +700,7 @@ class AntigravityMailAgent:
         if not cleaned_message:
             return {
                 "success": True,
-                "response": f"¡Hola! Soy **Elio**, tu asistente inteligente en MerkeMail. Tengo acceso a {services_str} y {cals_str}. ¿En qué puedo ayudarte hoy? Puedes pedirme buscar correos, redactar borradores o consultar tu agenda.",
+                "response": f"¡Hola! Soy **Elio**, tu asistente inteligente en Senda. Tengo acceso a {services_str} y {cals_str}. ¿En qué puedo ayudarte hoy? Puedes pedirme buscar correos, redactar borradores o consultar tu agenda.",
                 "tools_used": []
             }
 
@@ -644,7 +719,7 @@ class AntigravityMailAgent:
         ayer_str = (now - timedelta(days=1)).strftime("%Y-%m-%d (%d de %B de %Y)")
 
         system_instruction = (
-            f"Eres Elio, el asistente inteligente y copiloto autónomo integrado en MerkeMail. "
+            f"Eres Elio, el asistente inteligente y copiloto autónomo integrado en Senda. "
             f"El usuario puede interactuar contigo directamente o invocarte escribiendo @elio. "
             f"Tienes acceso a herramientas en tiempo real para buscar correos, leer correos, gestionar correos (archivar, etiquetar, mover carpetas, marcar visto/no leído, destacar), preparar borradores, enviar correos, responder correos, eliminar correos, agendar citas en {cals_str} y listar eventos. "
             f"Las cuentas y servicios que el usuario REALMENTE tiene conectados son: {services_str} y {cals_str}. "
@@ -742,7 +817,8 @@ class AntigravityMailAgent:
             eliminar_correos,
             gestionar_correos,
             agendar_evento_calendario,
-            listar_proximos_eventos
+            listar_proximos_eventos,
+            sincronizar_servicios
         ]
 
         # Ejecución ultrarrápida con pre-consulta indexada para búsquedas (1 solo roundtrip ~2s) y failover inmediato
@@ -757,7 +833,8 @@ class AntigravityMailAgent:
                 r'\b(borra|borrar|elimina|eliminar|env[ií]a|enviar|redacta|redactar|escribe|escribir|'
                 r'responde|responder|contesta|contestar|archiva|archivar|etiqueta|etiquetar|'
                 r'mueve|mover|marca|marcar|destaca|destacar|agenda|agendar|programa|programar|'
-                r'crea|crear|confirmo|procede|adelante)\b|#\d+',
+                r'crea|crear|confirmo|procede|adelante|sincroniza|sincronizar|actualiza|actualizar|'
+                r'refresca|refrescar)\b|#\d+',
                 lower_msg
             ))
 

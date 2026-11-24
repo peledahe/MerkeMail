@@ -1,4 +1,4 @@
-// Módulo de Gestión de Aplicación de Escritorio (Desktop Linux) - MerkeMail
+// Módulo de Gestión de Aplicación de Escritorio (Desktop Linux) - Senda
 
 const DesktopBridge = {
     isDesktop: false,
@@ -28,11 +28,10 @@ const DesktopBridge = {
 
     detectEnvironment() {
         const params = new URLSearchParams(window.location.search);
-        const isPort6524 = window.location.port === '6524';
-        const hasDesktopParam = params.has('desktop') || params.get('app') === 'desktop';
-        const isPyQt = !!window.pyqtBridge || (navigator.userAgent && navigator.userAgent.includes('QtWebEngine'));
-        // Modo instalado de escritorio (PyQt6 / Puerto 6524 / ?desktop=1)
-        const isInstalledDesktop = isPort6524 || hasDesktopParam || isPyQt;
+        const hasDesktopParam = params.get('desktop') === '1' || params.get('desktop') === 'true' || params.get('app') === 'desktop';
+        const isPyQt = !!window.pyqtBridge || (navigator.userAgent && (navigator.userAgent.includes('QtWebEngine') || navigator.userAgent.includes('PyQt')));
+        // Modo instalado de escritorio (PyQt6 nativo / ?desktop=1)
+        const isInstalledDesktop = hasDesktopParam || isPyQt || !!window.isDesktopApp;
 
         this.isDesktop = isInstalledDesktop;
         this.applyEnvironmentUI();
@@ -391,6 +390,23 @@ const DesktopBridge = {
         });
     },
 
+    showNotification(title, message) {
+        const isPyQt = (navigator.userAgent && navigator.userAgent.includes('QtWebEngine')) || (typeof qt !== 'undefined');
+        if (window.pyqtBridge && window.pyqtBridge.show_notification) {
+            try {
+                window.pyqtBridge.show_notification(title, message);
+                return true;
+            } catch (_) {}
+        }
+        if (isPyQt) {
+            try {
+                console.log(`__PYQT_ACTION__:show_notification:${title}:${message}`);
+                return true;
+            } catch (_) {}
+        }
+        return false;
+    },
+
     onNativeWindowStateChanged(isMaximized) {
         this.isMaximized = !!isMaximized;
         this.updateMaximizeIcons();
@@ -513,7 +529,7 @@ const DesktopApp = {
         if (window.UI) {
             UI.showStickyToast(
                 'Inicio Automático',
-                this.autostart ? 'MerkeMail se iniciará al encender el equipo' : 'Inicio automático desactivado',
+                this.autostart ? 'Senda se iniciará al encender el equipo' : 'Inicio automático desactivado',
                 'success'
             );
         }
@@ -543,7 +559,7 @@ const DesktopApp = {
             if (data.success) {
                 this.installed = true;
                 this.updateUI();
-                if (window.UI) UI.showStickyToast('App Sincronizada', 'MerkeMail Desktop está actualizado y listo en tu sistema', 'success');
+                if (window.UI) UI.showStickyToast('App Sincronizada', 'Senda Desktop está actualizado y listo en tu sistema', 'success');
             } else {
                 if (window.UI) UI.showStickyToast('Error', data.detail || 'No se pudo sincronizar', 'error');
             }

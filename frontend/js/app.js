@@ -1,4 +1,4 @@
-// Script Principal de Coordinación - MerkeMail
+// Script Principal de Coordinación - Senda
 
 document.addEventListener('DOMContentLoaded', async () => {
     // Inicializar Tema Claro / Oscuro
@@ -43,8 +43,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 2. Inicializar módulos secundarios en segundo plano sin bloquear la interfaz principal
     Promise.allSettled([
-        (async () => { try { await GeminiAI.initSettings(); } catch (e) { console.warn("Fallo cargando IA:", e); } })(),
+        (async () => { try { if (window.NotificationManager) await NotificationManager.init(); } catch (e) { console.warn("Fallo cargando notificaciones:", e); } })(),
+        (async () => {
+            try {
+                await GeminiAI.initSettings();
+                // Si la IA está activa y aún no se ha seleccionado un correo,
+                // presentar inmediatamente la pantalla inicial con el resumen ejecutivo de Elio
+                if (window.GeminiAI && GeminiAI.isAiActive && window.EmailManager && !EmailManager.selectedEmailId) {
+                    if (window.innerWidth >= 768) {
+                        EmailManager.showElioInboxSummary(false);
+                    }
+                }
+            } catch (e) { console.warn("Fallo cargando IA:", e); }
+        })(),
         (async () => { try { await CalendarManager.init(); } catch (e) { console.warn("Fallo cargando calendario:", e); } })(),
+        (async () => { try { if (window.NotesManager) await NotesManager.init(); } catch (e) { console.warn("Fallo cargando notas:", e); } })(),
         (async () => { try { await SignatureManager.init(); } catch (e) { console.warn("Fallo cargando firmas:", e); } })(),
         (async () => { try { if (window.ContactsManager) await ContactsManager.init(); } catch (e) { console.warn("Fallo cargando contactos:", e); } })(),
         (async () => { try { if (window.UserProfileAI) await UserProfileAI.init(); } catch (e) { console.warn("Fallo cargando perfil usuario:", e); } })()
@@ -59,19 +72,14 @@ function setupEventListeners() {
         }
     });
 
-    // Alternador de Vista Principal (Correos vs Calendario)
+    // Alternador de Vista Principal (Correos vs Calendario vs Notas)
     const btnNavMail = document.getElementById('nav-item-mail');
     const btnNavCalendar = document.getElementById('nav-item-calendar');
-    const sectionMail = document.getElementById('main-mail-section');
-    const sectionCalendar = document.getElementById('main-calendar-section');
+    const btnNavNotes = document.getElementById('nav-item-notes');
 
-    if (btnNavMail && btnNavCalendar) {
+    if (btnNavMail) {
         btnNavMail.addEventListener('click', () => {
-            sectionMail.classList.remove('hidden');
-            sectionCalendar.classList.add('hidden');
-            document.querySelectorAll('.folder-nav-btn').forEach(b => b.classList.remove('active-folder', 'bg-indigo-50', 'dark:bg-indigo-950/70', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold'));
-            btnNavMail.classList.add('active-folder', 'bg-indigo-50', 'dark:bg-indigo-950/70', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
-            btnNavCalendar.classList.remove('bg-indigo-50', 'dark:bg-indigo-950/60', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
+            if (window.UI) UI.switchMainView('mail');
             if (window.innerWidth < 768 && window.UI) UI.closeMobileSidebar();
             EmailManager.currentFolder = 'INBOX';
             EmailManager.currentLabelId = null;
@@ -80,17 +88,25 @@ function setupEventListeners() {
             EmailManager.backToList();
             EmailManager.loadEmails();
         });
+    }
 
+    if (btnNavCalendar) {
         btnNavCalendar.addEventListener('click', () => {
             if (window.innerWidth < 768 && window.UI) UI.closeMobileSidebar();
-            sectionMail.classList.add('hidden');
-            sectionCalendar.classList.remove('hidden');
-            btnNavCalendar.classList.add('bg-indigo-50', 'dark:bg-indigo-950/60', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
-            document.querySelectorAll('.folder-nav-btn').forEach(b => b.classList.remove('active-folder', 'bg-indigo-50', 'dark:bg-indigo-950/70', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold'));
+            if (window.UI) UI.switchMainView('calendar');
             EmailManager.currentLabelId = null;
             EmailManager.clearSelection();
             EmailManager.renderLabels();
-            CalendarManager.renderCalendar();
+        });
+    }
+
+    if (btnNavNotes) {
+        btnNavNotes.addEventListener('click', () => {
+            if (window.innerWidth < 768 && window.UI) UI.closeMobileSidebar();
+            if (window.UI) UI.switchMainView('notes');
+            EmailManager.currentLabelId = null;
+            EmailManager.clearSelection();
+            EmailManager.renderLabels();
         });
     }
 
@@ -139,7 +155,8 @@ function setupEventListeners() {
                 }, 200);
             }
         } else if (rawVal && window.EmailManager) {
-            // Búsqueda normal si no tiene @elio
+            // Búsqueda normal si no tiene @elio: asegurar vista de correo
+            if (window.UI) UI.switchMainView('mail');
             EmailManager.searchQuery = rawVal;
             EmailManager.currentPage = 1;
             EmailManager.clearSelection();
@@ -196,6 +213,7 @@ function setupEventListeners() {
             // Búsqueda estándar de correos con debounce
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
+                if (window.UI) UI.switchMainView('mail');
                 EmailManager.searchQuery = val;
                 EmailManager.currentPage = 1;
                 EmailManager.clearSelection();
@@ -233,6 +251,14 @@ function setupEventListeners() {
         if (batchLabelsWrapper && !batchLabelsWrapper.contains(e.target)) {
             const drop = document.getElementById('batch-labels-dropdown');
             if (drop) drop.classList.add('hidden');
+        }
+
+        const moveDrop = document.getElementById('universal-move-dropdown');
+        if (moveDrop && !moveDrop.classList.contains('hidden')) {
+            const isInsideBtn = e.target.closest('#btn-batch-move, #btn-detail-move, #batch-more-item-move, .email-checkbox, #split-select-all, #select-all-checkbox, .select-checkbox-cell');
+            if (!moveDrop.contains(e.target) && !isInsideBtn) {
+                if (window.EmailManager) EmailManager.closeMoveMenu();
+            }
         }
     });
 
@@ -275,12 +301,8 @@ function setupEventListeners() {
     // Navegación por carpetas
     document.querySelectorAll('.folder-nav-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
-            // Asegurar que la vista de correos esté activa y el calendario oculto
-            sectionMail.classList.remove('hidden');
-            sectionCalendar.classList.add('hidden');
-            if (btnNavCalendar) {
-                btnNavCalendar.classList.remove('bg-indigo-50', 'dark:bg-indigo-950/60', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
-            }
+            // Asegurar que la vista de correos esté activa y las demás vistas (calendario, notas) desaparezcan de inmediato
+            if (window.UI) UI.switchMainView('mail');
 
             document.querySelectorAll('.folder-nav-btn').forEach(b => {
                 b.classList.remove('active-folder', 'bg-indigo-50', 'dark:bg-indigo-950/70', 'text-indigo-600', 'dark:text-indigo-400', 'font-bold');
@@ -295,6 +317,7 @@ function setupEventListeners() {
             EmailManager.clearAdvancedFiltersState();
             EmailManager.currentFolder = folder;
             EmailManager.currentLabelId = null;
+            EmailManager.activeFilterLabelIds = null;
             EmailManager.currentPage = 1;
             EmailManager.clearSelection();
             EmailManager.renderLabels();
@@ -389,6 +412,10 @@ function setupEventListeners() {
                     
                     if (EmailManager.currentFolder === 'SENT') {
                         EmailManager.loadEmails();
+                    }
+
+                    if (window.ContactsManager && typeof ContactsManager.loadContacts === 'function') {
+                        ContactsManager.loadContacts();
                     }
                 } else {
                     UI.showStickyToast('Error al enviar', data.detail || 'Verifica credenciales SMTP o cuotas de envío', 'error');
@@ -525,6 +552,15 @@ function setupEventListeners() {
         }
     });
 
+    // Ignorar excepciones benignas de ResizeObserver loop en renderers Chromium/QtWebEngine
+    window.addEventListener('error', (e) => {
+        if (e && e.message && (e.message.includes('ResizeObserver loop') || e.message.includes('undelivered notifications'))) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            return true;
+        }
+    });
+
     // Cerrar dropdowns de acciones por lote al hacer clic fuera
     document.addEventListener('click', (e) => {
         const selectCriteriaDrop = document.getElementById('select-criteria-dropdown');
@@ -541,11 +577,22 @@ function setupEventListeners() {
         }
     });
 
-    // Cerrar modales con Tecla Escape
+    // Cerrar modales con Tecla Escape y atajos globales de teclado
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
+            const printModal = document.getElementById('print-preview-modal');
+            if (printModal) {
+                printModal.remove();
+                return;
+            }
             UI.closeAllDrawers();
             document.querySelectorAll('.fixed-modal').forEach(m => m.classList.add('hidden'));
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+            // Atajo Ctrl+P / Cmd+P para imprimir el correo actualmente abierto con vista previa Chrome
+            if (window.EmailManager && EmailManager.currentOpenedEmail) {
+                e.preventDefault();
+                EmailManager.openPrintPreview();
+            }
         }
     });
 }

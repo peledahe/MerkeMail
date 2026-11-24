@@ -39,13 +39,18 @@ class UserProfileService:
         signatures_data = [dict(s) for s in signatures]
 
         # 3. Muestra de correos enviados y redactados por el usuario (excluyendo Papelera, Borradores y Spam)
-        sent_emails = conn.execute("""
+        # Se identifican los correos propios por las direcciones de las cuentas conectadas
+        # (sin nombres ni dominios personales fijos en el código)
+        own_emails = [a["email"].strip().lower() for a in accounts_data if a.get("email")]
+        sender_filters = " OR ".join(["LOWER(sender) LIKE ?"] * len(own_emails))
+        where_sender = f"(folder = 'SENT' OR {sender_filters})" if sender_filters else "(folder = 'SENT')"
+        sent_emails = conn.execute(f"""
             SELECT id, sender, recipient, subject, date, snippet, body_text 
             FROM emails 
-            WHERE (folder = 'SENT' OR sender LIKE '%daniels%' OR sender LIKE '%merke%')
+            WHERE {where_sender}
               AND UPPER(COALESCE(folder, '')) NOT IN ('TRASH', 'PAPELERA', 'DRAFT', 'DRAFTS', 'BORRADORES', 'SPAM', 'JUNK')
             ORDER BY date DESC LIMIT 25
-        """).fetchall()
+        """, [f"%{e}%" for e in own_emails]).fetchall()
         emails_sample = []
         for e in sent_emails:
             emails_sample.append({
@@ -88,10 +93,10 @@ El JSON debe tener exactamente esta estructura con claves en minúsculas:
 {{
   "name": "Nombre completo preferido del usuario",
   "roles_and_titles": "Cargos, profesiones o títulos detectados (ej: Líder de Desarrollo / Ingeniero de Software)",
-  "organization": "Empresas u organizaciones principales (ej: Merke.net, SETESA)",
+  "organization": "Empresas u organizaciones principales (ej: Acme S.A., Universidad X)",
   "phone": "Teléfono, números de contacto o casilleros postales detectados",
   "address_location": "Ubicación geográfica detectada (ciudad, país o dirección)",
-  "websites": "Sitios web o URLs asociadas (ej: https://merke.net)",
+  "websites": "Sitios web o URLs asociadas (ej: https://ejemplo.com)",
   "communication_style": "Descripción detallada de su forma de hablar y redactar: nivel de formalidad, tono habitual (amigable, cordial, formal), fórmulas de saludo típicas, formas de despedida frecuentes y estructura de sus correos",
   "summary_bio": "Resumen ejecutivo del perfil del usuario (2 a 3 oraciones integrando quién es y qué hace)",
   "extra_context": "Puntos clave y directrices para que la IA redacte correos futuros de forma auténtica en su nombre"
